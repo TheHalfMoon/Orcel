@@ -576,15 +576,25 @@ pub(crate) enum BoundedExecution {
 /// alone never replaces an approval). Where no service is installed nothing
 /// changes: the deprecated store is not consulted, as it never was for this
 /// shape.
+///
+/// `resolved` is the server-resolved click the person approved (the
+/// registry's binding: window, handle, coordinates, the SG-000036 input
+/// lease and the approval digest). The request names only a coordinate
+/// identity, so the action digest the service records covers `resolved`
+/// too ([`bounded_execution_audit_request`]): the audit names the click,
+/// not only the identity. The digest is computed here; nothing on the wire
+/// changes.
 pub(crate) fn bounded_execution_gate(
     port: &dyn AuthorityPort,
     request: &RequestEnvelope,
+    resolved: &Value,
     now_ms: u64,
 ) -> Result<BoundedExecution, ProviderError> {
     if !port.installed() {
         return Ok(BoundedExecution::InProcess);
     }
-    match desktop_gate(port, request, now_ms)? {
+    let audited = bounded_execution_audit_request(request, resolved);
+    match desktop_gate(port, &audited, now_ms)? {
         Some(lease) => Ok(BoundedExecution::Leased(lease)),
         // The deprecated store never admits anything once a service is
         // installed; refuse rather than run in process.
@@ -592,6 +602,21 @@ pub(crate) fn bounded_execution_gate(
             "bounded desktop execution runs only under an Orcel authority service lease while the service is installed",
         )),
     }
+}
+
+/// The request whose action digest the service records for one bounded
+/// execution: the caller's request (same client, workspace, capability and
+/// operation) with its arguments and the resolved click together.
+pub(crate) fn bounded_execution_audit_request(
+    request: &RequestEnvelope,
+    resolved: &Value,
+) -> RequestEnvelope {
+    let mut audited = request.clone();
+    audited.arguments = serde_json::json!({
+        "request": request.arguments,
+        "resolved": resolved,
+    });
+    audited
 }
 
 /// SG132_SLICE5.md: starts the desktop input host into a service-made Job

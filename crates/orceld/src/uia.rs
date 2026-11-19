@@ -1576,6 +1576,7 @@ fn execute_with_approval(
     // SG-000120 RJ-02: journaled before the prompt; an effect orceld cannot
     // read back, so a crash after dispatch is recorded unknown.
     let journaled = crate::mutation_journal::opaque(workspace, request, &digest, &coord_id);
+    let approved_digest = digest.clone();
     crate::mutation_journal::journaled_with(
         crate::mutation_journal::global(),
         journaled,
@@ -1598,7 +1599,20 @@ fn execute_with_approval(
             // lease's host in its Job Object, the host generation on every
             // message); the in-process adapter runs only where no service is
             // installed (deprecated, unchanged).
-            let route = crate::authority_link::bounded_execution_gate(request)?;
+            // The service's audit digest covers the resolved click the
+            // person approved, not only the coordinate identity.
+            let resolved = json!({
+                "process_id": binding.process_id,
+                "window_id": binding.window_id,
+                "window_generation": binding.window_generation,
+                "hwnd": binding.hwnd,
+                "x": binding.x,
+                "y": binding.y,
+                "operation": binding.operation,
+                "input_lease_id": binding.lease_id,
+                "approval_digest": approved_digest,
+            });
+            let route = crate::authority_link::bounded_execution_gate(request, &resolved)?;
             let evidence = match route {
                 BoundedExecution::InProcess => {
                     let adapter = NativeAdapter::new();

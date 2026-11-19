@@ -558,10 +558,12 @@ pub(crate) fn desktop_input_gate(
 /// the installed service (`full_control_dispatch::bounded_execution_gate`).
 pub(crate) fn bounded_execution_gate(
     request: &RequestEnvelope,
+    resolved: &Value,
 ) -> Result<crate::full_control_dispatch::BoundedExecution, ProviderError> {
     crate::full_control_dispatch::bounded_execution_gate(
         &ServicePort::installed_service(),
         request,
+        resolved,
         orcel_approval::now_ms(),
     )
 }

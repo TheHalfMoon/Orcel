@@ -1073,6 +1073,21 @@ fn bounded_request() -> RequestEnvelope {
     )
 }
 
+/// The resolved click the registry bound and the person approved.
+fn resolved(x: u64, y: u64) -> Value {
+    json!({
+        "process_id": "p",
+        "window_id": "w",
+        "window_generation": 1,
+        "hwnd": 12345,
+        "x": x,
+        "y": y,
+        "operation": "click",
+        "input_lease_id": "l",
+        "approval_digest": "d",
+    })
+}
+
 #[test]
 fn fc_dispatch_bounded_execution_without_the_service_is_unchanged() {
     // No service: the deprecated in-process route, as before; the
@@ -1080,7 +1095,7 @@ fn fc_dispatch_bounded_execution_without_the_service_is_unchanged() {
     // nothing is authorized or reported.
     let port = FakePort::default();
     assert_eq!(
-        bounded_execution_gate(&port, &bounded_request(), 5).expect("unchanged"),
+        bounded_execution_gate(&port, &bounded_request(), &resolved(3, 2), 5).expect("unchanged"),
         BoundedExecution::InProcess
     );
     let service = port.0.borrow();
@@ -1097,7 +1112,7 @@ fn fc_dispatch_bounded_execution_with_the_service_needs_a_lease_and_authorize() 
     let port = FakePort::installed(vec![lease('1', full_scope())]);
     let routed = with_desktop_outcomes(
         || Box::new(port.clone()),
-        || bounded_execution_gate(&port, &bounded_request(), 5),
+        || bounded_execution_gate(&port, &bounded_request(), &resolved(3, 2), 5),
     )
     .expect("leased");
     assert_eq!(
@@ -1121,7 +1136,12 @@ fn fc_dispatch_bounded_execution_with_the_service_needs_a_lease_and_authorize() 
     // Installed, no lease: refused, never in process, nothing authorized.
     let port = FakePort::installed(Vec::new());
     assert_eq!(
-        code(bounded_execution_gate(&port, &bounded_request(), 6)),
+        code(bounded_execution_gate(
+            &port,
+            &bounded_request(),
+            &resolved(3, 2),
+            6
+        )),
         Some(FailureCode::LeaseRequired)
     );
     assert!(port.0.borrow().authorized.is_empty());
@@ -1135,7 +1155,12 @@ fn fc_dispatch_bounded_execution_with_the_service_needs_a_lease_and_authorize() 
     };
     let port = FakePort::installed(vec![lease('2', filesystem_only)]);
     assert_eq!(
-        code(bounded_execution_gate(&port, &bounded_request(), 7)),
+        code(bounded_execution_gate(
+            &port,
+            &bounded_request(),
+            &resolved(3, 2),
+            7
+        )),
         Some(FailureCode::LeaseRequired)
     );
     assert!(port.0.borrow().authorized.is_empty());
@@ -1145,7 +1170,7 @@ fn fc_dispatch_bounded_execution_with_the_service_needs_a_lease_and_authorize() 
     other.client_session_id = "another-mcp-client".into();
     let port = FakePort::installed(vec![lease('3', full_scope())]);
     assert_eq!(
-        code(bounded_execution_gate(&port, &other, 8)),
+        code(bounded_execution_gate(&port, &other, &resolved(3, 2), 8)),
         Some(FailureCode::CapabilityDenied)
     );
     assert!(port.0.borrow().authorized.is_empty());
@@ -1154,7 +1179,12 @@ fn fc_dispatch_bounded_execution_with_the_service_needs_a_lease_and_authorize() 
     let port = FakePort::installed(vec![lease('4', full_scope())]);
     port.with(|service| service.unreachable = true);
     assert_eq!(
-        code(bounded_execution_gate(&port, &bounded_request(), 9)),
+        code(bounded_execution_gate(
+            &port,
+            &bounded_request(),
+            &resolved(3, 2),
+            9
+        )),
         Some(FailureCode::AuthorityUnavailable)
     );
     assert_eq!(port.0.borrow().deprecated_checks, 0);
@@ -1163,7 +1193,81 @@ fn fc_dispatch_bounded_execution_with_the_service_needs_a_lease_and_authorize() 
     // refusal): refused, nothing runs.
     let port = FakePort::installed(vec![lease('5', full_scope())]);
     port.with(|service| service.answer = Some(json!({})));
-    assert!(bounded_execution_gate(&port, &bounded_request(), 10).is_err());
+    assert!(bounded_execution_gate(&port, &bounded_request(), &resolved(3, 2), 10).is_err());
+}
+
+#[test]
+fn fc_dispatch_bounded_execution_audit_names_the_resolved_click() {
+    // The service's action digest covers the resolved click: other
+    // coordinates (or another window handle) give another digest, at the
+    // same time and for the same request.
+    let digest_for = |resolved: &Value| {
+        let port = FakePort::installed(vec![lease('1', full_scope())]);
+        bounded_execution_gate(&port, &bounded_request(), resolved, 5).expect("leased");
+        let service = port.0.borrow();
+        let claims = &service.authorized[0].2;
+        assert_eq!(claims.capability, "uia.input");
+        assert_eq!(claims.operation, "execute");
+        claims.action_digest.clone()
+    };
+    let base = digest_for(&resolved(3, 2));
+    assert_eq!(base, digest_for(&resolved(3, 2)));
+    assert_ne!(base, digest_for(&resolved(4, 2)));
+    assert_ne!(base, digest_for(&resolved(3, 9)));
+    let mut other_window = resolved(3, 2);
+    other_window["hwnd"] = json!(54321);
+    assert_ne!(base, digest_for(&other_window));
+    // It is the slice 2 desktop digest over the request with the resolved
+    // click added; the request's own arguments stay in it.
+    let audited = crate::full_control_dispatch::bounded_execution_audit_request(
+        &bounded_request(),
+        &resolved(3, 2),
+    );
+    assert_eq!(audited.arguments["request"], bounded_request().arguments);
+    assert_eq!(audited.arguments["resolved"]["x"], json!(3));
+    assert_eq!(
+        base,
+        crate::authority_link::desktop_action_digest(&audited, 5)
+    );
+}
+
+#[test]
+fn fc_dispatch_bounded_execution_runs_only_in_the_leases_host() {
+    // The leased route, behaviourally, with the fake service and host
+    // launcher: the lease the gate returns gets its host started into that
+    // lease's service-made job (as `desktop_host_job::require_for` does),
+    // after Authorize; no lease, no host.
+    let port = FakePort::installed(vec![lease('1', full_scope())]);
+    let hosts = FakeHosts::default();
+    let current = std::sync::Mutex::new(None);
+    let BoundedExecution::Leased(lease_id) =
+        bounded_execution_gate(&port, &bounded_request(), &resolved(3, 2), 5).expect("leased")
+    else {
+        unreachable!("the service is installed");
+    };
+    let host = ensure_lease_host(&port, &hosts, &current, &lease_id).expect("the lease's host");
+    assert_eq!(host.lease_id, lease_id);
+    assert_eq!(
+        port.0.borrow().calls,
+        vec!["authorize", "host", "ack", "active"]
+    );
+    assert_eq!(port.0.borrow().desktop_hosts, vec![lease_id.clone()]);
+    assert!(hosts.running(host.generation));
+    // The service refuses the host job: nothing runs.
+    let port = FakePort::installed(vec![lease('2', full_scope())]);
+    port.with(|service| service.refuse_host = Some(FailureCode::LeaseInvalid));
+    let hosts = FakeHosts::default();
+    let current = std::sync::Mutex::new(None);
+    let BoundedExecution::Leased(lease_id) =
+        bounded_execution_gate(&port, &bounded_request(), &resolved(3, 2), 6).expect("leased")
+    else {
+        unreachable!("the service is installed");
+    };
+    assert_eq!(
+        code(ensure_lease_host(&port, &hosts, &current, &lease_id)),
+        Some(FailureCode::LeaseInvalid)
+    );
+    assert!(hosts.started.borrow().is_empty());
 }
 
 #[test]
@@ -1181,7 +1285,7 @@ fn fc_dispatch_bounded_execution_uses_the_in_process_adapter_only_without_the_se
             .expect("the next function");
     let body = &source[start..end];
     let gate = body
-        .find("bounded_execution_gate(request)?")
+        .find("bounded_execution_gate(request, &resolved)?")
         .expect("the gate");
     let in_process = body
         .find("BoundedExecution::InProcess =>")
