@@ -235,7 +235,8 @@ real desktop shows.
 
 1. Option B slice 2: the MCP module (patterned on `apps/orcel-mcp/src/desktop.ts`), 14 contract entries with
    `remote: "local_only"` in `desktop_structured`, descriptions that say each tool needs a lease and which ones ask,
-   the regenerated [docs/p16/TOOL_CONTRACT.md](../../../p16/TOOL_CONTRACT.md) and its tests.
+   the regenerated [docs/p16/TOOL_CONTRACT.md](../../../p16/TOOL_CONTRACT.md) and its tests. Done in
+   [SG132_SLICE9.md](SG132_SLICE9.md).
 2. Founder runs for this slice's UNVERIFIED rows: with the installed service and a lease granted to the client's
    reference, `fc.status`, a file write without a prompt, a program run with the Windows dialog (Yes and No), a Git
    commit with the dialog.

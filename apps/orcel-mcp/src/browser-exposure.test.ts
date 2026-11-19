@@ -14,6 +14,7 @@ import {
 import { allowedToolsFor, localTransportContext, tunnelTransportContext } from "./server.js";
 import {
   DESKTOP_STRUCTURED_TOOLS,
+  FULL_CONTROL_TOOLS,
   LIVE_BROWSER_TOOLS,
   LOCAL_TOOL_SURFACE_PROFILES,
   REMOTE_PROVIDER_PROFILES,
@@ -174,7 +175,11 @@ test("SG-000122 slices A3 and A4: fill, the text wait, the verifier, select, che
 test("desktop_structured is an explicit list that adding a contract tool cannot widen", () => {
   const desktop = new Set(DESKTOP_STRUCTURED_TOOLS);
   assert.equal(desktop.size, DESKTOP_STRUCTURED_TOOLS.length, "no duplicates");
-  const nonLive = Object.keys(TOOL_CONTRACT).filter((tool) => !LIVE_BROWSER_TOOLS.includes(tool));
+  // SG132_SLICE9.md: the Full Control tools are desktop_structured's own
+  // (FULL_CONTROL_TOOLS), never in the list the browser profiles extend.
+  const nonLive = Object.keys(TOOL_CONTRACT).filter(
+    (tool) => !LIVE_BROWSER_TOOLS.includes(tool) && !FULL_CONTROL_TOOLS.includes(tool)
+  );
   // Every non-live contract tool is listed, explicitly, and nothing else.
   assert.deepEqual([...desktop].sort(), nonLive.sort());
   for (const tool of LIVE_BROWSER_TOOLS) {
