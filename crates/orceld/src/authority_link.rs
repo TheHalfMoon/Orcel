@@ -24,7 +24,9 @@
 //!   action needs an active service-issued desktop lease and the service's
 //!   `Authorize` (DesktopInput); the deprecated user-readable store is
 //!   consulted only where the service is not installed (existing
-//!   behaviour), never as a fallback for an unreachable service.
+//!   behaviour), never as a fallback for an unreachable service. WP1-12
+//!   runs it through the Full Control dispatcher
+//!   (`full_control_dispatch`), with [`ServicePort`] as its service.
 //!
 //! The `orceld authority-status` and `orceld authority-verify <lease id>`
 //! commands exercise the link against the installed service.
@@ -33,7 +35,7 @@ use crate::browser_lease::{AuthorityView, CoveredAction, LeaseManager, LeaseSour
 #[cfg(any(test, feature = "browser-full-scripted-consent"))]
 use orcel_authority::client::Expectation;
 use orcel_authority::client::{AuthorityClient, VerifiedLease};
-use orcel_authority::lease::{LeaseScope, SignatureVerifier, SignedLease};
+use orcel_authority::lease::{LeaseBody, LeaseScope, SignatureVerifier, SignedLease};
 use orcel_authority::protocol::AuthorizeClaims;
 use orcel_authority::AuthorityError;
 use orcel_contracts::{ExecutorClass, FailureCode, RequestEnvelope};
@@ -359,6 +361,7 @@ impl LeaseSource for ServiceLeaseSource {
                     action_digest: action_digest(action),
                     // Review F4: the service checks the family and origin.
                     origin: Some(action.origin.clone()),
+                    paths: None,
                 },
             )
             .map(|_| ())
@@ -424,56 +427,127 @@ impl LeaseManager for ServiceLeaseManager {
     }
 }
 
-/// SG-000132 slice 2, desktop lease migration step: the DesktopInput gate.
-/// With the service installed only a service-issued desktop lease of this
-/// user and logon session counts, admitted by the service's audit-first
-/// `Authorize`; the deprecated user-readable store is consulted only where
-/// no service is installed (its existing behaviour), never as a fallback.
-pub(crate) fn desktop_input_gate(request: &RequestEnvelope) -> Result<(), ProviderError> {
-    if !orcel_authority::client::service_installed() {
+/// WP1-12: the authority service as the Full Control dispatcher uses it.
+/// It verifies the server before sending anything (`AuthorityClient`) and
+/// admits only leases whose ECDSA signature verifies with the key the
+/// verified service reported. With the service installed every failure
+/// refuses; nothing falls back to the deprecated store.
+pub(crate) struct ServicePort {
+    installed: bool,
+    client: Result<AuthorityClient, AuthorityError>,
+}
+
+impl ServicePort {
+    /// The installed service (or, with none installed, the deprecated
+    /// desktop store only).
+    pub(crate) fn installed_service() -> Self {
+        let installed = orcel_authority::client::service_installed();
+        Self {
+            installed,
+            client: if installed {
+                AuthorityClient::installed()
+            } else {
+                Err(AuthorityError::unavailable(
+                    "the Orcel authority service is not installed",
+                ))
+            },
+        }
+    }
+
+    fn client(&self) -> Result<&AuthorityClient, ProviderError> {
+        self.client
+            .as_ref()
+            .map_err(|error| provider(error.clone()))
+    }
+}
+
+impl crate::full_control_dispatch::AuthorityPort for ServicePort {
+    fn installed(&self) -> bool {
+        self.installed
+    }
+
+    fn deprecated_desktop_check(&self) -> Result<(), ProviderError> {
         // DEPRECATED path (no new issuance happens through it once the
         // service is installed; `orcel full-control grant` uses the service).
-        return orcel_policy::full_control_store::check_current_desktop_input()
+        orcel_policy::full_control_store::check_current_desktop_input()
             .map(|_| ())
-            .map_err(|error| ProviderError::new(error.code, error.message));
+            .map_err(|error| ProviderError::new(error.code, error.message))
     }
-    let client = AuthorityClient::installed().map_err(provider)?;
-    let (_, verifier) = ServiceLeaseSource::verified(&client)?;
-    let listed = client.list().map_err(provider)?;
-    for entry in listed["leases"].as_array().into_iter().flatten() {
-        if entry["state"].as_str() != Some("active") {
-            continue;
+
+    fn leases(&self) -> Result<Vec<LeaseBody>, ProviderError> {
+        let client = self.client()?;
+        let (_, verifier) = ServiceLeaseSource::verified(client)?;
+        let listed = client.list().map_err(provider)?;
+        let mut out = Vec::new();
+        for entry in listed["leases"].as_array().into_iter().flatten() {
+            if entry["state"].as_str() != Some("active") {
+                continue;
+            }
+            let Ok(lease) = serde_json::from_value::<SignedLease>(entry["lease"].clone()) else {
+                continue;
+            };
+            if lease.verify_signature(verifier.as_ref()).is_ok() {
+                out.push(lease.body);
+            }
         }
-        let Ok(lease) = serde_json::from_value::<SignedLease>(entry["lease"].clone()) else {
-            continue;
-        };
-        if !lease.body.scope.admits(ExecutorClass::DesktopInput)
-            || lease.verify_signature(verifier.as_ref()).is_err()
-        {
-            continue;
-        }
-        let now = orcel_approval::now_ms();
-        return client
-            .authorize(
-                &lease.body.lease_id,
-                ExecutorClass::DesktopInput,
-                AuthorizeClaims {
-                    request_id: format!("desktop-{now}"),
-                    capability: request.capability.clone(),
-                    operation: request.operation.clone(),
-                    principal_id: lease.body.principal_id.clone(),
-                    task: lease.body.task.clone(),
-                    action_digest: desktop_action_digest(request, now),
-                    origin: None,
-                },
-            )
+        Ok(out)
+    }
+
+    fn authorize(
+        &self,
+        lease_id: &str,
+        executor: ExecutorClass,
+        claims: AuthorizeClaims,
+    ) -> Result<Value, ProviderError> {
+        self.client()?
+            .authorize(lease_id, executor, claims)
+            .map_err(provider)
+    }
+
+    fn outcome(
+        &self,
+        authorization_id: &str,
+        outcome: orcel_authority::protocol::DispatchOutcome,
+        code: Option<FailureCode>,
+    ) -> Result<(), ProviderError> {
+        self.client()?
+            .outcome(authorization_id, outcome, code)
             .map(|_| ())
-            .map_err(provider);
+            .map_err(provider)
     }
-    Err(ProviderError::new(
-        FailureCode::LeaseRequired,
-        "no active Full User desktop lease from the Orcel authority service; run `orcel full-control grant`",
-    ))
+
+    fn dispatch_active(&self, authorization_id: &str) -> Result<(), ProviderError> {
+        self.client()?
+            .dispatch_active(authorization_id)
+            .map(|_| ())
+            .map_err(provider)
+    }
+
+    fn release_job_handle(&self, handle: u64) {
+        #[cfg(windows)]
+        // SAFETY: a handle value the verified service duplicated into this
+        // process for this answer, closed once and never used.
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(handle as _);
+        }
+        #[cfg(not(windows))]
+        let _ = handle;
+    }
+}
+
+/// SG-000132 slice 2, desktop lease migration step, now on the WP1-12
+/// dispatcher: with the service installed only a service-issued desktop
+/// lease of this user and logon session counts, admitted by the service's
+/// audit-first `Authorize`, and the request's outcome is reported
+/// (`full_control_dispatch::with_desktop_outcomes`); the deprecated
+/// user-readable store is consulted only where no service is installed (its
+/// existing behaviour), never as a fallback.
+pub(crate) fn desktop_input_gate(request: &RequestEnvelope) -> Result<(), ProviderError> {
+    crate::full_control_dispatch::desktop_gate(
+        &ServicePort::installed_service(),
+        request,
+        orcel_approval::now_ms(),
+    )
 }
 
 /// Review F5: the SHA-256 the service's audit records for one desktop

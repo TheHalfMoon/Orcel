@@ -94,7 +94,16 @@ mod sg000128_dispatch_tests;
 )]
 mod document_parse;
 mod executable_admin;
+// SG-000132 WP1-12: `orceld fc-worker`, the child that performs Full Control
+// filesystem operations inside the dispatch's service-made Job Object.
+mod fc_worker;
+#[cfg(test)]
+mod fc_worker_tests;
 mod fs_mutation;
+// SG-000132 WP1-12: the only path for lease-gated Full Control executors.
+mod full_control_dispatch;
+#[cfg(test)]
+mod full_control_dispatch_tests;
 mod git_fetch;
 mod git_mutation;
 mod git_push;
@@ -167,6 +176,11 @@ mod legacy {
 fn main() {
     // SG-000132 slice 1: `orceld authority-status` / `authority-verify`.
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // SG-000132 WP1-12: `orceld fc-worker` (started by orceld inside a
+    // service-made Job Object; it touches no orceld state).
+    if let Some(code) = fc_worker::run_cli(&args) {
+        std::process::exit(code);
+    }
     if let Some(code) = authority_link::run_cli(&args) {
         std::process::exit(code);
     }

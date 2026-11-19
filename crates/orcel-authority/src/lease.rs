@@ -415,6 +415,79 @@ pub fn is_canonical_origin(text: &str) -> bool {
     host_ok && port_ok
 }
 
+/// WP1-12: the longest path one Full Control dispatch may name.
+pub const MAX_DISPATCH_PATH_CHARS: usize = 1024;
+
+/// WP1-12: the most paths one Full Control dispatch may name.
+pub const MAX_DISPATCH_PATHS: usize = 8;
+
+/// WP1-12: a path a Full Control filesystem or git dispatch names, checked
+/// lexically (the service never touches the user's files): an absolute
+/// drive path (`C:\...`), at most [`MAX_DISPATCH_PATH_CHARS`] characters,
+/// no control characters, no `\\?\` or UNC form, no `:` after the drive (no
+/// alternate data streams), and no component that is empty, all dots, or
+/// ends in a dot or a space (Win32 would rewrite those, so the lexical
+/// check and the file system could disagree). `fc-worker` also resolves
+/// the path and its root before acting (junctions and links).
+pub fn check_dispatch_path(path: &str) -> Result<(), AuthorityError> {
+    let invalid = |why: &str| Err(AuthorityError::invalid(format!("a dispatch path {why}")));
+    if path.is_empty() || path.chars().count() > MAX_DISPATCH_PATH_CHARS {
+        return invalid("is 1 to 1024 characters");
+    }
+    if path.chars().any(char::is_control) {
+        return invalid("has a control character");
+    }
+    let bytes = path.as_bytes();
+    let drive = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/');
+    if !drive {
+        return invalid("is an absolute drive path such as C:\\work\\file.txt");
+    }
+    if path[2..].contains(':') {
+        return invalid("has a colon after its drive (an alternate data stream)");
+    }
+    let rest = &path[3..];
+    if rest.is_empty() {
+        return Ok(());
+    }
+    for part in rest.trim_end_matches(['\\', '/']).split(['\\', '/']) {
+        if part.is_empty()
+            || part.bytes().all(|b| b == b'.')
+            || part.ends_with('.')
+            || part.ends_with(' ')
+        {
+            return invalid("has an empty, dot or trailing-dot or trailing-space component");
+        }
+    }
+    Ok(())
+}
+
+/// WP1-12: whether `path` is one of `roots` or lies under one, compared
+/// lexically and case-insensitively on whole components (`C:\work` covers
+/// `C:\work\a` and not `C:\workshop`). `path` must pass
+/// [`check_dispatch_path`]; the roots passed the grant's own check.
+pub fn path_within_roots(path: &str, roots: &[String]) -> bool {
+    if check_dispatch_path(path).is_err() {
+        return false;
+    }
+    let normalize = |text: &str| {
+        text.replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_lowercase()
+    };
+    let path = normalize(path);
+    roots.iter().any(|root| {
+        let root = normalize(root);
+        !root.is_empty()
+            && (path == root
+                || path
+                    .strip_prefix(&root)
+                    .is_some_and(|rest| rest.starts_with('\\')))
+    })
+}
+
 /// Who asked, as the service observed it on the pipe (never a claim).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

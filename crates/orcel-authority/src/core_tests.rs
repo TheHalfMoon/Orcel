@@ -7,6 +7,9 @@
 
 use crate::attestation::AttestationReport;
 use crate::caller::{CallerFacts, ClientPolicy};
+use crate::core::dispatch_jobs::{
+    is_job_id, DispatchJob, JobHost, JOB_IDLE_MS, JOB_MAX_MS, MAX_JOBS_PER_LEASE,
+};
 use crate::core::{
     check_signing_key_history, display_image, is_builtin_administrator, key_fingerprint,
     AttestationVerifier, AuthorityCore, ConfirmAnswer, Entropy, EventSink, LeaseSigner,
@@ -15,12 +18,13 @@ use crate::core::{
 };
 use crate::error::{AuthorityError, ENROLLMENT_UNAVAILABLE};
 use crate::lease::{LeaseScope, SignedLease};
+use crate::protocol::DispatchOutcome;
 use crate::protocol::{AuthorizeClaims, ChainLink, ClaimedOrigin, Request};
 use crate::{hex, sha256_hex, unhex, RunMode};
 use orcel_contracts::event::AnchorRef;
 use orcel_contracts::{ExecutorClass, FailureCode};
 use serde_json::Value;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -187,6 +191,73 @@ impl AttestationVerifier for ScriptedAttestation {
     }
 }
 
+/// WP1-12: what the fake job host saw, per test thread.
+#[derive(Default)]
+struct JobLog {
+    live: Vec<String>,
+    terminated: Vec<String>,
+    /// The (pid, generation) of every process a handle was duplicated into.
+    targets: Vec<(u32, u64)>,
+    withdrawn: Vec<String>,
+    fail: bool,
+    active: u32,
+}
+
+thread_local! {
+    static JOBS: RefCell<JobLog> = RefCell::new(JobLog::default());
+}
+
+struct FakeJobs;
+
+impl JobHost for FakeJobs {
+    fn create(&mut self, id: &str, caller: &CallerFacts) -> Result<DispatchJob, AuthorityError> {
+        JOBS.with(|log| {
+            let mut log = log.borrow_mut();
+            if log.fail {
+                return Err(AuthorityError::internal(
+                    "CreateJobObjectW: scripted failure",
+                ));
+            }
+            log.live.push(id.to_owned());
+            log.targets.push((caller.pid, caller.process_generation));
+            Ok(DispatchJob {
+                id: id.to_owned(),
+                handle: 0x1000 + 4 * log.live.len() as u64,
+            })
+        })
+    }
+    fn withdraw(&mut self, id: &str) {
+        JOBS.with(|log| log.borrow_mut().withdrawn.push(id.to_owned()));
+        self.terminate(id);
+    }
+    fn terminate(&mut self, name: &str) {
+        JOBS.with(|log| {
+            let mut log = log.borrow_mut();
+            if let Some(index) = log.live.iter().position(|live| live == name) {
+                log.live.remove(index);
+                log.terminated.push(name.to_owned());
+            }
+        });
+    }
+    fn active_processes(&self, name: &str) -> Option<u32> {
+        JOBS.with(|log| {
+            let log = log.borrow();
+            log.live
+                .iter()
+                .any(|live| live == name)
+                .then_some(log.active)
+        })
+    }
+}
+
+fn live_jobs() -> Vec<String> {
+    JOBS.with(|log| log.borrow().live.clone())
+}
+
+fn terminated_jobs() -> Vec<String> {
+    JOBS.with(|log| log.borrow().terminated.clone())
+}
+
 struct Counter(AtomicU64);
 
 impl Entropy for Counter {
@@ -232,6 +303,7 @@ fn open_in(mode: RunMode, dir: &Path, events: &Events) -> Result<AuthorityCore, 
             uac: Box::new(ScriptedUac),
             events: Box::new(events.clone()),
             entropy: Box::new(Counter(AtomicU64::new(0))),
+            jobs: Box::new(FakeJobs),
             clock,
         },
     )
@@ -371,6 +443,7 @@ fn claims() -> AuthorizeClaims {
         task: "tidy the downloads folder".to_owned(),
         action_digest: sha256_hex(b"click 10 20"),
         origin: None,
+        paths: None,
     }
 }
 
@@ -1985,6 +2058,543 @@ fn wp103_a_pending_reset_can_be_reset_again_and_its_opening_is_anchored_by_the_c
     );
     // orceld continues the anchored file.
     ok(core.handle(&orceld(), anchor_request('d', 31, 'c', None)))?;
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// WP1-12: dispatch Job Objects, paths inside the roots, outcomes.
+// ---------------------------------------------------------------------
+
+const ROOT: &str = r"C:\work";
+
+fn full_scope() -> LeaseScope {
+    LeaseScope::DesktopFullUser {
+        executors: vec![
+            ExecutorClass::DesktopInput,
+            ExecutorClass::Filesystem,
+            ExecutorClass::ShellProcess,
+        ],
+        roots: vec![ROOT.to_owned()],
+        shells: true,
+    }
+}
+
+fn authorize_paths(
+    core: &mut AuthorityCore,
+    lease_id: &str,
+    executor: ExecutorClass,
+    paths: Option<Vec<&str>>,
+) -> Result<Value, AuthorityError> {
+    core.handle(
+        &orceld(),
+        Request::Authorize {
+            lease_id: lease_id.to_owned(),
+            executor,
+            claims: AuthorizeClaims {
+                capability: "full_control.fs".to_owned(),
+                operation: "read_text".to_owned(),
+                paths: paths.map(|paths| paths.into_iter().map(str::to_owned).collect()),
+                ..claims()
+            },
+        },
+    )
+}
+
+fn audit_records(dir: &Path) -> Result<Vec<Value>, String> {
+    let text =
+        std::fs::read_to_string(dir.join(crate::core::AUDIT_FILE)).map_err(|e| e.to_string())?;
+    Ok(text
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect())
+}
+
+#[test]
+fn wp112_authorize_makes_a_job_for_filesystem_and_shell_and_none_for_desktop() -> Result<(), String>
+{
+    let dir = temp_dir("wp112-jobs")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    let (lease, _) = grant(&mut core, Some(full_scope()))?;
+    let id = lease.body.lease_id.clone();
+
+    let desktop = ok(authorize(
+        &mut core,
+        &orceld(),
+        &id,
+        ExecutorClass::DesktopInput,
+    ))?;
+    assert_eq!(desktop["job_id"], Value::Null);
+    assert!(live_jobs().is_empty());
+
+    let fs = ok(authorize_paths(
+        &mut core,
+        &id,
+        ExecutorClass::Filesystem,
+        Some(vec![r"C:\work\notes\a.txt"]),
+    ))?;
+    let fs_job = str_of(&fs, "job_id")?;
+    assert!(is_job_id(&fs_job), "{fs_job}");
+    assert!(fs["job_handle"].as_u64().is_some_and(|handle| handle != 0));
+    assert_eq!(desktop["job_handle"], Value::Null);
+    let shell = ok(authorize_paths(
+        &mut core,
+        &id,
+        ExecutorClass::ShellProcess,
+        None,
+    ))?;
+    let shell_job = str_of(&shell, "job_id")?;
+    assert_ne!(fs_job, shell_job, "one job per dispatch");
+    assert_eq!(live_jobs(), vec![fs_job.clone(), shell_job.clone()]);
+    // The handle goes into the observed caller process, nobody else.
+    assert!(JOBS.with(|log| log
+        .borrow()
+        .targets
+        .iter()
+        .all(|target| *target == (orceld().pid, orceld().process_generation))));
+
+    // The allow record names the job and was written before the answer.
+    let allowed: Vec<Value> = audit_records(&dir)?
+        .into_iter()
+        .filter(|record| record["kind"] == "authorize")
+        .collect();
+    assert_eq!(allowed.len(), 3);
+    assert_eq!(
+        allowed[1]["detail"]["job_id"],
+        Value::String(fs_job.clone())
+    );
+    assert_eq!(
+        allowed[1]["asserted_by_session"]["paths"][0],
+        r"C:\work\notes\a.txt"
+    );
+    let status = ok(core.handle(&orceld(), Request::Status))?;
+    assert_eq!(status["job_objects"]["held"], 2);
+    assert_eq!(status["job_objects"]["breakaway"], Value::Bool(false));
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn wp112_filesystem_dispatches_name_paths_inside_the_roots() -> Result<(), String> {
+    let dir = temp_dir("wp112-roots")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    let (lease, _) = grant(&mut core, Some(full_scope()))?;
+    let id = lease.body.lease_id.clone();
+    for (paths, expected) in [
+        (None, FailureCode::InvalidRequest),
+        (Some(vec![]), FailureCode::InvalidRequest),
+        (
+            Some(vec![r"C:\workshop\a.txt"]),
+            FailureCode::CapabilityDenied,
+        ),
+        (Some(vec![r"D:\work\a.txt"]), FailureCode::CapabilityDenied),
+        (
+            Some(vec![r"C:\work\a.txt", r"C:\other"]),
+            FailureCode::CapabilityDenied,
+        ),
+        (
+            Some(vec![r"C:\work\..\secret"]),
+            FailureCode::InvalidRequest,
+        ),
+        (
+            Some(vec![r"C:\work\a.txt:stream"]),
+            FailureCode::InvalidRequest,
+        ),
+        (
+            Some(vec![r"C:\work\trailing.\x"]),
+            FailureCode::InvalidRequest,
+        ),
+        (Some(vec![r"\\?\C:\work\a"]), FailureCode::InvalidRequest),
+        (Some(vec![r"\\server\share\a"]), FailureCode::InvalidRequest),
+    ] {
+        let label = format!("{paths:?}");
+        assert_eq!(
+            code(authorize_paths(
+                &mut core,
+                &id,
+                ExecutorClass::Filesystem,
+                paths
+            )),
+            Some(expected),
+            "{label}"
+        );
+    }
+    // Paths on a shell dispatch are checked against the roots too.
+    assert_eq!(
+        code(authorize_paths(
+            &mut core,
+            &id,
+            ExecutorClass::ShellProcess,
+            Some(vec![r"C:\Windows"])
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    // Upper case and forward slashes name the same root.
+    ok(authorize_paths(
+        &mut core,
+        &id,
+        ExecutorClass::Filesystem,
+        Some(vec![r"c:/WORK/a.txt", ROOT]),
+    ))?;
+    assert_eq!(live_jobs().len(), 1, "refusals made no job");
+    // A narrow lease does not cover the filesystem at all.
+    ok(core.handle(&owner(), Request::Revoke { lease_id: id }))?;
+    let (narrow, _) = grant(&mut core, None)?;
+    assert_eq!(
+        code(authorize_paths(
+            &mut core,
+            &narrow.body.lease_id,
+            ExecutorClass::Filesystem,
+            Some(vec![r"C:\work\a.txt"])
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn wp112_revoke_stop_lock_and_expiry_terminate_the_dispatch_jobs() -> Result<(), String> {
+    let dir = temp_dir("wp112-stop")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    let shell = |core: &mut AuthorityCore, id: &str| -> Result<String, String> {
+        str_of(
+            &ok(authorize_paths(core, id, ExecutorClass::ShellProcess, None))?,
+            "job_id",
+        )
+    };
+
+    let (lease, _) = grant(&mut core, Some(full_scope()))?;
+    let revoked = shell(&mut core, &lease.body.lease_id)?;
+    ok(core.handle(
+        &owner(),
+        Request::Revoke {
+            lease_id: lease.body.lease_id.clone(),
+        },
+    ))?;
+    assert!(terminated_jobs().contains(&revoked) && !live_jobs().contains(&revoked));
+
+    let (lease, _) = grant(&mut core, Some(full_scope()))?;
+    let stopped = shell(&mut core, &lease.body.lease_id)?;
+    ok(core.handle(&other_process(), Request::Stop))?;
+    assert!(
+        terminated_jobs().contains(&stopped),
+        "Stop from any process of the session"
+    );
+
+    let (lease, _) = grant(&mut core, Some(full_scope()))?;
+    let locked = shell(&mut core, &lease.body.lease_id)?;
+    core.session_ended(1, "session_lock", true)
+        .map_err(|e| e.to_string())?;
+    assert!(terminated_jobs().contains(&locked));
+
+    let (lease, _) = grant(&mut core, Some(full_scope()))?;
+    let expired = shell(&mut core, &lease.body.lease_id)?;
+    advance(30 * 60_000);
+    core.tick().map_err(|e| e.to_string())?;
+    assert!(terminated_jobs().contains(&expired));
+    assert!(live_jobs().is_empty());
+    // The next call fails LEASE_INVALID and makes no job.
+    assert_eq!(
+        code(authorize_paths(
+            &mut core,
+            &lease.body.lease_id,
+            ExecutorClass::ShellProcess,
+            None
+        )),
+        Some(FailureCode::LeaseInvalid)
+    );
+    assert!(live_jobs().is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn wp112_a_job_that_cannot_be_made_refuses_before_any_allow_record() -> Result<(), String> {
+    let dir = temp_dir("wp112-fail")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    let (lease, _) = grant(&mut core, Some(full_scope()))?;
+    JOBS.with(|log| log.borrow_mut().fail = true);
+    let refused = authorize_paths(
+        &mut core,
+        &lease.body.lease_id,
+        ExecutorClass::ShellProcess,
+        None,
+    );
+    JOBS.with(|log| log.borrow_mut().fail = false);
+    assert_eq!(code(refused), Some(FailureCode::AuthorityUnavailable));
+    let records = audit_records(&dir)?;
+    assert!(!records.iter().any(|record| record["kind"] == "authorize"));
+    assert!(records
+        .iter()
+        .any(|record| record["kind"] == "decision" && record["detail"]["op"] == "authorize"));
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn wp112_outcomes_are_orcelds_once_per_authorization_and_end_the_job() -> Result<(), String> {
+    let dir = temp_dir("wp112-outcome")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    let (lease, _) = grant(&mut core, Some(full_scope()))?;
+    let allowed = ok(authorize_paths(
+        &mut core,
+        &lease.body.lease_id,
+        ExecutorClass::Filesystem,
+        Some(vec![r"C:\work\a.txt"]),
+    ))?;
+    let authorization = str_of(&allowed, "authorization_id")?;
+    let job = str_of(&allowed, "job_id")?;
+    let report = |authorization_id: &str| Request::Outcome {
+        authorization_id: authorization_id.to_owned(),
+        outcome: DispatchOutcome::Failed,
+        code: Some(FailureCode::PathEscape),
+    };
+    assert_eq!(
+        code(core.handle(&owner(), report(&authorization))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    assert_eq!(
+        code(core.handle(&orceld(), report("az-1"))),
+        Some(FailureCode::InvalidRequest)
+    );
+    assert_eq!(
+        code(core.handle(&orceld(), report(&format!("az-{}", "0".repeat(32))))),
+        Some(FailureCode::InvalidRequest)
+    );
+    // Another logon session of the same user cannot report it.
+    let elsewhere = CallerFacts {
+        logon_session_id: 0x7777,
+        ..orceld()
+    };
+    assert_eq!(
+        code(core.handle(&elsewhere, report(&authorization))),
+        Some(FailureCode::InvalidRequest)
+    );
+    assert!(live_jobs().contains(&job));
+
+    let recorded = ok(core.handle(&orceld(), report(&authorization)))?;
+    assert_eq!(recorded["job_terminated"], Value::Bool(true));
+    assert!(terminated_jobs().contains(&job));
+    assert_eq!(
+        code(core.handle(&orceld(), report(&authorization))),
+        Some(FailureCode::InvalidRequest)
+    );
+    let outcome = audit_records(&dir)?
+        .into_iter()
+        .find(|record| record["kind"] == "outcome")
+        .ok_or("an outcome record")?;
+    assert_eq!(outcome["asserted_by_session"]["outcome"], "failed");
+    assert_eq!(outcome["asserted_by_session"]["code"], "PATH_ESCAPE");
+    assert_eq!(outcome["observed"]["role"], "orceld");
+
+    // A revoke ends the job first; the outcome is still recorded after it.
+    let allowed = ok(authorize_paths(
+        &mut core,
+        &lease.body.lease_id,
+        ExecutorClass::ShellProcess,
+        None,
+    ))?;
+    ok(core.handle(
+        &owner(),
+        Request::Revoke {
+            lease_id: lease.body.lease_id.clone(),
+        },
+    ))?;
+    let late = ok(core.handle(&orceld(), report(&str_of(&allowed, "authorization_id")?)))?;
+    assert_eq!(late["job_terminated"], Value::Bool(false));
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn wp112_idle_jobs_are_closed_and_a_lease_holds_a_bounded_number() -> Result<(), String> {
+    let dir = temp_dir("wp112-idle")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    let (lease, _) = grant(&mut core, Some(full_scope()))?;
+    JOBS.with(|log| log.borrow_mut().active = 1);
+    for _ in 0..MAX_JOBS_PER_LEASE {
+        ok(authorize_paths(
+            &mut core,
+            &lease.body.lease_id,
+            ExecutorClass::ShellProcess,
+            None,
+        ))?;
+    }
+    assert_eq!(
+        code(authorize_paths(
+            &mut core,
+            &lease.body.lease_id,
+            ExecutorClass::ShellProcess,
+            None
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    // Busy jobs are kept while young; empty ones are closed once idle.
+    advance(JOB_IDLE_MS);
+    core.tick().map_err(|e| e.to_string())?;
+    assert_eq!(live_jobs().len(), MAX_JOBS_PER_LEASE);
+    // Review: a job some process keeps busy is terminated at its age limit.
+    advance(JOB_MAX_MS - JOB_IDLE_MS);
+    core.tick().map_err(|e| e.to_string())?;
+    assert!(live_jobs().is_empty());
+    JOBS.with(|log| log.borrow_mut().active = 0);
+    ok(authorize_paths(
+        &mut core,
+        &lease.body.lease_id,
+        ExecutorClass::ShellProcess,
+        None,
+    ))?;
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn wp112_job_ids_and_dispatch_paths_are_checked_lexically() {
+    use crate::lease::{check_dispatch_path, path_within_roots};
+    assert!(is_job_id(&format!("fcj-{}", "a1".repeat(16))));
+    for bad in [
+        format!("Global\\orcel-fc-{}", "0".repeat(32)),
+        format!("fcj-{}", "A".repeat(32)),
+        format!("fcj-{}", "0".repeat(31)),
+        format!("fcx-{}", "0".repeat(32)),
+        String::new(),
+    ] {
+        assert!(!is_job_id(&bad), "{bad}");
+    }
+    let roots = vec![r"C:\work".to_owned(), r"D:\".to_owned()];
+    for inside in [
+        r"C:\work",
+        r"C:\work\",
+        r"c:\WORK\a\b.txt",
+        r"D:\anything",
+        "C:/work/x",
+    ] {
+        assert!(path_within_roots(inside, &roots), "{inside}");
+    }
+    for outside in [
+        r"C:\workshop",
+        r"C:\",
+        r"E:\work",
+        r"C:\work\..\x",
+        r"C:\work\x:y",
+        "",
+    ] {
+        assert!(!path_within_roots(outside, &roots), "{outside}");
+    }
+    assert!(check_dispatch_path(r"C:\").is_ok());
+    assert!(check_dispatch_path("C:\\work\\a\u{7}b").is_err());
+    assert!(check_dispatch_path(&format!("C:\\{}", "a".repeat(1100))).is_err());
+    assert!(check_dispatch_path(r"C:\work\name ").is_err());
+    assert!(check_dispatch_path(r"C:\work\\double").is_err());
+}
+
+/// Review of 291e045e: orceld asks between assigning its suspended worker
+/// and resuming it; a revoke, Stop or ended job in between refuses.
+#[test]
+fn wp112_dispatch_active_refuses_once_the_lease_or_job_ended() -> Result<(), String> {
+    let dir = temp_dir("wp112-active")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    let (lease, _) = grant(&mut core, Some(full_scope()))?;
+    let ask = |id: &str| Request::DispatchActive {
+        authorization_id: id.to_owned(),
+    };
+    let allowed = ok(authorize_paths(
+        &mut core,
+        &lease.body.lease_id,
+        ExecutorClass::ShellProcess,
+        None,
+    ))?;
+    let first = str_of(&allowed, "authorization_id")?;
+    assert_eq!(ok(core.handle(&orceld(), ask(&first)))?["active"], true);
+    assert_eq!(
+        code(core.handle(&owner(), ask(&first))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    assert_eq!(
+        code(core.handle(&orceld(), ask(&format!("az-{}", "0".repeat(32))))),
+        Some(FailureCode::InvalidRequest)
+    );
+    // The job ended (here by its age limit): refused though the lease lives.
+    let busy = ok(authorize_paths(
+        &mut core,
+        &lease.body.lease_id,
+        ExecutorClass::ShellProcess,
+        None,
+    ))?;
+    JOBS.with(|log| log.borrow_mut().active = 1);
+    advance(JOB_MAX_MS);
+    core.tick().map_err(|e| e.to_string())?;
+    JOBS.with(|log| log.borrow_mut().active = 0);
+    assert_eq!(
+        code(core.handle(&orceld(), ask(&str_of(&busy, "authorization_id")?))),
+        Some(FailureCode::LeaseInvalid)
+    );
+    // A revoke between Authorize and the resume refuses.
+    let late = ok(authorize_paths(
+        &mut core,
+        &lease.body.lease_id,
+        ExecutorClass::ShellProcess,
+        None,
+    ))?;
+    ok(core.handle(
+        &owner(),
+        Request::Revoke {
+            lease_id: lease.body.lease_id.clone(),
+        },
+    ))?;
+    assert_eq!(
+        code(core.handle(&orceld(), ask(&str_of(&late, "authorization_id")?))),
+        Some(FailureCode::LeaseInvalid)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// Re-review of 073b7fee: when the open-dispatch queue evicts its oldest
+/// entry, that dispatch's job is terminated with it.
+#[test]
+fn wp112_an_evicted_open_dispatch_ends_its_job() -> Result<(), String> {
+    use crate::core::dispatch_jobs::MAX_OPEN_DISPATCHES;
+    let dir = temp_dir("wp112-evict")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    let (lease, _) = grant(&mut core, Some(full_scope()))?;
+    let id = lease.body.lease_id.clone();
+    JOBS.with(|log| log.borrow_mut().active = 1);
+    let first = str_of(
+        &ok(authorize_paths(
+            &mut core,
+            &id,
+            ExecutorClass::ShellProcess,
+            None,
+        ))?,
+        "job_id",
+    )?;
+    for _ in 1..MAX_OPEN_DISPATCHES {
+        ok(authorize(
+            &mut core,
+            &orceld(),
+            &id,
+            ExecutorClass::DesktopInput,
+        ))?;
+    }
+    assert!(live_jobs().contains(&first), "still open");
+    ok(authorize(
+        &mut core,
+        &orceld(),
+        &id,
+        ExecutorClass::DesktopInput,
+    ))?;
+    assert!(terminated_jobs().contains(&first) && !live_jobs().contains(&first));
+    JOBS.with(|log| log.borrow_mut().active = 0);
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }

@@ -7,6 +7,7 @@ use super::confirm;
 use super::crypto::{CngRsaVerifier, EcdsaP256Signer, HelloKeyVerifier, SystemEntropy};
 use super::eventlog::{EventLogSink, FileEventSink};
 use super::identity;
+use super::jobs::{ClientProcess, ClientSlot};
 use super::pipe::{create_instance, CreateError, Pipe};
 use crate::attestation::AttestationReport;
 use crate::caller::{CallerFacts, ClientPolicy};
@@ -186,6 +187,7 @@ pub fn start(config: RunConfig) -> Result<Runtime, AuthorityError> {
     };
     crate::core::check_signing_key_history(&config.state_dir, SIGNING_KEY_FILE)?;
     let presence = presence_verifier(&config)?;
+    let client_slot: ClientSlot = Arc::new(Mutex::new(None));
     let signer = EcdsaP256Signer::load_or_create(&config.state_dir.join(SIGNING_KEY_FILE))?;
     let services = Services {
         signer: Box::new(signer),
@@ -194,6 +196,10 @@ pub fn start(config: RunConfig) -> Result<Runtime, AuthorityError> {
         uac: Box::new(super::uac::MachineUacPolicy),
         events,
         entropy: Box::new(SystemEntropy),
+        // WP1-12: unnamed dispatch jobs, an assign-only handle duplicated
+        // into the Authorize caller, whose process the connection opens
+        // into `client_slot` while impersonating it.
+        jobs: Box::new(super::jobs::ServiceJobs::new(client_slot.clone())),
         clock: crate::now_ms,
     };
     let core = AuthorityCore::open(
@@ -210,6 +216,7 @@ pub fn start(config: RunConfig) -> Result<Runtime, AuthorityError> {
     let serving = Serving {
         mode: config.mode,
         scripted_log: config.scripted_consent_log.clone(),
+        client_slot,
     };
     std::thread::Builder::new()
         .name("orcel-authority-accept".to_owned())
@@ -241,6 +248,7 @@ fn publish_public_key(config: &RunConfig, public: &[u8]) -> Result<(), Authority
 #[derive(Clone)]
 struct Serving {
     mode: RunMode,
+    client_slot: ClientSlot,
     #[cfg_attr(not(feature = "authority-scripted-consent"), allow(dead_code))]
     scripted_log: Option<PathBuf>,
 }
@@ -358,6 +366,16 @@ fn serve_connection(mut conn: Pipe, core: &Arc<Mutex<AuthorityCore>>, serving: &
                     {
                         let _ = guard.enroll_scripted(&facts.user_sid);
                     }
+                    // WP1-12: an Authorize may duplicate a job handle into
+                    // its caller: open the caller's process now, as the
+                    // client, checked against the observed instance. The
+                    // core lock is held, so the slot is this request's.
+                    let wants_process = matches!(request, Request::Authorize { .. });
+                    if wants_process {
+                        if let Ok(mut slot) = serving.client_slot.lock() {
+                            *slot = ClientProcess::open_impersonating(conn.raw(), facts).ok();
+                        }
+                    }
                     let response = match guard.handle(facts, request) {
                         Ok(result) => Response::success(result),
                         Err(error) => Response::failure(&error),
@@ -369,6 +387,11 @@ fn serve_connection(mut conn: Pipe, core: &Arc<Mutex<AuthorityCore>>, serving: &
                     // Enrollment confirmations: rendered by the installed
                     // service only (console mode never shows a box and never
                     // enrolls).
+                    if wants_process {
+                        if let Ok(mut slot) = serving.client_slot.lock() {
+                            *slot = None;
+                        }
+                    }
                     let tasks = guard.take_pending_confirmations();
                     drop(guard);
                     if serving.mode == RunMode::Service {
