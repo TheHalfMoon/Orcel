@@ -85,6 +85,15 @@ The per-component view (state, commits, tests, limitations, blockers) is in
 | F5 client matrix: every configuration in `examples/mcp-clients` reaches the same 45 tools on the installed Windows release, over stdio and loopback HTTP, with a missing or wrong credential refused. **Configuration and protocol only, not those clients** | #619 |
 | M4a harness: a bridge process that speaks only to `127.0.0.1`, one model task through the real agent, edge and orceld, and another process's peak memory on Windows and Linux. CI checks the wiring on all three OSes against a fixed stub, labelled `stub-no-model`, which the scorer refuses. **It says nothing about any model.** Starting a pinned server waits on the download decision | #615 → `4e85551` |
 | Doc parser zip advisory reachability, completed: anydoc 0.2.2 searched in full; one `ZipArchive`, read only by name under caps; no `extract` anywhere | #580 → `e272277` |
+| Doc parser zip advisories remediated: zip `=9.6.1`, anydoc's `^8.6` requirement served by that zip through a path re-export (`apps/orcel-doc-parser/compat/zip8-on-zip9`), the doc parser's audit ignore list empty (RUSTSEC-2026-0545..0548 fixed; 0367/0368/0369/0429 ignores removed); the parser's release build reproducible across checkout folders. Remove the re-export when anydoc accepts zip >= 9 | #804 → `3e3939c8` |
+| SG-000119 closed: the Tauri 2 read-only Control Room, Windows first (A0 to A5: #774, #776, #777, #781, #783, #787). Engineering qualified for development builds on Windows; not claimed: the founder's Narrator pass, any founder-present run, release distribution, macOS and Linux | #790 → `884c9962` |
+| SG-000131 inert pieces: WP1-02 shared contracts with drift-checked schemas; WP1-01 provenance and notice gates (licence type no longer blocks, founder decision of 2026-11-17); WP1-03 hash-chained audit written before every dispatch, with authority-service anchors and owner-approved recovery (anchors need the installed service; founder run pending) | #794 → `e90b6add`, #796 → `2bd9dc01`, #813 → `7177aca1` |
+| SG-000132 authority service, engineering only, **nothing installed; founder run pending**: slice 1 service, slice 2 enrollment, grants and service-issued Full Access (OB-08), the hardened native installer with its CI install E2E (post-merge main run 44318446161: `Authority service artifact`, including attestation and the runbook's `gh attestation verify`, and `Authority install E2E` passed), WP1-10 slices 3 to 7 (dispatcher and service-made jobs, fc-worker process and Git, nested `.git` refusal, desktop input host in a lease-lifetime job with handle acknowledgement, the calling client at the desktop check, SG-000036 bounded execution through the dispatcher). The installed-service rows stay UNVERIFIED (founder run) | #808 → `47c8fc42`, #809 → `909453f7`, #816 → `7a8b7c8e`, #823 → `7114c2ee`, #824 → `f7f6a1a5`, #825 → `b896ce37`, #826 → `79fae183`, #827 → `08fab6e0`, #828 → `f22247a3` |
+| SG-000135 Orcel Browser, engineering under scripted consent, **founder runs pending**: activation and B0 inventory, B1 takeover state machine, OB-01/OB-02 broker and local `browser_full`, OB-03 screenshots and tabs, OB-04 Shadow and Visible modes with persistent profiles, OB-05 evidence receipts on the audit chain, OB-06 human takeover (3000 ms quiet), OB-07 challenge handoff (never bypass), OB-07b sign-in stays the person's and agent-facing URLs sanitized. OB-09 and OB-10 not started | #800, #801, #802, #803, #806, #807, #818, #817, #810, #820 → `7ad1ac77`, #821 → `9cb83e07`, #822 → `6004e52e` (per-PR commits in `COMPLETION_LEDGER.md`) |
+| Chromium 157 qualified for the browser worker (A10), after the Windows runner image moved to it | #819 → `38551823` |
+| Inert donor transplants, denied by default or not wired: W2-01 HCU semantic refs, W2-02 Agent S planner, W2-03 Stagehand outline and extract, REA P-1 `orcel-search`; transplant ledgers | #795, #798, #797, #792, #791, #793 |
+| Design handoff contract and validator; the Design System v1 package added at status `review` (**not approved**; nothing integrated) | #812 → `6f31f0f1`, #814 → `068b51f0` |
+| CI flake fixes: Control Room native shell probe waits for its counters (#805); `native_qualify` ignores PID-reuse orphans such as `vctip.exe` (#815) | #805 → `d1d28d1d`, #815 → `9083f742` |
 | Lifecycle on main `89066a6`: Windows release qualification (install, run, update, recover, uninstall, local report client, 400 MB budget) and Linux deb/rpm/tarball install, systemd units, tamper detection and uninstall | main CI 40672122647 |
 
 ## 2. Engineering that can still be completed without the founder
@@ -93,7 +102,6 @@ The per-component view (state, commits, tests, limitations, blockers) is in
 |---|---|
 | #438 residual: navigation `read: TimedOut` on CI | Waiting for a recurrence; #613's timeline captures it. #603's merge closed the issue by mistake on 2026-11-03, and the failure recurred afterwards; reopened 2026-11-04 |
 | SG-000115 Priority B (inert): wiring B9a's lifetime spawner and B8b/B9b containment into a launch path (activation work); a cgroup the engine cannot leave (B9b's residual); S-07 key shipping and pinning (a founder decision) | Engineering solutions to shrink the class 4 residuals; none activates SG-000115 |
-| Doc parser zip advisories (RUSTSEC-2026-0367/0368/0369/0429, then 0545..0548) | Remediated on branch `fix/doc-parser-zip-9` (2026-11-17), pending merge: the parser pins zip `=9.6.1`, and anydoc's `^8.6` requirement is served by that same zip through a path re-export (`apps/orcel-doc-parser/compat/zip8-on-zip9`). The doc parser's audit list is empty. Remove the re-export when anydoc accepts zip >= 9 |
 | #292 flaky SG-000013 contained PowerShell test on windows-latest | Root cause not yet found |
 | macOS install / start / uninstall lifecycle | No macOS package yet: macOS packaging (XP-16) waits for FD-05; Windows and Linux lifecycle are in class 1 |
 | SG-000128 closeout | After slice 3b (class 3) is accepted or the founder records otherwise; the closeout judge checks that slice 1's deferred items are evidenced |
@@ -102,6 +110,8 @@ The per-component view (state, commits, tests, limitations, blockers) is in
 | Governance preparation for SG-000115, SG-000122, SG-000124, SG-000127 closeout | Specs, tests, dependency and security analysis only; activation is a founder decision |
 | SG-000115 inert pre-activation engineering (founder decision 2026-10-29, #526) | Category A in `prep/SG-000115.md`: test-only or never-default builds, no production caller, pinned by tests to leave macOS/Linux launch refused. A slice that cannot meet the conditions stays a Draft PR. Activation, wiring, S-07 and the macOS descendant escape stay with the founder |
 | Documentation consistency (frontier, roadmap, benchmark plan) | Ongoing with each merge |
+| SG-000135 engineering left | SH-2 (Shadow toggled mid-mission); `browser_structured` routed through the broker (deferred because it would change its behaviour); OB-10 BrowserOS packaging and import; OB-09 remote mapping after the founder's remote-coverage decision (section 4) |
+| SG-000132 engineering left | The indicator (WP1-12) and standing approvals (WP1-14); `GLOBALATOMS` on the desktop host's job (not verified with UI Automation and OLE). The fs, process and Git tool surface waits on a decision (section 4); retiring `authority.key` waits on the founder's first real desktop grant (section 3) |
 
 ## 3. Acceptance tests that need the founder present
 
@@ -113,6 +123,8 @@ The per-component view (state, commits, tests, limitations, blockers) is in
 | macOS direct-capture consent; XP-07/XP-12 delivered capture and input | The founder grants consent on the Mac; nothing may forge or pre-grant it |
 | Real GNOME/KDE XP-10 approval checks | A person at the desktop prompt |
 | SG-000128 slice 3b: the cdb-s02 scripted plan acting (set_value, invoke) through the scoped read on a disposable Windows machine | UIA actions need a Full User lease, issued only after a STRONG platform-presence approval (Windows Hello); granting it from a test would be manufactured consent. Never on the founder's live desktop |
+| SG-000132: the elevated install from verified bytes (`prep/SG132_INSTALL_RUNBOOK.md`: commit proof, `gh attestation verify`, TPM root comparison), Windows Hello enrollment against a real TPM, a first grant and revoke, then the UNVERIFIED (founder run) rows of slices 3 to 7 (handle duplication into a real orceld, Stop ending an in-flight worker, job UI limits on a service-made job, a desktop outcome in the service's audit, audit anchors) | Only the founder runs the elevated steps and answers the service box and Windows Hello; agents never install, elevate or answer them. Nothing was installed on a development PC; the elevated procedure ran only on disposable GitHub-hosted runners |
+| SG-000135 founder runs: OB-01 and OB-03 with real dialogs, OB-04's Shadow run with human input, OB-06's G run, OB-07b's sign-in procedure | A person must answer the prompts and give the human input; the E2E's consent is a test-only feature kept out of shipped builds, and an agent never enters a password |
 
 ## 4. Founder decisions
 
@@ -130,6 +142,9 @@ The per-component view (state, commits, tests, limitations, blockers) is in
 | M4 model selection and licensing | Candidates and the benchmark plan are in `prep/M4-local-model-candidates.md`; nothing is downloaded or run before this gate |
 | SG-000115 residuals (recorded, **not accepted**; engineering continues on each) | (a) macOS: a pid reused within one descendant scan (narrowed by B1, #557, to a backward wall-clock step: during a scan it can hide a reuse; afterwards it tears every scan, so the sweep fails closed); (b) descendants of another user that cannot be read, including root-run engines (on macOS recovery since B4, #566, keeps every profile while root runs an engine by a recognised name; a root engine under another name is not seen; since B6a, #568, a macOS profile with any non-deny ACL entry is refused at hold and at `verify` (an ACL added between those checks is not seen until the next one); the sandboxed-host `permission denied` ambiguity was closed by B3, #563); (c) false positives of the unattributable rule; (d) the network sink's port after an orceld crash (B8b, #586, removes the orphaned helper and the port traffic with an engine-only namespace that needs no uid maps, shown on the hosted Ubuntu runner; not wired into any launch path, and where unprivileged user namespaces are refused entirely, B9b, #604, contains the family through a systemd user service's cgroup, which a same-user process can still leave); (e) S-07 binds ownership and modes; B7, #581, adds a signature chain that verifies only where the signed index and the retained package are still on disk (stock GitHub Ubuntu has neither, and `/opt/google` at 0777, so Chrome there is unverified); (f) engines in another PID namespace; (g) profile paths with spaces (whole-argument matching now covers macOS always, and Linux only where the title is not rewritten), and `hidepid` on `/proc` |
 | Real platform presence (Windows Hello, Touch ID, polkit), macOS permissions | Never simulated or pre-granted |
+| SG-000135 remote (ChatGPT) `browser_full` coverage | On the interim lease store, or wait for the SG-000132 authority service (#801); the conservative default holds until answered |
+| The Full Control tool surface for filesystem, process and Git | The specs leave it open (#824); no request capability or MCP tool reaches `orceld fc-worker` until it is decided |
+| Design System v1 and the People First identity (v5) | #814's package is at status `review`, not approved; #811 is open (2026-11-19). Integration waits for both, and for the open questions in the package's `IMPLEMENTATION.md` section 5 |
 | Paid infrastructure, deployment | Excluded by the zero-cost rule |
 
 ## 5. External hardware or credentials
@@ -155,9 +170,24 @@ Decision numbers are those of `FOUNDER_DECISION_PACKET.md`. Orcel isn't finished
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-10, updated from 2026-11-07). Check GitHub for
+If a session ends, resume from here (2026-11-19, updated from 2026-11-10). Check GitHub for
 the current head and CI: this checkpoint can't name its own merge. The per-component state
-is in `COMPLETION_LEDGER.md`; start there.
+is in `COMPLETION_LEDGER.md`; start there. Merges from 2026-11-10 to #789 (main `4a8491c9`)
+are recorded per component there, not listed here.
+
+Merged 2026-11-17 to 2026-11-19, after #789 (main `f22247a3` at #828):
+- Closeouts and fixes: #790 (SG-000119 closed), #804 (doc parser zip 9.6.1), #805 and #815
+  (Control Room CI flakes), #819 (Chromium 157 qualified).
+- Unified platform, inert: #791 and #793 (transplant ledgers), #792 (`orcel-search`), #794
+  (contracts), #795, #797 and #798 (W2 transplants, denied by default), #796 (provenance gates),
+  #799 (identity v4), #813 (hash-chained audit with service anchors).
+- Orcel Browser (SG-000135): #800, #801 (activation), #802, #803, #806, #807, #810, #817, #818,
+  #820, #821, #822. OB-08 came with #809. Founder runs pending.
+- Authority service (SG-000132): #808, #809, #816 (hardened installer; post-merge main run
+  44318446161 passed the artifact and install E2E jobs), #823 to #828 (WP1-10 slices 3 to 7).
+  Nothing installed; founder run pending.
+- Design: #812 (handoff contract), #814 (v1 package, not approved). #811 (People First v5) is
+  open, as are #785, #342 and #328. Issues #260, #266, #267 and #292 are open.
 
 Merged 2026-11-07 to 2026-11-10, after the list below:
 - Filesystem and parser safety: #668, #670, #671, #674, #675, #676, #678, #679, #680; clipboard
