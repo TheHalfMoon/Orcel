@@ -50,9 +50,10 @@ mod computer_host;
 mod host_protocol;
 mod native_host_path;
 pub use computer_host::{
-    check_native_input_limits, computer_host_environment, input_sequence_digest, ApprovedInput,
-    ApprovedSemantic, ComputerHostAdapter, DesktopActionResult, DesktopCursorPosition,
-    DesktopInputAction, DesktopWindowAction, SpawnedHost,
+    check_native_input_limits, computer_host_environment, input_sequence_digest,
+    require_host_generation, ApprovedInput, ApprovedSemantic, ComputerHostAdapter,
+    DesktopActionResult, DesktopCursorPosition, DesktopInputAction, DesktopWindowAction,
+    SpawnedHost,
 };
 pub use native_host_path::{
     owner_and_mode_trusted, NATIVE_HOST_FILE_NAME, SYSTEM_NATIVE_HOST_PATH,

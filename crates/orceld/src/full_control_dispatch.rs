@@ -106,9 +106,11 @@ impl Family {
 pub(crate) struct Action<'a> {
     pub family: Family,
     pub request: &'a RequestEnvelope,
-    /// The client the request came from, when the caller knows it. The
-    /// desktop gate does not (slice 2 residual): the lease's own principal
-    /// is named then.
+    /// The client the request came from: SG132_SLICE6.md, the calling MCP
+    /// client's reference (`client_ref`), which the desktop gate always
+    /// names. `None` (a caller that does not know it) names the lease's own
+    /// principal. A lease bound to a client admits only that client
+    /// (`LeaseBody::admits_client`), here and again at the service.
     pub principal_id: Option<&'a str>,
     /// Absolute paths the action touches (filesystem and git).
     pub paths: Vec<String>,
@@ -316,7 +318,7 @@ fn authorize_with(
         }
         if action
             .principal_id
-            .is_some_and(|principal| principal != body.principal_id)
+            .is_some_and(|principal| !body.admits_client(executor, principal))
         {
             nearest = Some(ProviderError::new(
                 FailureCode::CapabilityDenied,
@@ -517,17 +519,24 @@ thread_local! {
 /// and its lease is returned: SG132_SLICE5.md, the desktop input then runs
 /// only in that lease's computer host ([`ensure_lease_host`]). `None`
 /// means the deprecated store admitted it (no service installed).
+///
+/// SG132_SLICE6.md (slice 2 residual): `Authorize` names the calling MCP
+/// client, identified the way orceld identifies it for browser leases: the
+/// client reference of the request's client session
+/// (`orcel_policy::browser_lease::client_ref`), not the lease's own
+/// principal; a lease bound to another client refuses (`CAPABILITY_DENIED`).
 pub(crate) fn desktop_gate(
     port: &dyn AuthorityPort,
     request: &RequestEnvelope,
     now_ms: u64,
 ) -> Result<Option<String>, ProviderError> {
+    let client = orcel_policy::browser_lease::client_ref(&request.client_session_id);
     let ticket = authorize(
         port,
         &Action {
             family: Family::DesktopInput,
             request,
-            principal_id: None,
+            principal_id: Some(&client),
             paths: Vec::new(),
         },
         now_ms,

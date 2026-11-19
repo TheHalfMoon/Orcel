@@ -282,7 +282,8 @@ show it.
   refuses a repository that changed between its read and its write.
 - **The service does not require paths for `shell_process` dispatches.** orceld does (process and git name their
   paths), and the service checks every named path; requiring them at the service is left for the shell-session
-  slice, whose sessions also name a working folder.
+  slice, whose sessions also name a working folder. **Closed in slice 6** ([SG132_SLICE6.md](SG132_SLICE6.md)
+  section 1.3): the service refuses a `shell_process` dispatch without paths.
 - Founder runs (UNVERIFIED rows): the UI restrictions on a job made by the installed service; Stop through the
   installed service ending an in-flight `run` and its descendants.
 
@@ -299,10 +300,11 @@ show it.
    profile and a shell allowlist of their own; the `run` operation's refused names do not apply there.
 4. SG-000097 application launch and close: GUI programs need a job profile without the UI restrictions, and the
    residuals above apply to them in full.
-5. The service requiring paths for every `shell_process` dispatch.
+5. The service requiring paths for every `shell_process` dispatch. Done in slice 6 ([SG132_SLICE6.md](SG132_SLICE6.md)).
 6. Slice 3 next steps 2 to 6 (desktop host in a job, retiring the deprecated store, the MCP principal at the
    desktop gate, the job handle acknowledgement, founder runs) are unchanged. Slice 5
-   ([SG132_SLICE5.md](SG132_SLICE5.md)) did the desktop host's job and the acknowledgement; the others remain.
+   ([SG132_SLICE5.md](SG132_SLICE5.md)) did the desktop host's job and the acknowledgement, slice 6 the MCP principal;
+   the others remain.
 
 ## Tests
 

@@ -180,7 +180,8 @@ the computer host) with the production launch into real unnamed jobs made the wa
    request to the host: if the lease ends (the service kills the host) in that gap and an observation on another
    thread restarts a plain host before the request, that request can reach the plain host. Before this slice the
    action would have run regardless; the gap is between two in-process calls. Checking the generation on every host
-   request would close it.
+   request would close it. **Closed in slice 6** ([SG132_SLICE6.md](SG132_SLICE6.md) section 1.2): every message a
+   leased action sends is checked against the lease's host generation under the session lock.
 5. **What the job does not contain.** Synthesized input, and effects through out-of-job brokers (COM, WMI, Task
    Scheduler, the shell), are not limited by any job (slice 4 section 5, C-27). The desktop host job leaves out
    `HANDLES` and `GLOBALATOMS` by design (section 1.2), so the host can use any window on the user's desktop, as
@@ -201,7 +202,9 @@ the computer host) with the production launch into real unnamed jobs made the wa
 1. Founder runs for the UNVERIFIED rows above and slices 3 and 4.
 2. Retire `authority.key` and the deprecated store after the founder's first real desktop grant through the
    installed service (slice 3 section 6); the plain host for desktop input goes with it.
-3. The real MCP client principal at the desktop gate (slice 2 residual).
+3. The real MCP client principal at the desktop gate (slice 2 residual). Done in slice 6
+   ([SG132_SLICE6.md](SG132_SLICE6.md) section 1.1), which also made the service require paths for every
+   `shell_process` dispatch.
 4. Request capabilities and MCP tools for the filesystem, process and git operations (slice 4 section 6, step 1).
 5. Possibly a private global atom table for the desktop host job (`GLOBALATOMS`), once UI Automation inside such a
    job is verified on a real desktop.

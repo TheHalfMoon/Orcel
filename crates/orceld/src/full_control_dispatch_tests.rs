@@ -21,7 +21,11 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
-const CLIENT: &str = "cl-abababababababababababababababab";
+/// The calling MCP client of `request` (client session `c`), as orceld
+/// identifies it (SG132_SLICE6.md); the test leases are bound to it.
+fn client() -> String {
+    orcel_policy::browser_lease::client_ref("c")
+}
 
 pub(crate) fn lease(id: char, scope: LeaseScope) -> LeaseBody {
     LeaseBody {
@@ -31,7 +35,7 @@ pub(crate) fn lease(id: char, scope: LeaseScope) -> LeaseBody {
         windows_user_sid: "S-1-5-21-1".to_owned(),
         logon_session_id: 7,
         ts_session_id: 1,
-        principal_id: CLIENT.to_owned(),
+        principal_id: client(),
         task: "tidy the work folder".to_owned(),
         requester: ObservedRequester {
             pid: 9,
@@ -427,7 +431,7 @@ fn fc_dispatch_a_wrong_family_or_scope_is_refused_before_authorize() {
         shells: false,
     };
     let browser = LeaseScope::BrowserFullAccess {
-        client_ref: CLIENT.to_owned(),
+        client_ref: client(),
         session_id: "bs-0123456789abcdef-1-0001020304050607".to_owned(),
         origins: vec!["https://fixture.test".to_owned()],
         families: vec![BrowserFamily::Click],
@@ -555,7 +559,7 @@ fn fc_dispatch_the_digest_binds_family_target_arguments_and_paths() {
     assert_eq!(*executor, ExecutorClass::Filesystem);
     assert_eq!(claims.action_digest, base);
     assert_eq!(claims.paths, Some(vec![r"C:\work\a.txt".to_owned()]));
-    assert_eq!(claims.principal_id, CLIENT);
+    assert_eq!(claims.principal_id, client());
     assert_eq!(claims.task, "tidy the work folder");
     assert_eq!(claims.request_id, "req-7");
 }
@@ -1003,6 +1007,56 @@ fn fc_dispatch_desktop_requests_report_each_authorization_once() {
     assert_eq!(quiet.ok(), Some(1));
     assert_eq!(made.get(), 1);
     assert_eq!(port.0.borrow().outcomes.len(), 2);
+}
+
+/// SG132_SLICE6.md (slice 2 residual): the desktop gate names the calling
+/// MCP client (the client reference of the request's client session, as
+/// orceld identifies clients for browser leases) in `Authorize`, never the
+/// lease's own principal. A lease bound to another client is refused before
+/// the service is asked; an unbound lease is authorized for the real client.
+#[test]
+fn fc_dispatch_the_desktop_gate_names_the_calling_client() {
+    // Bound to client session `c`: that client is admitted and named.
+    let port = FakePort::installed(vec![lease('1', full_scope())]);
+    let desktop = request("desktop.input", "execute", json!({"x": 1}));
+    desktop_gate(&port, &desktop, 5).expect("the bound client");
+    assert_eq!(port.0.borrow().authorized[0].2.principal_id, client());
+    // Another client session: refused here, the service never asked.
+    let mut other = desktop.clone();
+    other.client_session_id = "another-mcp-client".into();
+    let other_ref = orcel_policy::browser_lease::client_ref("another-mcp-client");
+    assert_ne!(other_ref, client());
+    assert_eq!(
+        code(desktop_gate(&port, &other, 6)),
+        Some(FailureCode::CapabilityDenied)
+    );
+    assert_eq!(port.0.borrow().authorized.len(), 1);
+    // An unbound lease (the default label): the real client is named, not
+    // the label.
+    let mut unbound = lease('2', full_scope());
+    unbound.principal_id = "orcel-owner".to_owned();
+    let port = FakePort::installed(vec![unbound]);
+    desktop_gate(&port, &other, 7).expect("an unbound lease");
+    {
+        let service = port.0.borrow();
+        assert_eq!(service.authorized.len(), 1);
+        assert_eq!(service.authorized[0].2.principal_id, other_ref);
+        assert_eq!(service.authorized[0].1, ExecutorClass::DesktopInput);
+    }
+    // The unbound relaxation is desktop input's only: a filesystem dispatch
+    // naming a client keeps the exact match and is refused before Authorize.
+    assert_eq!(
+        code(run_in_worker(
+            &port,
+            &launcher(&port),
+            &fs_request(),
+            Some(&other_ref),
+            &read_op(r"C:\work\a.txt"),
+            8
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    assert_eq!(port.0.borrow().authorized.len(), 1);
 }
 
 // ---------------------------------------------------------------------

@@ -202,10 +202,23 @@ impl AuthorityCore {
         paths: Option<&[String]>,
     ) -> Result<(), AuthorityError> {
         let paths = paths.unwrap_or_default();
-        if executor == ExecutorClass::Filesystem && paths.is_empty() {
-            return Err(AuthorityError::invalid(
-                "a filesystem dispatch names the paths it touches",
-            ));
+        // SG132_SLICE6.md: a shell/process dispatch names its paths too (a
+        // run its working folder and program, git its repository), so none
+        // is admitted without paths the roots are checked against.
+        if paths.is_empty() {
+            match executor {
+                ExecutorClass::Filesystem => {
+                    return Err(AuthorityError::invalid(
+                        "a filesystem dispatch names the paths it touches",
+                    ))
+                }
+                ExecutorClass::ShellProcess => {
+                    return Err(AuthorityError::invalid(
+                        "a shell/process dispatch names the paths it touches (its working folder and program, or its repository)",
+                    ))
+                }
+                _ => {}
+            }
         }
         if paths.is_empty() {
             return Ok(());

@@ -2079,6 +2079,9 @@ fn wp103_a_pending_reset_can_be_reset_again_and_its_opening_is_anchored_by_the_c
 // ---------------------------------------------------------------------
 
 const ROOT: &str = r"C:\work";
+/// What a shell/process dispatch names: SG132_SLICE6.md, the service
+/// refuses one without paths.
+const SHELL_PATH: &str = r"C:\work\tool.exe";
 
 fn full_scope() -> LeaseScope {
     LeaseScope::DesktopFullUser {
@@ -2185,7 +2188,7 @@ fn wp110_authorize_makes_a_job_for_filesystem_and_shell_and_none_for_desktop() -
         &mut core,
         &id,
         ExecutorClass::ShellProcess,
-        None,
+        Some(vec![SHELL_PATH]),
     ))?;
     let shell_job = str_of(&shell, "job_id")?;
     assert_ne!(fs_job, shell_job, "one job per dispatch");
@@ -2305,7 +2308,12 @@ fn wp110_revoke_stop_lock_and_expiry_terminate_the_dispatch_jobs() -> Result<(),
     let mut core = open_enrolled(&dir, &events)?;
     let shell = |core: &mut AuthorityCore, id: &str| -> Result<String, String> {
         str_of(
-            &ok(authorize_paths(core, id, ExecutorClass::ShellProcess, None))?,
+            &ok(authorize_paths(
+                core,
+                id,
+                ExecutorClass::ShellProcess,
+                Some(vec![SHELL_PATH]),
+            ))?,
             "job_id",
         )
     };
@@ -2346,7 +2354,7 @@ fn wp110_revoke_stop_lock_and_expiry_terminate_the_dispatch_jobs() -> Result<(),
             &mut core,
             &lease.body.lease_id,
             ExecutorClass::ShellProcess,
-            None
+            Some(vec![SHELL_PATH])
         )),
         Some(FailureCode::LeaseInvalid)
     );
@@ -2366,7 +2374,7 @@ fn wp110_a_job_that_cannot_be_made_refuses_before_any_allow_record() -> Result<(
         &mut core,
         &lease.body.lease_id,
         ExecutorClass::ShellProcess,
-        None,
+        Some(vec![SHELL_PATH]),
     );
     JOBS.with(|log| log.borrow_mut().fail = false);
     assert_eq!(code(refused), Some(FailureCode::AuthorityUnavailable));
@@ -2441,7 +2449,7 @@ fn wp110_outcomes_are_orcelds_once_per_authorization_and_end_the_job() -> Result
         &mut core,
         &lease.body.lease_id,
         ExecutorClass::ShellProcess,
-        None,
+        Some(vec![SHELL_PATH]),
     ))?;
     ok(core.handle(
         &owner(),
@@ -2467,7 +2475,7 @@ fn wp110_idle_jobs_are_closed_and_a_lease_holds_a_bounded_number() -> Result<(),
             &mut core,
             &lease.body.lease_id,
             ExecutorClass::ShellProcess,
-            None,
+            Some(vec![SHELL_PATH]),
         ))?;
         ack_and_confirm(&mut core, &allowed)?;
     }
@@ -2476,7 +2484,7 @@ fn wp110_idle_jobs_are_closed_and_a_lease_holds_a_bounded_number() -> Result<(),
             &mut core,
             &lease.body.lease_id,
             ExecutorClass::ShellProcess,
-            None
+            Some(vec![SHELL_PATH])
         )),
         Some(FailureCode::CapabilityDenied)
     );
@@ -2493,7 +2501,7 @@ fn wp110_idle_jobs_are_closed_and_a_lease_holds_a_bounded_number() -> Result<(),
         &mut core,
         &lease.body.lease_id,
         ExecutorClass::ShellProcess,
-        None,
+        Some(vec![SHELL_PATH]),
     ))?;
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
@@ -2554,7 +2562,7 @@ fn wp110_dispatch_active_refuses_once_the_lease_or_job_ended() -> Result<(), Str
         &mut core,
         &lease.body.lease_id,
         ExecutorClass::ShellProcess,
-        None,
+        Some(vec![SHELL_PATH]),
     ))?;
     let first = str_of(&allowed, "authorization_id")?;
     // SG132_SLICE5.md: the handle is acknowledged first.
@@ -2577,7 +2585,7 @@ fn wp110_dispatch_active_refuses_once_the_lease_or_job_ended() -> Result<(), Str
         &mut core,
         &lease.body.lease_id,
         ExecutorClass::ShellProcess,
-        None,
+        Some(vec![SHELL_PATH]),
     ))?;
     ack_and_confirm(&mut core, &busy)?;
     JOBS.with(|log| log.borrow_mut().active = 1);
@@ -2593,7 +2601,7 @@ fn wp110_dispatch_active_refuses_once_the_lease_or_job_ended() -> Result<(), Str
         &mut core,
         &lease.body.lease_id,
         ExecutorClass::ShellProcess,
-        None,
+        Some(vec![SHELL_PATH]),
     ))?;
     assert_eq!(ack_as(&mut core, &orceld(), &late), None);
     ok(core.handle(
@@ -2626,7 +2634,7 @@ fn wp110_an_evicted_open_dispatch_ends_its_job() -> Result<(), String> {
             &mut core,
             &id,
             ExecutorClass::ShellProcess,
-            None,
+            Some(vec![SHELL_PATH]),
         ))?,
         "job_id",
     )?;
@@ -2669,7 +2677,7 @@ fn wp110_a_job_ack_binds_authorization_handle_and_orceld_instance() -> Result<()
         &mut core,
         &lease.body.lease_id,
         ExecutorClass::ShellProcess,
-        None,
+        Some(vec![SHELL_PATH]),
     ))?;
     let authorization = str_of(&allowed, "authorization_id")?;
     let handle = allowed["job_handle"].as_u64().ok_or("a handle")?;
@@ -2844,7 +2852,7 @@ fn wp110_unconfirmed_jobs_end_after_the_ack_timeout_and_confirmed_ones_stay() ->
             &mut core,
             &id,
             ExecutorClass::ShellProcess,
-            None,
+            Some(vec![SHELL_PATH]),
         ))?);
     }
     let [lost, unconfirmed, confirmed] = [&answers[0], &answers[1], &answers[2]];
@@ -3090,6 +3098,188 @@ fn wp110_the_desktop_host_job_lives_with_its_lease() -> Result<(), String> {
             .as_str()
             .is_some_and(|text| text.contains("desktop input host"))));
     JOBS.with(|log| log.borrow_mut().active = 0);
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// A grant of `scope` to `principal` (a client reference binds the lease to
+/// that client; anything else leaves it unbound).
+fn grant_to(
+    core: &mut AuthorityCore,
+    scope: Option<LeaseScope>,
+    principal: &str,
+) -> Result<SignedLease, String> {
+    let begun = ok(core.handle(
+        &owner(),
+        grant_begin_with(scope, principal, "tidy the downloads folder"),
+    ))?;
+    let id = str_of(&begun, "intent_id")?;
+    let one_time = str_of(&begun, "code")?;
+    let (challenge, _) = confirm_yes(core, &owner(), &id)?;
+    let done = ok(core.handle(&owner(), presence(&id, &one_time, &challenge)))?;
+    serde_json::from_value(done["lease"].clone()).map_err(|e| e.to_string())
+}
+
+fn authorize_desktop_as(
+    core: &mut AuthorityCore,
+    lease_id: &str,
+    principal: &str,
+) -> Result<Value, AuthorityError> {
+    core.handle(
+        &orceld(),
+        Request::Authorize {
+            lease_id: lease_id.to_owned(),
+            executor: ExecutorClass::DesktopInput,
+            claims: AuthorizeClaims {
+                principal_id: principal.to_owned(),
+                ..claims()
+            },
+            job_ack: false,
+        },
+    )
+}
+
+/// SG132_SLICE6.md (slice 2 residual): orceld names the calling MCP client
+/// (its client reference) at the desktop check. A lease bound to a client
+/// admits only that client and refuses every other one before any allow
+/// record; an unbound lease admits any client reference and records it, and
+/// still admits its own principal (an orceld from before slice 6), but no
+/// other free label.
+#[test]
+fn wp110_desktop_authorize_checks_the_calling_client_against_the_lease() -> Result<(), String> {
+    let dir = temp_dir("wp110-client")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    let bound_client = format!("cl-{}", "a1".repeat(16));
+    let other_client = format!("cl-{}", "b2".repeat(16));
+    let bound = grant_to(&mut core, None, &bound_client)?;
+    let bound_id = bound.body.lease_id.clone();
+    ok(authorize_desktop_as(&mut core, &bound_id, &bound_client))?;
+    for wrong in [other_client.as_str(), "mcp-client-1", "orcel-owner"] {
+        assert_eq!(
+            code(authorize_desktop_as(&mut core, &bound_id, wrong)),
+            Some(FailureCode::CapabilityDenied),
+            "{wrong}"
+        );
+    }
+    let allowed = |dir: &Path| -> Result<Vec<String>, String> {
+        Ok(audit_records(dir)?
+            .into_iter()
+            .filter(|record| record["kind"] == "authorize")
+            .filter_map(|record| {
+                record["asserted_by_session"]["principal_id"]
+                    .as_str()
+                    .map(str::to_owned)
+            })
+            .collect())
+    };
+    assert_eq!(allowed(&dir)?, vec![bound_client.clone()]);
+    ok(core.handle(&owner(), Request::Revoke { lease_id: bound_id }))?;
+
+    // Unbound (the default label): any client reference, recorded as such.
+    let unbound = grant_to(&mut core, None, "orcel-owner")?;
+    let unbound_id = unbound.body.lease_id.clone();
+    ok(authorize_desktop_as(&mut core, &unbound_id, &other_client))?;
+    ok(authorize_desktop_as(&mut core, &unbound_id, "orcel-owner"))?;
+    for wrong in [
+        "mcp-client-1",
+        "cl-short",
+        "CL-B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2",
+    ] {
+        assert_eq!(
+            code(authorize_desktop_as(&mut core, &unbound_id, wrong)),
+            Some(FailureCode::CapabilityDenied),
+            "{wrong}"
+        );
+    }
+    assert_eq!(
+        allowed(&dir)?,
+        vec![
+            bound_client.clone(),
+            other_client.clone(),
+            "orcel-owner".to_owned()
+        ]
+    );
+    ok(core.handle(
+        &owner(),
+        Request::Revoke {
+            lease_id: unbound_id,
+        },
+    ))?;
+
+    // The unbound relaxation is desktop input's only: filesystem and
+    // shell/process keep the exact match, even under an unbound lease.
+    let wide = grant_to(&mut core, Some(full_scope()), "orcel-owner")?;
+    let wide_id = wide.body.lease_id.clone();
+    for executor in [ExecutorClass::Filesystem, ExecutorClass::ShellProcess] {
+        let ask = |core: &mut AuthorityCore, principal: &str| {
+            core.handle(
+                &orceld(),
+                Request::Authorize {
+                    lease_id: wide_id.clone(),
+                    executor,
+                    claims: AuthorizeClaims {
+                        principal_id: principal.to_owned(),
+                        paths: Some(vec![SHELL_PATH.to_owned()]),
+                        ..claims()
+                    },
+                    job_ack: true,
+                },
+            )
+        };
+        assert_eq!(
+            code(ask(&mut core, &other_client)),
+            Some(FailureCode::CapabilityDenied),
+            "{executor:?}"
+        );
+        ok(ask(&mut core, "orcel-owner"))?;
+    }
+    ok(authorize_desktop_as(&mut core, &wide_id, &other_client))?;
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// SG132_SLICE6.md (slice 4 residual): every shell/process dispatch names
+/// its paths (a run its working folder and program, git its repository);
+/// one without paths is refused before any job or allow record exists.
+#[test]
+fn wp110_shell_process_dispatches_name_their_paths() -> Result<(), String> {
+    let dir = temp_dir("wp110-shell-paths")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    let (lease, _) = grant(&mut core, Some(full_scope()))?;
+    let id = lease.body.lease_id.clone();
+    for paths in [None, Some(vec![])] {
+        let label = format!("{paths:?}");
+        assert_eq!(
+            code(authorize_paths(
+                &mut core,
+                &id,
+                ExecutorClass::ShellProcess,
+                paths
+            )),
+            Some(FailureCode::InvalidRequest),
+            "{label}"
+        );
+    }
+    assert!(live_jobs().is_empty(), "refusals made no job");
+    assert!(audit_records(&dir)?
+        .iter()
+        .all(|record| record["kind"] != "authorize"));
+    let shell = ok(authorize_paths(
+        &mut core,
+        &id,
+        ExecutorClass::ShellProcess,
+        Some(vec![ROOT, SHELL_PATH]),
+    ))?;
+    assert!(is_job_id(&str_of(&shell, "job_id")?));
+    // Desktop input names no paths and needs none.
+    ok(authorize(
+        &mut core,
+        &orceld(),
+        &id,
+        ExecutorClass::DesktopInput,
+    ))?;
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
