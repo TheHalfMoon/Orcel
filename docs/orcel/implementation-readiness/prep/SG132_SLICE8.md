@@ -218,7 +218,14 @@ real desktop shows.
    it is still empty when the re-check fails (another writer could fill it first; it is then left, and the call is
    still refused). The re-check of `mkdir` opens the new folder by name again; if the name was swapped back in that
    instant, the check sees the intended place and passes while the folder was made elsewhere (an empty folder, no
-   content). Outside Windows there is no re-check (no Full Control dispatch exists there).
+   content). The converse case: `open_created_folder` reopens the new folder by name, and
+   `FILE_FLAG_OPEN_REPARSE_POINT` covers only the last component, so a concurrent racer that moves a parent
+   junction between `create_dir` and the reopen can make the re-check see, and the cleanup delete, a different
+   folder that already existed, if it is empty (impact: one empty folder; it needs a racer running at that instant).
+   The fix is to create the child relative to the checked parent's handle (`NtCreateFile` with `RootDirectory`), a
+   later slice. A file write has neither case: it is checked and, if this call created it, removed through the one
+   handle it writes with, and an existing file is opened without delete access and never removed. Outside Windows
+   there is no re-check (no Full Control dispatch exists there).
 8. **No MCP tool yet.** Until option B's slice 2, only a local process that writes orceld's request line can send
    these requests (the same exposure as every other local shape).
 9. Slice 4 residuals (the program between check and start, window routes, Git's bundled programs) and slice 5 and 6

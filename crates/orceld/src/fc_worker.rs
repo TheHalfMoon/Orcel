@@ -467,9 +467,22 @@ pub(crate) mod opened {
         FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
     };
 
-    /// The file to write, opened with delete access so a file this call
-    /// created can be removed by its handle; `true` when this call created
-    /// it.
+    /// The access a write open asks for: write and read-attributes (the
+    /// link count and final path checks) always; delete only when this call
+    /// creates the file, so a file it created can be removed by its handle.
+    /// An existing file is never deleted, so it is opened without delete
+    /// access: a file another program holds open without delete sharing,
+    /// or an ACL without delete, is not refused for it.
+    pub(crate) fn write_access(create: bool) -> u32 {
+        if create {
+            GENERIC_WRITE | DELETE | FILE_READ_ATTRIBUTES
+        } else {
+            GENERIC_WRITE | FILE_READ_ATTRIBUTES
+        }
+    }
+
+    /// The file to write; `true` when this call created it (and so holds
+    /// delete access to it, [`write_access`]).
     pub(crate) fn open_for_write(
         resolved: &Path,
         create_new: bool,
@@ -478,9 +491,7 @@ pub(crate) mod opened {
             let mut options = std::fs::OpenOptions::new();
             // `write` lets the standard library create the file; the
             // access itself is `access_mode`'s.
-            options
-                .write(true)
-                .access_mode(GENERIC_WRITE | DELETE | FILE_READ_ATTRIBUTES);
+            options.write(true).access_mode(write_access(create));
             if create {
                 options.create_new(true);
             }

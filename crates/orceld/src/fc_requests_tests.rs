@@ -1218,3 +1218,33 @@ fn fc_requests_junctions_and_short_names_into_state_are_refused() {
     let _ = std::fs::remove_dir(work.join("into-state"));
     let _ = std::fs::remove_dir_all(base);
 }
+
+/// An existing file is opened for writing without delete access: another
+/// program holding it open without delete sharing does not make the write
+/// fail; only a file this call creates is opened with delete access.
+#[cfg(windows)]
+#[test]
+fn fc_requests_existing_files_are_opened_without_delete_access() {
+    use crate::fc_worker::opened;
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_folders::scratch;
+    use windows_sys::Win32::Storage::FileSystem::{DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE};
+    assert_eq!(opened::write_access(false) & DELETE, 0);
+    assert_eq!(opened::write_access(true) & DELETE, DELETE);
+    let base = scratch("share");
+    let existing = base.join("held.txt");
+    std::fs::write(&existing, "before").expect("existing");
+    // Another program's handle: read and write sharing, no delete sharing.
+    let holder = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .open(&existing)
+        .expect("holder");
+    let (file, created) = opened::open_for_write(&existing, false).expect("opened while held");
+    assert!(!created);
+    let roots = vec![std::fs::canonicalize(&base).expect("root")];
+    opened::recheck(&file, &roots, &[]).expect("rechecked without delete access");
+    drop(file);
+    drop(holder);
+    let _ = std::fs::remove_dir_all(base);
+}
