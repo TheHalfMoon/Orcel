@@ -667,20 +667,23 @@ fn fc_dispatch_acknowledges_the_job_handle_before_using_it() {
 #[derive(Default)]
 struct FakeHosts {
     running: Cell<bool>,
+    /// The generation of the host in use (moves on every replacement, as
+    /// the adapter's does).
+    generation: Cell<u64>,
     started: RefCell<Vec<u64>>,
     fails: Cell<bool>,
 }
 
 impl HostLauncher for FakeHosts {
-    fn running(&self) -> bool {
-        self.running.get()
+    fn running(&self, generation: u64) -> bool {
+        self.running.get() && self.generation.get() == generation
     }
 
     fn start_in_job(
         &self,
         job_handle: u64,
         confirm: &dyn Fn() -> Result<(), ProviderError>,
-    ) -> Result<(), ProviderError> {
+    ) -> Result<u64, ProviderError> {
         if self.fails.get() {
             return Err(ProviderError::new(
                 FailureCode::ProviderUnavailable,
@@ -690,7 +693,8 @@ impl HostLauncher for FakeHosts {
         confirm()?;
         self.started.borrow_mut().push(job_handle);
         self.running.set(true);
-        Ok(())
+        self.generation.set(self.generation.get() + 1);
+        Ok(self.generation.get())
     }
 }
 
@@ -721,13 +725,24 @@ fn fc_dispatch_the_desktop_host_runs_in_its_leases_job_and_a_new_lease_gets_a_fr
     let restarted = ensure_lease_host(&port, &hosts, &current, &first_lease).expect("restarted");
     assert_ne!(restarted.job_id, first.job_id);
     assert_eq!(hosts.started.borrow().len(), 2);
+    // Review of c02942bc: another host replaced the lease's one (an
+    // observation restarted a plain host after the leased one ended), and
+    // the replacement runs. It is not the lease's host: a fresh one in a
+    // fresh job, never the running plain host.
+    hosts.generation.set(hosts.generation.get() + 1);
+    assert!(!hosts.running(restarted.generation));
+    let replaced = ensure_lease_host(&port, &hosts, &current, &first_lease).expect("replaced");
+    assert_ne!(replaced.job_id, restarted.job_id);
+    assert_ne!(replaced.generation, restarted.generation);
+    assert_eq!(hosts.started.borrow().len(), 3);
     // A new lease gets a fresh host in its own job.
     let second = ensure_lease_host(&port, &hosts, &current, &second_lease).expect("second lease");
     assert_eq!(second.lease_id, second_lease);
-    assert_eq!(hosts.started.borrow().len(), 3);
+    assert_eq!(hosts.started.borrow().len(), 4);
     assert_eq!(
         port.0.borrow().desktop_hosts,
         vec![
+            first_lease.clone(),
             first_lease.clone(),
             first_lease.clone(),
             second_lease.clone()

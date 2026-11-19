@@ -777,7 +777,8 @@ impl AuthorityCore {
                 lease_id,
                 executor,
                 claims,
-            } => self.authorize(caller, role, &lease_id, executor, claims),
+                job_ack,
+            } => self.authorize(caller, role, &lease_id, executor, claims, job_ack),
             Request::Outcome {
                 authorization_id,
                 outcome,
@@ -1948,10 +1949,19 @@ impl AuthorityCore {
         lease_id: &str,
         executor: ExecutorClass,
         claims: AuthorizeClaims,
+        job_ack: bool,
     ) -> Result<Value, AuthorityError> {
         if role != CallerRole::Orceld {
             return Err(AuthorityError::denied(
                 "only orceld (a configured trusted image) may ask for Authorize",
+            ));
+        }
+        // SG132_SLICE5.md: a job family needs an orceld that acknowledges
+        // job handles. An older one closes its handle itself, so the
+        // service would close a value it may have reused; it gets no job.
+        if dispatch_jobs::executor_runs_in_job(executor) && !job_ack {
+            return Err(AuthorityError::invalid(
+                "this orceld does not acknowledge job handles (job_ack); update orceld with the service",
             ));
         }
         if executor == ExecutorClass::Admin {

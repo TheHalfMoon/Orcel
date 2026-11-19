@@ -1032,6 +1032,11 @@ mod platform {
     pub struct ComputerHostAdapter {
         path: PathBuf,
         session: Mutex<HostSession>,
+        /// SG132_SLICE5.md: which host process the session talks to; it
+        /// starts at 1 and moves (under the session lock) whenever the host
+        /// is replaced, so a caller can tell the host it started from one
+        /// started after it.
+        generation: std::sync::atomic::AtomicU64,
         bindings: Mutex<BTreeMap<u64, HostTargetBinding>>,
         armed: Mutex<Option<ArmedSemantic>>,
         armed_input: Mutex<Option<ArmedInput>>,
@@ -1170,6 +1175,7 @@ mod platform {
             Ok(Self {
                 path,
                 session: Mutex::new(session),
+                generation: std::sync::atomic::AtomicU64::new(1),
                 bindings: Mutex::new(BTreeMap::new()),
                 armed: Mutex::new(None),
                 armed_input: Mutex::new(None),
@@ -1205,6 +1211,7 @@ mod platform {
             Ok(Self {
                 path,
                 session: Mutex::new(session),
+                generation: std::sync::atomic::AtomicU64::new(1),
                 bindings: Mutex::new(BTreeMap::new()),
                 armed: Mutex::new(None),
                 armed_input: Mutex::new(None),
@@ -1245,6 +1252,7 @@ mod platform {
             Ok(Self {
                 path: path.into(),
                 session: Mutex::new(session),
+                generation: std::sync::atomic::AtomicU64::new(1),
                 bindings: Mutex::new(BTreeMap::new()),
                 armed: Mutex::new(None),
                 armed_input: Mutex::new(None),
@@ -1260,12 +1268,13 @@ mod platform {
         /// the new host checks them the same way); host snapshot ids and any
         /// armed approval are dropped, since they belong to the old host.
         /// A host that fails to negotiate is ended and the old one kept.
+        /// Returns the new host's generation ([`Self::host_running_at`]).
         pub fn adopt_host(
             &self,
             process: Box<dyn SpawnedHost>,
             stdin: Box<dyn Write + Send>,
             stdout: Box<dyn std::io::Read + Send>,
-        ) -> Result<(), UiaError> {
+        ) -> Result<u64, UiaError> {
             let session = HostSession::over(
                 Some(process),
                 stdin,
@@ -1284,22 +1293,46 @@ mod platform {
                 .unwrap_or(false)
         }
 
+        /// SG132_SLICE5.md: the generation of the host process the session
+        /// talks to now.
+        pub fn host_generation(&self) -> u64 {
+            self.generation.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        /// SG132_SLICE5.md: whether the host of `generation` is the one the
+        /// session talks to and it is still running (checked together under
+        /// the session lock).
+        pub fn host_running_at(&self, generation: u64) -> bool {
+            self.session
+                .lock()
+                .map(|mut session| {
+                    self.generation.load(std::sync::atomic::Ordering::SeqCst) == generation
+                        && session.child.as_mut().is_none_or(|child| child.running())
+                })
+                .unwrap_or(false)
+        }
+
         /// Starts a fresh host from this adapter's path in place of one
-        /// that exited (the same start as `from_path`).
-        pub fn restart_host(&self) -> Result<(), UiaError> {
+        /// that exited (the same start as `from_path`). Returns its
+        /// generation.
+        pub fn restart_host(&self) -> Result<u64, UiaError> {
             let session = HostSession::spawn(&self.path)?;
             self.replace_session(session)
         }
 
-        fn replace_session(&self, session: HostSession) -> Result<(), UiaError> {
-            let previous = {
+        fn replace_session(&self, session: HostSession) -> Result<u64, UiaError> {
+            let (previous, generation) = {
                 let mut current = self.session.lock().map_err(|_| {
                     UiaError::new(
                         FailureCode::ProviderUnavailable,
                         "computer host session lock is poisoned",
                     )
                 })?;
-                std::mem::replace(&mut *current, session)
+                let generation = self
+                    .generation
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                    + 1;
+                (std::mem::replace(&mut *current, session), generation)
             };
             // The old host is shut down and ended outside the lock.
             drop(previous);
@@ -1315,7 +1348,7 @@ mod platform {
             if let Ok(mut armed) = self.armed_input.lock() {
                 *armed = None;
             }
-            Ok(())
+            Ok(generation)
         }
 
         /// An adapter over a scripted transport, negotiated for `platform`.
@@ -1329,6 +1362,7 @@ mod platform {
             Ok(Self {
                 path: PathBuf::from("scripted-host"),
                 session: Mutex::new(session),
+                generation: std::sync::atomic::AtomicU64::new(1),
                 bindings: Mutex::new(BTreeMap::new()),
                 armed: Mutex::new(None),
                 armed_input: Mutex::new(None),

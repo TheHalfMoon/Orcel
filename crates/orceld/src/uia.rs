@@ -130,27 +130,30 @@ fn trusted_native_host(
 /// orceld's one computer host adapter (its host process can be replaced).
 static HOST: OnceLock<ComputerHostAdapter> = OnceLock::new();
 
-/// SG132_SLICE5.md: whether the computer host process is running.
-pub(crate) fn computer_host_running() -> bool {
-    HOST.get().is_some_and(ComputerHostAdapter::host_running)
+/// SG132_SLICE5.md: whether the computer host of `generation` is the one in
+/// use and still running.
+pub(crate) fn computer_host_running_at(generation: u64) -> bool {
+    HOST.get()
+        .is_some_and(|host| host.host_running_at(generation))
 }
 
 /// SG132_SLICE5.md: makes a host orceld started (suspended, in a lease's
 /// service-made Job Object, then resumed) the computer host; the host it
-/// replaces is ended.
+/// replaces is ended. Returns the adopted host's generation.
 #[cfg(windows)]
 pub(crate) fn adopt_computer_host(
     path: std::path::PathBuf,
     process: Box<dyn orcel_provider_uia::SpawnedHost>,
     stdin: Box<dyn std::io::Write + Send>,
     stdout: Box<dyn std::io::Read + Send>,
-) -> Result<(), ProviderError> {
+) -> Result<u64, ProviderError> {
     let provider =
         |error: orcel_provider_uia::UiaError| ProviderError::new(error.code, error.message);
     if let Some(host) = HOST.get() {
         return host.adopt_host(process, stdin, stdout).map_err(provider);
     }
     let adapter = ComputerHostAdapter::adopting(path, process, stdin, stdout).map_err(provider)?;
+    let generation = adapter.host_generation();
     // Another request made the adapter meanwhile: the new host is ended
     // with the refused adapter and this action refuses (fail closed).
     HOST.set(adapter).map_err(|_| {
@@ -158,7 +161,8 @@ pub(crate) fn adopt_computer_host(
             FailureCode::ProviderUnavailable,
             "the computer host changed while the lease's host started; try again",
         )
-    })
+    })?;
+    Ok(generation)
 }
 
 fn computer_host() -> Result<&'static ComputerHostAdapter, ProviderError> {
@@ -168,7 +172,10 @@ fn computer_host() -> Result<&'static ComputerHostAdapter, ProviderError> {
     if let Some(lease) = crate::desktop_host_job::required() {
         return HOST
             .get()
-            .filter(|host| host.host_running() && crate::desktop_host_job::serves(&lease))
+            .filter(|host| {
+                crate::desktop_host_job::serving(&lease)
+                    .is_some_and(|generation| host.host_running_at(generation))
+            })
             .ok_or_else(|| {
                 ProviderError::new(
                     FailureCode::LeaseInvalid,

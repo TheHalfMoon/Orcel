@@ -42,13 +42,17 @@
 //!   it was never acknowledged, the service also closes the handle it
 //!   duplicated into orceld (orceld never uses or closes a handle it could
 //!   not acknowledge), so a lost `Authorize` reply no longer leaks a
-//!   handle. The timeout never touches a confirmed job.
+//!   handle. The timeout never touches a confirmed job. Only an orceld that
+//!   declares it acknowledges handles (`job_ack` on `Authorize`; every
+//!   `DesktopHostJob` caller) gets a job: an older orceld closes its handle
+//!   itself, and closing that value again could close a reused handle, so
+//!   it is refused before any job exists.
 //! - **The desktop input host's job.** `DesktopHostJob` makes one job per
 //!   desktop Full User lease for orceld's computer host
 //!   ([`JobProfile::DesktopHost`]): lease lifetime rather than per dispatch,
 //!   no age limit, ended with the lease (revoke, Stop, lock, sign-out,
-//!   expiry, epoch move), and replaced when orceld asks again for the same
-//!   lease. Its UI restrictions leave out the two that would break desktop
+//!   expiry, epoch move), and replaced when the same orceld instance asks
+//!   again for the same lease (another instance's job is left alone). Its UI restrictions leave out the two that would break desktop
 //!   input on the user's desktop (`win::jobs::DESKTOP_HOST_UI_LIMITS`).
 
 use super::{observed, AuthorityCore};
@@ -568,7 +572,11 @@ impl AuthorityCore {
         let earlier: Vec<String> = self
             .jobs
             .iter()
-            .filter(|job| job.profile == JobProfile::DesktopHost && job.lease_id == lease_id)
+            .filter(|job| {
+                job.profile == JobProfile::DesktopHost
+                    && job.lease_id == lease_id
+                    && job.owned_by(caller)
+            })
             .map(|job| job.id.clone())
             .collect();
         for id in earlier {

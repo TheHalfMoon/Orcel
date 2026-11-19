@@ -77,6 +77,9 @@ mod desktop_prompt_tests;
 mod ob08_lease_tests;
 #[cfg(test)]
 mod sg000128_dispatch_tests;
+// SG-000132 WP1-10 (SG132_SLICE5.md): the desktop input host in a
+// lease-lifetime, service-made Job Object.
+mod desktop_host_job;
 // WI-05: reached through the live browser's committed downloads
 // (`LiveBrowser::parse_download`), which only the Windows `live-browser-test`
 // and `live-browser-dev` builds compile; the module's unit and end-to-end
@@ -92,9 +95,6 @@ mod sg000128_dispatch_tests;
     )),
     allow(dead_code)
 )]
-// SG-000132 WP1-10 (SG132_SLICE5.md): the desktop input host in a
-// lease-lifetime, service-made Job Object.
-mod desktop_host_job;
 mod document_parse;
 mod executable_admin;
 // SG-000132 WP1-10: `orceld fc-worker`, the child that performs Full Control

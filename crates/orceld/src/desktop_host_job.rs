@@ -65,16 +65,17 @@ pub(crate) fn clear_required() {
     REQUIRED.with(|required| *required.borrow_mut() = None);
 }
 
-/// Whether the running computer host is in `lease_id`'s job.
-pub(crate) fn serves(lease_id: &str) -> bool {
-    CURRENT
-        .lock()
-        .map(|current| {
-            current
-                .as_ref()
-                .is_some_and(|host| host.lease_id == lease_id)
-        })
-        .unwrap_or(false)
+/// The generation of the computer host started into `lease_id`'s job, if
+/// that lease has one; the caller checks that this host is still the one
+/// in use (`ComputerHostAdapter::host_running_at`), so a plain host started
+/// after it (an observation's restart) is never taken for the lease's.
+pub(crate) fn serving(lease_id: &str) -> Option<u64> {
+    CURRENT.lock().ok().and_then(|current| {
+        current
+            .as_ref()
+            .filter(|host| host.lease_id == lease_id)
+            .map(|host| host.generation)
+    })
 }
 
 /// The host was restarted outside any job (observation after the leased
@@ -91,8 +92,8 @@ pub(crate) fn forget() {
 struct ComputerHostLauncher;
 
 impl HostLauncher for ComputerHostLauncher {
-    fn running(&self) -> bool {
-        crate::uia::computer_host_running()
+    fn running(&self, generation: u64) -> bool {
+        crate::uia::computer_host_running_at(generation)
     }
 
     #[cfg(windows)]
@@ -100,7 +101,7 @@ impl HostLauncher for ComputerHostLauncher {
         &self,
         job_handle: u64,
         confirm: &dyn Fn() -> Result<(), ProviderError>,
-    ) -> Result<(), ProviderError> {
+    ) -> Result<u64, ProviderError> {
         // Owned from here: closed on every path, right after the assign.
         let job = orcel_authority::win::Owned(job_handle as _);
         let program = std::env::var_os("ORCEL_COMPUTER_HOST_BIN").ok_or_else(|| {
@@ -134,7 +135,7 @@ impl HostLauncher for ComputerHostLauncher {
         &self,
         _job_handle: u64,
         _confirm: &dyn Fn() -> Result<(), ProviderError>,
-    ) -> Result<(), ProviderError> {
+    ) -> Result<u64, ProviderError> {
         Err(ProviderError::new(
             FailureCode::AuthorityUnavailable,
             "service-made Job Objects exist only on Windows",

@@ -30,7 +30,9 @@ and lost bindings. So:
   (`DesktopHostJob { lease_id }`), only for an active lease of the caller (user and logon session) whose scope is
   desktop Full User and admits `desktop_input`, writes a `desktop_host_job` record before answering, and duplicates
   an assign-only handle into the observed orceld instance (PID and creation time, opened while impersonating it,
-  exactly as for `Authorize`). Asking again for the same lease ends the earlier job first.
+  exactly as for `Authorize`). Asking again for the same lease from the same orceld instance ends that instance's
+  earlier job first; another orceld instance under the same lease gets its own job and never ends this one's host.
+  A job whose orceld exited is closed by the 60-second idle rule.
 - **Lifetime: the lease.** The job is ended whenever its lease stops being active (revoke, Stop, lock, sign-out,
   disconnect, expiry, an epoch move, re-enrollment, reset): the same `sweep_jobs` path as dispatch jobs, before the
   answer leaves or within the one-second tick for expiry. Dispatch jobs' 10-minute age limit does not apply; the
@@ -99,12 +101,27 @@ job still sees other processes' windows while one in a dispatch job sees none.
   `DuplicateHandle(..., DUPLICATE_CLOSE_SOURCE)` closes the value in orceld. Closing it in orceld as well, as slice
   3 did, could close a handle value orceld had meanwhile reused. A refused acknowledgement is reported as a failed
   outcome.
-- **Older peers fail closed.** An older service answers `job_ack` and `desktop_host_job` as unknown requests: orceld
-  refuses the dispatch or the desktop action and uses nothing. An older orceld never acknowledges: its job-family
-  dispatches are refused at `DispatchActive` and their jobs withdrawn after the timeout. No new `FailureCode`.
+- **Only an orceld that acknowledges gets a job.** An orceld from before this slice closes its handle itself (after
+  the assign, or when it refuses an answer), so if the service closed that value in it later it could close a
+  handle orceld had reused for something else. So orceld declares that it acknowledges handles: `job_ack: true` on a
+  job-family `Authorize` (filesystem, shell/process; absent on desktop and browser `Authorize`, which make no job,
+  so those stay exactly as an older service accepts them). The service refuses a job-family `Authorize` without it
+  (`INVALID_REQUEST`) before any job exists; `DesktopHostJob` is new, so every caller of it acknowledges. The
+  service therefore never closes a value in an orceld that closes its own handles.
+- **Older peers fail closed.** An older orceld at a newer service: job-family dispatches refused at `Authorize`
+  (no job, no handle); desktop and browser `Authorize` unchanged; desktop input refused only where it needs the
+  desktop host job, which an older orceld never asks for (it keeps its plain host, as before this slice). A newer
+  orceld at an older service: `job_ack` on `Authorize`, `job_ack` the request and `desktop_host_job` are refused as
+  unknown, so job-family dispatches and leased desktop input refuse and orceld uses nothing; browser `Authorize`
+  works. No new `FailureCode`.
+- **Upgrade order.** Install the service and orceld together (one installer, as the runbook does), or the service
+  first. Neither order runs anything outside a job or closes a handle the service does not own; the order only
+  decides which actions refuse until both are updated.
 
 ## 2. Protocol changes
 
+- `Authorize` gains `job_ack` (optional, default false; orceld sends `true` for the executors that run in a job,
+  and the service refuses a job-family `Authorize` without it).
 - New requests `JobAck` (op `job_ack`: `authorization_id`, `job_handle`) and `DesktopHostJob` (op
   `desktop_host_job`: `lease_id`; the answer carries `authorization_id`, `lease_id`, `epoch`, `job_id`,
   `job_handle`), orceld only.
@@ -127,6 +144,9 @@ the computer host) with the production launch into real unnamed jobs made the wa
 | Keep the desktop input host running after revoke, Stop, lock or expiry | The host is in the lease's job; the service ends the job with the lease; the host and its workers end within a second | `core_tests::wp110_the_desktop_host_job_lives_with_its_lease` (revoke, Stop, lock, expiry), `fc_worker_tests::windows::fc_worker_the_desktop_host_runs_in_its_leases_job_and_ends_with_it`. Through the installed service with a real host in the founder's session: UNVERIFIED (founder run) |
 | Run a desktop action in a host outside the lease's job | After the service admits the action, only that lease's host serves it; a host that ended is not replaced by one outside the job (`LEASE_INVALID`); every failure to arrange the job refuses | `full_control_dispatch_tests::fc_dispatch_the_desktop_host_fails_closed_without_its_job`, `fc_dispatch_the_desktop_host_runs_in_its_leases_job_and_a_new_lease_gets_a_fresh_one`. The `uia::computer_host` check itself: structural (no unit test drives the native host). Residual 4 |
 | Carry a host (and its state) from one lease to the next | A new lease, or a host that ended, gets a fresh host in a fresh job; asking again ends the earlier job | `full_control_dispatch_tests::fc_dispatch_the_desktop_host_runs_in_its_leases_job_and_a_new_lease_gets_a_fresh_one`, `core_tests::wp110_the_desktop_host_job_lives_with_its_lease` |
+| A plain host started after the lease's host (an observation restart racing a new lease's start) is taken for the lease's | The lease's record names the host generation it started; the adapter moves the generation on every host replacement, and the lease's host is used only while its generation is current and running | `full_control_dispatch_tests::fc_dispatch_the_desktop_host_runs_in_its_leases_job_and_a_new_lease_gets_a_fresh_one` (a replaced host is not kept); `uia::computer_host` uses `ComputerHostAdapter::host_running_at` (structural). Residual 4 |
+| One orceld instance ends another's desktop host under the same lease | Asking again replaces only the caller's own job (user, logon session, PID and creation time) | `core_tests::wp110_the_desktop_host_job_lives_with_its_lease` |
+| The service closes a handle value in an orceld from before this slice (which closed it itself, so the value may be reused) | Such an orceld gets no job: a job-family `Authorize` without `job_ack` is refused before any job exists, so nothing is ever withdrawn from it | `core_tests::wp110_unconfirmed_jobs_end_after_the_ack_timeout_and_confirmed_ones_stay` (refused, no job made, nothing withdrawn or terminated; desktop `Authorize` without `job_ack` still answered; `job_ack` absent on the wire parses as false); the newer peer's withdraw path in the same test |
 | Resume the host after a revoke that landed between the answer and the resume | `DispatchActive` refuses; the suspended host is terminated without having run | `fc_worker_tests::windows::fc_worker_a_desktop_host_whose_job_ended_before_the_resume_never_runs`, `full_control_dispatch_tests::fc_dispatch_the_desktop_host_fails_closed_without_its_job` |
 | The host runs before it is in the job | Assigned while suspended; the job already holds it when the service is asked | `fc_worker_tests::windows::fc_worker_the_desktop_host_runs_in_its_leases_job_and_ends_with_it` (one process in the job at the confirmation) |
 | The host or its workers break away | No breakaway limit on the desktop host job either | `dispatch_jobs::wp110_the_desktop_host_job_keeps_desktop_input_working_and_allows_no_breakaway` (`CREATE_BREAKAWAY_FROM_JOB` refused inside it) |
@@ -138,7 +158,7 @@ the computer host) with the production launch into real unnamed jobs made the wa
 | Lost `Authorize` reply leaks a handle in orceld (slice 3 residual) | The unconfirmed job ends after 15 s and its unacknowledged handle is closed in orceld by the service; a late acknowledgement or confirmation is refused | `core_tests::wp110_unconfirmed_jobs_end_after_the_ack_timeout_and_confirmed_ones_stay`. The handle actually closed inside a real orceld by the installed service: UNVERIFIED (founder run); `DUPLICATE_CLOSE_SOURCE` into this process: slice 3's `withdraw` path |
 | The timeout kills a running dispatch | Never a confirmed one | `core_tests::wp110_unconfirmed_jobs_end_after_the_ack_timeout_and_confirmed_ones_stay`, `core_tests::wp110_the_desktop_host_job_lives_with_its_lease` (no age limit while the lease lives) |
 | orceld uses a handle it could not acknowledge, or closes one the service will close | Neither: a refused acknowledgement runs nothing, closes nothing and is reported failed; a refused answer's handle is left to the service | `full_control_dispatch_tests::fc_dispatch_acknowledges_the_job_handle_before_using_it`, `fc_dispatch_a_job_family_needs_its_service_made_job` |
-| A peer from before this slice | Refused, nothing used: unknown requests at an older service; no acknowledgement from an older orceld | Structural: `Request` is `deny_unknown_fields` with a closed set of ops (`protocol::tests::requests_are_strict`); `core_tests::wp110_a_job_ack_binds_authorization_handle_and_orceld_instance` (no `DispatchActive` without the acknowledgement) |
+| A peer from before this slice | Refused, nothing used: unknown requests and fields at an older service; an older orceld gets no job | Structural: `Request` is `deny_unknown_fields` with a closed set of ops (`protocol::tests::requests_are_strict`); `core_tests::wp110_unconfirmed_jobs_end_after_the_ack_timeout_and_confirmed_ones_stay`, `core_tests::wp110_a_job_ack_binds_authorization_handle_and_orceld_instance` (no `DispatchActive` without the acknowledgement) |
 
 ## 4. Residuals
 
@@ -154,10 +174,13 @@ the computer host) with the production launch into real unnamed jobs made the wa
 3. **Handle copies.** A same-user process can still duplicate orceld's assign-only handle out of orceld (it holds
    `PROCESS_DUP_HANDLE` on orceld) before orceld closes it and put its own processes into a job. In a desktop host
    job, which has no age limit, they stay until the lease ends (they still end with it).
-4. **A narrow window at the lease's end.** `uia::computer_host` checks that the running host is the lease's; if the
-   lease ends (the service kills the host) right after that check, and an observation on another thread restarts a
-   plain host before the action's first request, that action can reach the plain host. Before this slice the action
-   would have run regardless; the window is between two in-process calls.
+4. **A narrow window at the lease's end.** `uia::computer_host` checks, under the adapter's session lock, that the
+   host in use is the one started into the lease's job (its generation) and still running; a host replaced before
+   that check is never taken for the lease's. What remains is the gap between that check and the action's first
+   request to the host: if the lease ends (the service kills the host) in that gap and an observation on another
+   thread restarts a plain host before the request, that request can reach the plain host. Before this slice the
+   action would have run regardless; the gap is between two in-process calls. Checking the generation on every host
+   request would close it.
 5. **What the job does not contain.** Synthesized input, and effects through out-of-job brokers (COM, WMI, Task
    Scheduler, the shell), are not limited by any job (slice 4 section 5, C-27). The desktop host job leaves out
    `HANDLES` and `GLOBALATOMS` by design (section 1.2), so the host can use any window on the user's desktop, as
@@ -188,13 +211,14 @@ the computer host) with the production launch into real unnamed jobs made the wa
 
 At head (Windows, unelevated):
 
-- `cargo test -p orcel-authority`: unit tests (3 new `core_tests::wp110_*` for this slice, 2 updated for the
-  acknowledgement), `console_harness` (1 new), `dispatch_jobs` (2 new: the desktop host profile read back, breakaway
-  refused, windows of other processes visible from it and not from a dispatch job, the handle's rights),
-  `install_script`.
+- `cargo test -p orcel-authority` (all targets): unit tests (3 new `core_tests::wp110_*` for this slice, 2 updated for
+  the acknowledgement), `console_harness` (1 new), `dispatch_jobs` (2 new: the desktop host profile read back,
+  breakaway refused, windows of other processes visible from it and not from a dispatch job, the handle's rights),
+  `install_script`. All pass.
 - `cargo test -p orceld --bin orceld -- fc_worker full_control_dispatch`: 3 new dispatcher tests with a fake service
   and a fake host launcher, 1 updated; 2 new Windows `fc_worker_tests` with the production launch of a real process
-  into real jobs.
-- This PC's disk filled up during the run (other worktrees' build output), so the local clippy run did not finish and
-  one existing `fc_worker` test could not copy its helper; CI runs both. Some unrelated orceld tests fail on this PC
-  because of its AppData permissions (`InsecureAcl`, before this slice).
+  into real jobs. All 32 pass, the existing `fc_worker` tests included.
+- `cargo clippy -p orcel-authority -p orcel-provider-uia -p orceld --all-targets -- -D warnings` on Windows: clean.
+  The Linux and macOS builds, the workspace-wide clippy and the remaining feature combinations are left to CI (this
+  PC has no other targets installed and little free disk). Some unrelated orceld tests fail on this PC because of its
+  AppData permissions (`InsecureAcl`, before this slice), so the whole orceld suite is also left to CI.

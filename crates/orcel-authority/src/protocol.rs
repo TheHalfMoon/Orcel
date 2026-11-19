@@ -141,6 +141,16 @@ pub enum Request {
         lease_id: String,
         executor: ExecutorClass,
         claims: AuthorizeClaims,
+        /// SG132_SLICE5.md: orceld declares that it acknowledges job handles
+        /// (`JobAck`) and leaves a handle it could not acknowledge for the
+        /// service to close. Sent only for the executors that run in a job
+        /// (absent otherwise, so desktop and browser `Authorize` stay as an
+        /// older service accepts them). The service refuses a job-family
+        /// `Authorize` without it and makes no job: an older orceld closes
+        /// its handle itself, so the service must never close a value in it
+        /// (it could be a reused handle).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        job_ack: bool,
     },
     /// WP1-10: orceld asks, after assigning its suspended worker to the
     /// dispatch's job and before resuming it, whether the authorization

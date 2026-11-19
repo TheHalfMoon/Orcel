@@ -546,17 +546,20 @@ pub(crate) fn desktop_gate(
 /// Object (`full_control_dispatch::ensure_lease_host`; the computer host on
 /// Windows, a fake in tests).
 pub(crate) trait HostLauncher {
-    /// Whether the host the launcher last started is still running.
-    fn running(&self) -> bool;
+    /// Whether the host of `generation` (as [`Self::start_in_job`] returned
+    /// it) is still the one desktop requests use, and still running.
+    fn running(&self, generation: u64) -> bool;
     /// Starts a fresh host suspended, assigns it with `job_handle` (and
     /// closes that handle on every path), calls `confirm`, resumes it only
     /// if that succeeds (terminating it otherwise), and makes it the host
-    /// desktop requests use; the host it replaces is ended.
+    /// desktop requests use; the host it replaces is ended. Returns the new
+    /// host's generation: any later host replacement (an observation
+    /// restarting a plain host) moves it.
     fn start_in_job(
         &self,
         job_handle: u64,
         confirm: &dyn Fn() -> Result<(), ProviderError>,
-    ) -> Result<(), ProviderError>;
+    ) -> Result<u64, ProviderError>;
 }
 
 /// The lease whose job the running desktop input host is in.
@@ -565,6 +568,9 @@ pub(crate) struct LeaseHost {
     pub lease_id: String,
     pub authorization_id: String,
     pub job_id: String,
+    /// The host process started into that job ([`HostLauncher`]); a host
+    /// of another generation is not this lease's, whatever else holds.
+    pub generation: u64,
 }
 
 /// SG132_SLICE5.md: makes sure desktop input for `lease_id` runs in a
@@ -588,7 +594,7 @@ pub(crate) fn ensure_lease_host(
         .lock()
         .map_err(|_| unavailable("the desktop host state is poisoned"))?;
     if let Some(host) = current.as_ref() {
-        if host.lease_id == lease_id && launcher.running() {
+        if host.lease_id == lease_id && launcher.running(host.generation) {
             return Ok(host.clone());
         }
     }
@@ -614,11 +620,12 @@ pub(crate) fn ensure_lease_host(
         ));
     }
     port.job_ack(&authorization_id, handle)?;
-    launcher.start_in_job(handle, &|| port.dispatch_active(&authorization_id))?;
+    let generation = launcher.start_in_job(handle, &|| port.dispatch_active(&authorization_id))?;
     let host = LeaseHost {
         lease_id: lease_id.to_owned(),
         authorization_id,
         job_id,
+        generation,
     };
     *current = Some(host.clone());
     Ok(host)

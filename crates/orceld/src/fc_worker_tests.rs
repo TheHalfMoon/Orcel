@@ -1428,6 +1428,8 @@ mod windows {
         at_confirm: RefCell<Vec<Option<u32>>>,
         /// The job each started host went to.
         jobs: RefCell<Vec<String>>,
+        /// The generation of the host in use.
+        generation: std::cell::Cell<u64>,
     }
 
     impl<'a> StandInHosts<'a> {
@@ -1437,7 +1439,17 @@ mod windows {
                 host: RefCell::new(None),
                 at_confirm: RefCell::new(Vec::new()),
                 jobs: RefCell::new(Vec::new()),
+                generation: std::cell::Cell::new(0),
             }
+        }
+
+        /// Whether the last started host is still running.
+        fn alive(&self) -> bool {
+            use orcel_provider_uia::SpawnedHost;
+            self.host
+                .borrow_mut()
+                .as_mut()
+                .is_some_and(|(host, _)| host.running())
         }
 
         fn job_of_handle(&self, handle: u64) -> Option<String> {
@@ -1455,19 +1467,15 @@ mod windows {
     }
 
     impl crate::full_control_dispatch::HostLauncher for StandInHosts<'_> {
-        fn running(&self) -> bool {
-            use orcel_provider_uia::SpawnedHost;
-            self.host
-                .borrow_mut()
-                .as_mut()
-                .is_some_and(|(host, _)| host.running())
+        fn running(&self, generation: u64) -> bool {
+            self.generation.get() == generation && self.alive()
         }
 
         fn start_in_job(
             &self,
             job_handle: u64,
             confirm: &dyn Fn() -> Result<(), ProviderError>,
-        ) -> Result<(), ProviderError> {
+        ) -> Result<u64, ProviderError> {
             let job_id = self.job_of_handle(job_handle);
             let program = orceld_exe();
             let environment = orcel_provider_uia::computer_host_environment();
@@ -1496,15 +1504,15 @@ mod windows {
                 use orcel_provider_uia::SpawnedHost;
                 old.end();
             }
-            Ok(())
+            self.generation.set(self.generation.get() + 1);
+            Ok(self.generation.get())
         }
     }
 
     fn exits_within(hosts: &StandInHosts<'_>, limit: std::time::Duration) -> bool {
-        use crate::full_control_dispatch::HostLauncher;
         let deadline = std::time::Instant::now() + limit;
         while std::time::Instant::now() < deadline {
-            if !hosts.running() {
+            if !hosts.alive() {
                 return true;
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
@@ -1519,7 +1527,7 @@ mod windows {
     /// then a fresh host starts in a fresh job.
     #[test]
     fn fc_worker_the_desktop_host_runs_in_its_leases_job_and_ends_with_it() {
-        use crate::full_control_dispatch::{ensure_lease_host, HostLauncher};
+        use crate::full_control_dispatch::ensure_lease_host;
         let root = root();
         let port = JobPort::new(&root);
         let hosts = StandInHosts::new(&port);
@@ -1527,8 +1535,11 @@ mod windows {
         let lease_id = port.lease.lease_id.clone();
 
         let first = ensure_lease_host(&port, &hosts, &current, &lease_id).expect("first host");
-        assert!(hosts.running());
-        assert_eq!(hosts.jobs.borrow().as_slice(), [first.job_id.clone()]);
+        assert!(hosts.alive());
+        assert_eq!(
+            hosts.jobs.borrow().as_slice(),
+            std::slice::from_ref(&first.job_id)
+        );
         assert_eq!(
             hosts.at_confirm.borrow().as_slice(),
             [Some(1)],
@@ -1537,7 +1548,7 @@ mod windows {
         assert_eq!(hosts.active(&first.job_id), Some(1));
         assert_eq!(
             port.acked.borrow().as_slice(),
-            [first.authorization_id.clone()]
+            std::slice::from_ref(&first.authorization_id)
         );
         // Kept for the same lease.
         let again = ensure_lease_host(&port, &hosts, &current, &lease_id).expect("kept");
@@ -1553,7 +1564,7 @@ mod windows {
         // The next desktop action gets a fresh host in a fresh job.
         let fresh = ensure_lease_host(&port, &hosts, &current, &lease_id).expect("fresh host");
         assert_ne!(fresh.job_id, first.job_id);
-        assert!(hosts.running());
+        assert!(hosts.alive());
         assert_eq!(hosts.active(&fresh.job_id), Some(1));
         port.jobs.borrow_mut().terminate(&fresh.job_id);
         assert!(exits_within(&hosts, std::time::Duration::from_secs(1)));
@@ -1566,7 +1577,7 @@ mod windows {
     /// never acknowledged, so nothing starts.
     #[test]
     fn fc_worker_a_desktop_host_whose_job_ended_before_the_resume_never_runs() {
-        use crate::full_control_dispatch::{ensure_lease_host, HostLauncher};
+        use crate::full_control_dispatch::ensure_lease_host;
         let root = root();
         let port = JobPort::new(&root);
         let hosts = StandInHosts::new(&port);
@@ -1618,7 +1629,7 @@ mod windows {
             refused.err().map(|error| error.code),
             Some(FailureCode::LeaseInvalid)
         );
-        assert!(!hosts.running(), "nothing was kept");
+        assert!(!hosts.alive(), "nothing was kept");
         assert!(hosts.jobs.borrow().is_empty(), "never resumed");
         assert!(current.lock().expect("state").is_none());
 

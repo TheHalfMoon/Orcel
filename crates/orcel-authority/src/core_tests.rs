@@ -468,6 +468,7 @@ fn authorize(
             lease_id: lease_id.to_owned(),
             executor,
             claims: claims(),
+            job_ack: crate::core::dispatch_jobs::executor_runs_in_job(executor),
         },
     )
 }
@@ -1418,6 +1419,7 @@ fn a_browser_lease_covers_the_browser_executor_only() -> Result<(), String> {
         lease_id: lease.body.lease_id.clone(),
         executor,
         claims: browser_claims.clone(),
+        job_ack: false,
     };
     ok(core.handle(&orceld(), as_browser(ExecutorClass::Browser)))?;
     assert_eq!(
@@ -1727,6 +1729,7 @@ fn review_f4_f7_browser_authorize_checks_family_and_origin_and_the_box_says_brow
             origin: origin.map(str::to_owned),
             ..claims()
         },
+        job_ack: false,
     };
     ok(core.handle(&orceld(), ask("click", Some("https://fixture.test"))))?;
     ok(core.handle(&orceld(), ask("navigate", Some("https://fixture.test"))))?;
@@ -2106,6 +2109,7 @@ fn authorize_paths(
                 paths: paths.map(|paths| paths.into_iter().map(str::to_owned).collect()),
                 ..claims()
             },
+            job_ack: crate::core::dispatch_jobs::executor_runs_in_job(executor),
         },
     )
 }
@@ -2781,6 +2785,59 @@ fn wp110_unconfirmed_jobs_end_after_the_ack_timeout_and_confirmed_ones_stay() ->
     let (lease, _) = grant(&mut core, Some(full_scope()))?;
     let id = lease.body.lease_id.clone();
     JOBS.with(|log| log.borrow_mut().active = 1);
+    // Review of c02942bc (version skew): an orceld that does not declare
+    // `job_ack` (older than this service) closes its handle itself, so the
+    // service must never close a value in it. It gets no job at all: its
+    // job-family Authorize is refused before a job exists, and nothing is
+    // ever withdrawn from it. Desktop and browser Authorize need no job and
+    // are unaffected.
+    for executor in [ExecutorClass::ShellProcess, ExecutorClass::Filesystem] {
+        assert_eq!(
+            code(core.handle(
+                &orceld(),
+                Request::Authorize {
+                    lease_id: id.clone(),
+                    executor,
+                    claims: AuthorizeClaims {
+                        paths: Some(vec![r"C:\work\a.txt".to_owned()]),
+                        ..claims()
+                    },
+                    job_ack: false,
+                },
+            )),
+            Some(FailureCode::InvalidRequest),
+            "{executor:?}"
+        );
+    }
+    assert!(live_jobs().is_empty());
+    assert!(withdrawn_jobs().is_empty() && terminated_jobs().is_empty());
+    let older_desktop = ok(core.handle(
+        &orceld(),
+        Request::Authorize {
+            lease_id: id.clone(),
+            executor: ExecutorClass::DesktopInput,
+            claims: claims(),
+            job_ack: false,
+        },
+    ))?;
+    assert_eq!(older_desktop["job_handle"], Value::Null);
+    // The older peer's request, as it is on the wire, has no job_ack field
+    // and parses as `job_ack: false`; a newer orceld's job-family request
+    // carries it.
+    let wire = serde_json::to_value(Request::Authorize {
+        lease_id: id.clone(),
+        executor: ExecutorClass::DesktopInput,
+        claims: claims(),
+        job_ack: false,
+    })
+    .map_err(|e| e.to_string())?;
+    assert!(wire.get("job_ack").is_none());
+    let mut declared = wire.clone();
+    declared["job_ack"] = Value::Bool(true);
+    assert!(matches!(
+        serde_json::from_value::<Request>(declared).map_err(|e| e.to_string())?,
+        Request::Authorize { job_ack: true, .. }
+    ));
     let mut answers = Vec::new();
     for _ in 0..3 {
         answers.push(ok(authorize_paths(
@@ -2931,10 +2988,32 @@ fn wp110_the_desktop_host_job_lives_with_its_lease() -> Result<(), String> {
     let second_job = str_of(&second, "job_id")?;
     assert!(terminated_jobs().contains(&first_job));
     assert_eq!(live_jobs(), vec![second_job.clone()]);
+    // Review of c02942bc: another orceld instance under the same lease gets
+    // its own job and never ends this instance's host.
+    let other = CallerFacts {
+        pid: orceld().pid + 1,
+        process_generation: orceld().process_generation + 1,
+        ..orceld()
+    };
+    let theirs = ok(host(&mut core, &other, &id))?;
+    let their_job = str_of(&theirs, "job_id")?;
+    assert!(!terminated_jobs().contains(&second_job));
+    assert!(!withdrawn_jobs().contains(&second_job));
+    let mut both = live_jobs();
+    both.sort();
+    let mut expected = vec![second_job.clone(), their_job.clone()];
+    expected.sort();
+    assert_eq!(both, expected);
+    // Asking again from that instance replaces only its own job.
+    let theirs_again = ok(host(&mut core, &other, &id))?;
+    assert!(withdrawn_jobs().contains(&their_job));
+    assert!(!withdrawn_jobs().contains(&second_job));
+    let their_job = str_of(&theirs_again, "job_id")?;
     // An unconfirmed desktop host job is withdrawn after the timeout.
     advance(JOB_ACK_TIMEOUT_MS);
     core.tick().map_err(|e| e.to_string())?;
     assert!(withdrawn_jobs().contains(&second_job));
+    assert!(withdrawn_jobs().contains(&their_job));
     assert_eq!(
         code(core.handle(
             &orceld(),

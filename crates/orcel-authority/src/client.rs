@@ -189,6 +189,8 @@ impl AuthorityClient {
             lease_id: lease_id.to_owned(),
             executor,
             claims,
+            // SG132_SLICE5.md: this orceld acknowledges every job handle.
+            job_ack: crate::core::dispatch_jobs::executor_runs_in_job(executor),
         })
     }
 
