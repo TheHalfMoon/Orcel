@@ -1992,7 +1992,9 @@ impl AuthorityCore {
                 crate::lease::executor_name(executor)
             )));
         }
-        if claims.principal_id != body.principal_id {
+        // SG132_SLICE6.md: orceld names the calling MCP client; a lease bound
+        // to a client admits only that one (fail closed on a mismatch).
+        if !body.admits_client(&claims.principal_id) {
             return Err(AuthorityError::denied(
                 "the lease was granted to another client principal",
             ));

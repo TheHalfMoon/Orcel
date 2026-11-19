@@ -599,6 +599,19 @@ pub struct LeaseContext<'a> {
 }
 
 impl LeaseBody {
+    /// SG132_SLICE6.md: whether the client an `Authorize` names (the calling
+    /// MCP client's reference, `cl-` and 32 lowercase hex, as orceld derives
+    /// it from the request's client session; or this lease's own principal)
+    /// may act under this lease. A lease bound to a client (its principal is
+    /// a client reference: every browser lease, and a desktop lease granted
+    /// with `--client cl-...`) admits that client only. An unbound desktop
+    /// lease (a free label, such as the default `orcel-owner`) admits any
+    /// client reference, which the audit then records, and its own
+    /// principal, which an orceld from before this rule names.
+    pub fn admits_client(&self, client: &str) -> bool {
+        client == self.principal_id || (!is_client_ref(&self.principal_id) && is_client_ref(client))
+    }
+
     /// Binding, epoch and time. Revocation is the service's record.
     pub fn check(&self, context: &LeaseContext<'_>) -> Result<(), AuthorityError> {
         if self.windows_user_sid != context.windows_user_sid

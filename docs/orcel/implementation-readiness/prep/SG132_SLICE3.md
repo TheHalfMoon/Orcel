@@ -210,7 +210,7 @@ WP1-10 and WP1-15 (the step numbers below are referred to by slice 4):
 2. The desktop input host started into a service-made job (suspended, assigned, confirmed, resumed), so Stop
    kills it too. Done in slice 5 ([SG132_SLICE5.md](SG132_SLICE5.md)).
 3. Retire `authority.key` and the deprecated store (section 6) after the founder's first real desktop grant.
-4. The real MCP client principal at the desktop gate (slice 2 residual).
+4. The real MCP client principal at the desktop gate (slice 2 residual). Done in slice 6 ([SG132_SLICE6.md](SG132_SLICE6.md)).
 5. An acknowledgement of each job handle by orceld, with unacknowledged jobs terminated (and their handles
    closed in orceld) after a short timeout, for the lost-reply residual of section 2. The acknowledgement names
    the `authorization_id` and the handle value, is accepted only from the same user, logon session and orceld

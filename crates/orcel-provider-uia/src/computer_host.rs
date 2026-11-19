@@ -751,6 +751,28 @@ mod platform {
     pub(super) type HostWriter = Box<dyn Write + Send>;
     pub(super) type HostReader = Box<dyn BufRead + Send>;
 
+    thread_local! {
+        /// SG132_SLICE6.md: the host generation every message this thread
+        /// sends must reach (`None`: any host).
+        static REQUIRED_GENERATION: std::cell::Cell<Option<u64>> =
+            const { std::cell::Cell::new(None) };
+    }
+
+    /// SG132_SLICE6.md: from now on, every message this thread sends
+    /// through a computer host adapter goes only to the host of
+    /// `generation` (as [`ComputerHostAdapter::host_generation`] named it),
+    /// and only while that host runs; any other message is refused
+    /// (`LEASE_INVALID`) before it is written. The check and the write
+    /// happen under the adapter's session lock, under which a host is
+    /// replaced, so a host replaced in the middle of an action (the lease's
+    /// host ended with its job and an observation started a plain host) never
+    /// receives the rest of it. orceld sets it once the authority service
+    /// admitted a desktop action under a lease and clears it (`None`) when
+    /// the request ends.
+    pub fn require_host_generation(generation: Option<u64>) {
+        REQUIRED_GENERATION.with(|required| required.set(generation));
+    }
+
     /// The environment the computer host gets, by name (everything else is
     /// cleared), with orceld's values. SG132_SLICE5.md: orceld starts the
     /// host itself, suspended into a lease's service-made Job Object, with
@@ -1371,6 +1393,20 @@ mod platform {
             })
         }
 
+        /// [`Self::adopt_host`] over a scripted transport negotiated for
+        /// `platform`, for the host generation tests.
+        #[cfg(test)]
+        pub(crate) fn adopt_transport_for_test(
+            &self,
+            child: Option<Box<dyn SpawnedHost>>,
+            stdin: HostWriter,
+            stdout: HostReader,
+            platform: &str,
+        ) -> Result<u64, UiaError> {
+            let session = HostSession::over(child, stdin, stdout, platform)?;
+            self.replace_session(session)
+        }
+
         /// Ages every remembered read by `by`, for the observation age test.
         #[cfg(test)]
         pub(crate) fn age_observations_for_test(&self, by: std::time::Duration) {
@@ -1393,6 +1429,31 @@ mod platform {
             self.request("ping", None, None, None, None).map(|_| ())
         }
 
+        /// The session, locked for one message. SG132_SLICE6.md: when this
+        /// thread requires a host generation ([`require_host_generation`]),
+        /// the session must talk to that host and it must still run; both
+        /// are checked under the lock that every host replacement takes, so
+        /// nothing can replace the host between this check and the message.
+        fn session_for_message(&self) -> Result<std::sync::MutexGuard<'_, HostSession>, UiaError> {
+            let mut session = self.session.lock().map_err(|_| {
+                UiaError::new(
+                    FailureCode::ProviderUnavailable,
+                    "computer host session lock is poisoned",
+                )
+            })?;
+            if let Some(required) = REQUIRED_GENERATION.with(std::cell::Cell::get) {
+                let current = self.generation.load(std::sync::atomic::Ordering::SeqCst);
+                let running = session.child.as_mut().is_none_or(|child| child.running());
+                if current != required || !running {
+                    return Err(UiaError::new(
+                        FailureCode::LeaseInvalid,
+                        "the lease's desktop input host is no longer the one running (its Job Object ends with the lease); nothing more is sent",
+                    ));
+                }
+            }
+            Ok(session)
+        }
+
         fn request(
             &self,
             op: &str,
@@ -1401,12 +1462,7 @@ mod platform {
             max_nodes: Option<usize>,
             max_depth: Option<usize>,
         ) -> Result<HostResponse, UiaError> {
-            let mut session = self.session.lock().map_err(|_| {
-                UiaError::new(
-                    FailureCode::ProviderUnavailable,
-                    "computer host session lock is poisoned",
-                )
-            })?;
+            let mut session = self.session_for_message()?;
             session.request(op, hwnd, binding, max_nodes, max_depth)
         }
 
@@ -1506,22 +1562,12 @@ mod platform {
         }
 
         fn exchange_host(&self, request: HostRequest<'_>) -> Result<HostResponse, UiaError> {
-            let mut session = self.session.lock().map_err(|_| {
-                UiaError::new(
-                    FailureCode::ProviderUnavailable,
-                    "computer host session lock is poisoned",
-                )
-            })?;
+            let mut session = self.session_for_message()?;
             session.exchange(request)
         }
 
         fn checked_host(&self, request: HostRequest<'_>) -> Result<HostResponse, UiaError> {
-            let mut session = self.session.lock().map_err(|_| {
-                UiaError::new(
-                    FailureCode::ProviderUnavailable,
-                    "computer host session lock is poisoned",
-                )
-            })?;
+            let mut session = self.session_for_message()?;
             session.send_checked(request)
         }
 
@@ -2141,7 +2187,8 @@ mod platform {
 }
 
 pub use platform::{
-    computer_host_environment, ApprovedInput, ApprovedSemantic, ComputerHostAdapter, SpawnedHost,
+    computer_host_environment, require_host_generation, ApprovedInput, ApprovedSemantic,
+    ComputerHostAdapter, SpawnedHost,
 };
 
 #[cfg(test)]
@@ -2280,8 +2327,20 @@ mod tests {
     /// answers each frame with `answer` (`None` hangs up).
     fn scripted(
         platform: &str,
-        mut answer: impl FnMut(&Value) -> Option<String> + Send + 'static,
+        answer: impl FnMut(&Value) -> Option<String> + Send + 'static,
     ) -> (Result<ComputerHostAdapter, UiaError>, Frames) {
+        let (stdin, stdout, frames) = scripted_transport(answer);
+        (
+            ComputerHostAdapter::over_transport(stdin, stdout, platform),
+            frames,
+        )
+    }
+
+    /// The transport of [`scripted`]: a host thread that answers each frame
+    /// with `answer` (`None` hangs up).
+    fn scripted_transport(
+        mut answer: impl FnMut(&Value) -> Option<String> + Send + 'static,
+    ) -> (platform::HostWriter, platform::HostReader, Frames) {
         let (to_host, from_adapter) = channel::<Vec<u8>>();
         let (to_adapter, from_host) = channel::<Vec<u8>>();
         let frames: Frames = Arc::new(Mutex::new(Vec::new()));
@@ -2304,16 +2363,15 @@ mod tests {
                 }
             }
         });
-        let adapter = ComputerHostAdapter::over_transport(
+        (
             Box::new(PipeWriter(to_host)),
             Box::new(PipeReader {
                 receiver: from_host,
                 buffer: Vec::new(),
                 position: 0,
             }),
-            platform,
-        );
-        (adapter, frames)
+            frames,
+        )
     }
 
     fn native_reply(frame: &Value, body: Value) -> String {
@@ -2861,6 +2919,100 @@ mod tests {
         let windows = listing["windows"].as_array().unwrap();
         assert_eq!(windows.len(), 1, "{listing}");
         assert_eq!(windows[0]["title"], "Editor");
+    }
+
+    /// A host process the adapter adopted, whose running state the test
+    /// sets.
+    struct FakeSpawnedHost(Arc<std::sync::atomic::AtomicBool>);
+
+    impl SpawnedHost for FakeSpawnedHost {
+        fn running(&mut self) -> bool {
+            self.0.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        fn end(&mut self) {
+            self.0.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    fn pinging_host(frame: &Value) -> Option<String> {
+        match frame["op"].as_str() {
+            Some("hello") => Some(native_hello(frame, "delivered")),
+            Some("ping") => Some(native_reply(frame, json!({}))),
+            _ => Some(native_refusal(frame, "capability_denied")),
+        }
+    }
+
+    fn pings(frames: &Frames) -> usize {
+        frames
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|frame| frame["op"] == "ping")
+            .count()
+    }
+
+    /// SG132_SLICE6.md (slice 5 residual 4): once a thread requires a host
+    /// generation, every message it sends is checked against it under the
+    /// session lock: a host replaced in the middle of an action (the lease's
+    /// host ended and an observation started a plain one), or the required
+    /// host no longer running, receives nothing more; another thread, and
+    /// this one once the requirement is cleared, is unaffected.
+    #[test]
+    fn a_required_host_generation_is_checked_on_every_message() {
+        let (adapter, first_frames) = scripted("linux", pinging_host);
+        let adapter = adapter.unwrap();
+        // The lease's host, adopted the way orceld adopts the one it started
+        // in the lease's job.
+        let leased_running = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let (stdin, stdout, leased_frames) = scripted_transport(pinging_host);
+        let leased = adapter
+            .adopt_transport_for_test(
+                Some(Box::new(FakeSpawnedHost(leased_running.clone()))),
+                stdin,
+                stdout,
+                "linux",
+            )
+            .unwrap();
+        assert_eq!(leased, adapter.host_generation());
+        require_host_generation(Some(leased));
+        adapter.ping_for_test().unwrap();
+        adapter.ping_for_test().unwrap();
+        assert_eq!(pings(&leased_frames), 2);
+        // The lease's host stops (the service ended its job): refused before
+        // anything is written.
+        leased_running.store(false, std::sync::atomic::Ordering::SeqCst);
+        let refused = adapter.ping_for_test().unwrap_err();
+        assert_eq!(refused.code, FailureCode::LeaseInvalid);
+        assert_eq!(pings(&leased_frames), 2);
+        // A plain host replaces it in the middle of the action (an
+        // observation on another thread restarted one): it runs, but it is
+        // not the required generation, so it receives nothing.
+        let (stdin, stdout, plain_frames) = scripted_transport(pinging_host);
+        let plain = std::thread::scope(|scope| {
+            scope
+                .spawn(|| adapter.adopt_transport_for_test(None, stdin, stdout, "linux"))
+                .join()
+                .unwrap()
+        })
+        .unwrap();
+        assert_ne!(plain, leased);
+        assert!(adapter.host_running_at(plain));
+        let refused = adapter.ping_for_test().unwrap_err();
+        assert_eq!(refused.code, FailureCode::LeaseInvalid);
+        assert_eq!(pings(&plain_frames), 0);
+        // Another thread (no requirement) uses the plain host as before.
+        std::thread::scope(|scope| scope.spawn(|| adapter.ping_for_test()).join().unwrap())
+            .unwrap();
+        assert_eq!(pings(&plain_frames), 1);
+        // Requiring the plain host's generation, or clearing the
+        // requirement, sends again.
+        require_host_generation(Some(plain));
+        adapter.ping_for_test().unwrap();
+        require_host_generation(None);
+        adapter.ping_for_test().unwrap();
+        assert_eq!(pings(&plain_frames), 3);
+        assert_eq!(pings(&first_frames), 0);
     }
 
     #[cfg(windows)]

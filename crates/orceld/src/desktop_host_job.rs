@@ -48,9 +48,16 @@ thread_local! {
 /// After the service admitted a desktop action under `lease_id`: the
 /// computer host runs in that lease's job (started fresh if it does not),
 /// and the rest of this request uses only that host.
+///
+/// SG132_SLICE6.md (slice 5 residual 4): from here every message this
+/// request sends to the computer host is checked, under the adapter's
+/// session lock, to reach that host while it runs
+/// (`orcel_provider_uia::require_host_generation`), so a host replaced in
+/// the middle of the action receives nothing more of it.
 pub(crate) fn require_for(lease_id: &str) -> Result<(), ProviderError> {
     let port = crate::authority_link::ServicePort::installed_service();
-    ensure_lease_host(&port, &ComputerHostLauncher, &CURRENT, lease_id)?;
+    let host = ensure_lease_host(&port, &ComputerHostLauncher, &CURRENT, lease_id)?;
+    orcel_provider_uia::require_host_generation(Some(host.generation));
     REQUIRED.with(|required| *required.borrow_mut() = Some(lease_id.to_owned()));
     Ok(())
 }
@@ -63,6 +70,7 @@ pub(crate) fn required() -> Option<String> {
 /// Forgets what this thread's request required (at its start and end).
 pub(crate) fn clear_required() {
     REQUIRED.with(|required| *required.borrow_mut() = None);
+    orcel_provider_uia::require_host_generation(None);
 }
 
 /// The generation of the computer host started into `lease_id`'s job, if
