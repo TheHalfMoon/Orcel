@@ -1,5 +1,6 @@
 pub mod fetch;
 mod mutation;
+mod nested;
 pub mod push;
 mod repo_config;
 
@@ -247,7 +248,90 @@ impl GitProvider {
                 "the repository borrows objects from another store (objects/info/alternates)",
             ));
         }
+        // Follow-up to #824: no untracked nested folder's `.git` may lead
+        // Git to a share, a device, a link or out of the workspace.
+        nested::check_nested(
+            &self.workspace_root,
+            &repo,
+            &mut |dirs| self.ignored_dirs(&repo, dirs),
+            &mut |dirs| self.tracked_dirs(&repo, dirs),
+        )?;
         Ok(repo)
+    }
+
+    /// Which of `dirs` (repository-relative, `/`-separated) the
+    /// repository's exclude rules ignore (`git check-ignore --stdin`, which
+    /// reads paths, never walks).
+    fn ignored_dirs(
+        &self,
+        repo: &Path,
+        dirs: &[String],
+    ) -> Result<std::collections::BTreeSet<String>, GitProviderError> {
+        if dirs.is_empty() {
+            return Ok(Default::default());
+        }
+        let mut input = Vec::new();
+        for dir in dirs {
+            input.extend_from_slice(dir.as_bytes());
+            input.push(0);
+        }
+        let output = self.run_git_input(repo, &["check-ignore", "-z", "--stdin"], input)?;
+        if output.stdout_truncated {
+            return Err(GitProviderError::new(
+                FailureCode::ProviderUnavailable,
+                "Git's ignore evidence exceeded its bound",
+            ));
+        }
+        Ok(output
+            .stdout
+            .split('\0')
+            .filter(|path| !path.is_empty())
+            .map(str::to_owned)
+            .collect())
+    }
+
+    /// Which of `dirs` hold tracked entries (`git ls-files`, which reads
+    /// the index only); Git walks such folders even when they are ignored.
+    fn tracked_dirs(
+        &self,
+        repo: &Path,
+        dirs: &[String],
+    ) -> Result<std::collections::BTreeSet<String>, GitProviderError> {
+        let mut tracked = std::collections::BTreeSet::new();
+        for chunk in dirs.chunks(64) {
+            let mut args = vec!["ls-files".to_owned(), "-z".to_owned(), "--".to_owned()];
+            args.extend(chunk.iter().map(|dir| format!(":(literal){dir}")));
+            let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            let output = self.run_git(repo, &refs)?;
+            for dir in chunk {
+                let prefix = format!("{dir}/");
+                // A cut-off listing counts every folder as tracked (walked).
+                if output.stdout_truncated
+                    || output
+                        .stdout
+                        .split('\0')
+                        .any(|path| path.starts_with(&prefix))
+                {
+                    tracked.insert(dir.clone());
+                }
+            }
+        }
+        Ok(tracked)
+    }
+
+    /// [`GitProvider::run_git_raw`] with `input` on Git's stdin.
+    fn run_git_input(
+        &self,
+        cwd: &Path,
+        args: &[&str],
+        input: Vec<u8>,
+    ) -> Result<CommandOutput, GitProviderError> {
+        repo_config::check_repository(&self.workspace_root, cwd)?;
+        let ceiling = self.workspace_root.parent();
+        let neutral = neutralizing_args_with(&self.program, ceiling, cwd)?;
+        let mut all: Vec<&str> = neutral.args.iter().map(String::as_str).collect();
+        all.extend_from_slice(args);
+        run_plain_full(&self.program, ceiling, cwd, &all, Some(input))
     }
 
     fn ensure_within(&self, candidate: &Path) -> Result<(), GitProviderError> {
@@ -418,6 +502,19 @@ fn run_plain_with(
     cwd: &Path,
     args: &[&str],
 ) -> Result<CommandOutput, GitProviderError> {
+    run_plain_full(program, ceiling, cwd, args, None)
+}
+
+/// [`run_plain_with`], with `input` written to Git's stdin and exit code 1
+/// accepted too (`check-ignore` exits 1 when nothing is ignored).
+fn run_plain_full(
+    program: &Path,
+    ceiling: Option<&Path>,
+    cwd: &Path,
+    args: &[&str],
+    input: Option<Vec<u8>>,
+) -> Result<CommandOutput, GitProviderError> {
+    let accept_one = input.is_some();
     let mut command = Command::new(program);
     command
         .args([
@@ -434,6 +531,13 @@ fn run_plain_with(
             "status.submoduleSummary=false",
             "-c",
             "submodule.recurse=false",
+            // Follow-up to #824: an untracked-file walk opens the `.git`
+            // file of every untracked nested folder and the folder its
+            // `gitdir:` names (verified in every untracked mode but `no`).
+            // Only `status` asks for one (after the nested scan); every
+            // other command (commit's own status) walks none.
+            "-c",
+            "status.showUntrackedFiles=no",
             "-c",
             "core.fsmonitor=false",
             "-c",
@@ -444,7 +548,11 @@ fn run_plain_with(
         ])
         .args(args)
         .current_dir(cwd)
-        .stdin(Stdio::null())
+        .stdin(if accept_one {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env_clear();
@@ -488,6 +596,12 @@ fn run_plain_with(
         GitProviderError::new(FailureCode::ProviderUnavailable, "git stderr unavailable")
     })?;
 
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+        thread::spawn(move || {
+            use std::io::Write;
+            let _ = stdin.write_all(&input);
+        });
+    }
     let stdout_thread = thread::spawn(move || read_bounded(stdout, MAX_STDOUT_BYTES));
     let stderr_thread = thread::spawn(move || read_bounded(stderr, MAX_STDERR_BYTES));
 
@@ -531,7 +645,7 @@ fn run_plain_with(
     let stdout = String::from_utf8_lossy(&stdout_bytes).into_owned();
     let stderr = String::from_utf8_lossy(&stderr_bytes).into_owned();
 
-    if !status.success() {
+    if !status.success() && !(accept_one && status.code() == Some(1)) {
         return Err(GitProviderError::new(
             FailureCode::InvalidRequest,
             format!(

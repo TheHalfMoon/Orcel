@@ -315,7 +315,7 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Vec<Entry>, String> {
     Ok(entries)
 }
 
-fn read_bounded(path: &Path, what: &str) -> Result<Option<Vec<u8>>, GitProviderError> {
+pub(crate) fn read_bounded(path: &Path, what: &str) -> Result<Option<Vec<u8>>, GitProviderError> {
     let metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -339,7 +339,11 @@ fn read_bounded(path: &Path, what: &str) -> Result<Option<Vec<u8>>, GitProviderE
 
 /// A folder a `.git` file or `commondir` names, refused if it is a share
 /// or device path, resolved against `base` when relative.
-fn pointed_folder(text: &str, base: &Path, what: &str) -> Result<PathBuf, GitProviderError> {
+pub(crate) fn pointed_folder(
+    text: &str,
+    base: &Path,
+    what: &str,
+) -> Result<PathBuf, GitProviderError> {
     let text = text.trim();
     if text.is_empty() || names_a_share_or_device(text) || text.contains('\0') {
         return Err(GitProviderError::new(
