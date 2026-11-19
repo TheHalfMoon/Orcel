@@ -363,7 +363,8 @@ fn ob07b_a_request_body_leaves_the_worker_only_for_an_armed_execution() -> Outco
 }
 
 /// The name parts of a URL-like key or field: the name is one of them or
-/// ends with `_<part>` (`target_url`, `source_url`, `latest_dated_link`).
+/// ends with `_<part>` (`target_url`, `source_url`; also `latest_dated_link`,
+/// a node id that the allowlist names).
 const URL_LIKE: &[&str] = &["url", "href", "location", "link", "redirect"];
 
 /// URL-like keys in orceld's sources that are not a page URL the agent
@@ -378,7 +379,7 @@ const URL_KEY_ALLOWED: &[(&str, &str, &str)] = &[
     (
         "crates/orceld/src/live_dispatch.rs",
         "latest_dated_link",
-        "a page-authored link from the observation, like the link URLs a snapshot shows; not the committed URL or anything a person typed",
+        "a node id (the host's typed selection, select_latest_dated_link), not a URL: the key only ends in a URL-like word",
     ),
     (
         "crates/orceld/src/search.rs",
