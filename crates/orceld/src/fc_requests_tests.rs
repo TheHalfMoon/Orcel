@@ -27,8 +27,32 @@ use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::path::PathBuf;
 
-/// One sample of every worker operation, with paths inside the test
-/// lease's root (`C:\work`).
+/// The number of `WorkerOp` variants, and each variant's place: the match
+/// is exhaustive, so a new operation does not compile until it is added
+/// here, and `every_op` must then carry a sample of it
+/// (`fc_requests_every_worker_operation_has_exactly_one_shape`).
+const VARIANTS: usize = 13;
+
+fn variant_index(op: &WorkerOp) -> usize {
+    match op {
+        WorkerOp::Stat { .. } => 0,
+        WorkerOp::List { .. } => 1,
+        WorkerOp::ReadText { .. } => 2,
+        WorkerOp::WriteText { .. } => 3,
+        WorkerOp::Mkdir { .. } => 4,
+        WorkerOp::Run { .. } => 5,
+        WorkerOp::GitStatus { .. } => 6,
+        WorkerOp::GitDiff { .. } => 7,
+        WorkerOp::GitLog { .. } => 8,
+        WorkerOp::GitAdd { .. } => 9,
+        WorkerOp::GitUnstage { .. } => 10,
+        WorkerOp::GitCommit { .. } => 11,
+        WorkerOp::GitBranchCreate { .. } => 12,
+    }
+}
+
+/// One sample of every worker operation (checked against `variant_index`),
+/// with paths inside the test lease's root (`C:\work`).
 fn every_op() -> Vec<WorkerOp> {
     let repository = r"C:\work\repo".to_owned();
     vec![
@@ -117,10 +141,17 @@ fn code<T: std::fmt::Debug>(result: Result<T, ProviderError>) -> Option<FailureC
 #[test]
 fn fc_requests_every_worker_operation_has_exactly_one_shape() {
     let ops = every_op();
+    let mut covered: Vec<usize> = ops.iter().map(variant_index).collect();
+    covered.sort_unstable();
+    assert_eq!(
+        covered,
+        (0..VARIANTS).collect::<Vec<_>>(),
+        "one sample per WorkerOp variant"
+    );
     let mut names: Vec<&str> = ops.iter().map(WorkerOp::name).collect();
     names.sort_unstable();
     names.dedup();
-    assert_eq!(names.len(), 13, "one sample per worker operation");
+    assert_eq!(names.len(), VARIANTS);
     for op in &ops {
         let shape = (capability_of(op), op.name());
         assert_eq!(
@@ -586,7 +617,9 @@ fn fc_requests_status_shows_the_lease_scope_and_grants_nothing() {
     );
     let mut foreign = lease('2', full_scope());
     foreign.principal_id = client_ref("someone-else");
-    let port = FakePort::installed(vec![lease('1', full_scope()), foreign, browser]);
+    let mut unbound = lease('3', full_scope());
+    unbound.principal_id = "orcel-owner".to_owned();
+    let port = FakePort::installed(vec![lease('1', full_scope()), foreign, unbound, browser]);
     let launched = launcher(&port);
     let approval = FakeApproval::default();
     let answer = dispatch(&port, &launched, &approval, &status_request(), 2_000).expect("status");
@@ -594,7 +627,14 @@ fn fc_requests_status_shows_the_lease_scope_and_grants_nothing() {
     assert_eq!(answer["authority"], json!("installed"));
     assert_eq!(answer["grants"], json!("nothing"));
     let leases = answer["leases"].as_array().expect("leases");
-    assert_eq!(leases.len(), 2, "browser leases are not listed");
+    assert_eq!(
+        leases.len(),
+        2,
+        "another client's lease and browser leases are not listed"
+    );
+    assert!(leases
+        .iter()
+        .all(|listed| listed["lease_id"] != json!(format!("al-{}", "2".repeat(32)))));
     let own = &leases[0];
     assert_eq!(own["roots"], json!([r"C:\work"]));
     assert_eq!(
@@ -609,9 +649,11 @@ fn fc_requests_status_shows_the_lease_scope_and_grants_nothing() {
         own["usable_capabilities"],
         json!([FS_CAPABILITY, PROCESS_CAPABILITY, GIT_CAPABILITY])
     );
-    let theirs = &leases[1];
-    assert_eq!(theirs["bound_to_this_client"], json!(false));
-    assert_eq!(theirs["usable_capabilities"], json!([]));
+    // An unbound lease admits this client for desktop input only.
+    let unbound = &leases[1];
+    assert_eq!(unbound["lease_id"], json!(format!("al-{}", "3".repeat(32))));
+    assert_eq!(unbound["bound_to_this_client"], json!(false));
+    assert_eq!(unbound["usable_capabilities"], json!([]));
     // Read-only: no Authorize, no job, no outcome, no approval.
     {
         let service = port.0.borrow();
@@ -700,8 +742,17 @@ fn fc_requests_the_windows_approval_is_soft_and_bound_to_the_digest() {
         assert_eq!(prompt.workspace_id, "default");
         assert_eq!(prompt.target, r"C:\work\tools\tool.exe");
         assert!(prompt.action.contains("run a program"), "{}", prompt.action);
-        assert!(prompt.summary.contains("\"--check\""), "{}", prompt.summary);
-        assert!(prompt.summary.contains(r"C:\work"), "{}", prompt.summary);
+        assert!(
+            prompt.summary.contains("[\"--check\"]"),
+            "{}",
+            prompt.summary
+        );
+        // The asking client's reference, as fc.status shows it.
+        assert!(
+            prompt.summary.contains(&client_ref("c")),
+            "{}",
+            prompt.summary
+        );
         assert_eq!(prompt.origin, orcel_approval::RequestOrigin::Local);
     }
     let denying = RecordingBroker::new(ApprovalDecision::Denied);
@@ -717,9 +768,176 @@ fn fc_requests_the_windows_approval_is_soft_and_bound_to_the_digest() {
     );
     // Each git change names its repository and what it changes.
     for op in every_op().iter().filter(|op| op.needs_approval()) {
-        let (action, target, summary) = describe(op);
+        let (action, target, summary) = describe(op, "cl-test");
         assert!(action.starts_with("Full Control: "), "{action}");
-        assert!(!target.is_empty() && !summary.is_empty(), "{op:?}");
+        assert!(!target.is_empty(), "{op:?}");
+        assert!(
+            summary.starts_with("asked by client cl-test; "),
+            "{summary}"
+        );
+    }
+}
+
+/// The dialog text cannot be forged by an argument: embedded quotes,
+/// backslashes and line breaks are escaped, and the working folder comes
+/// before the arguments.
+#[test]
+fn fc_requests_the_dialog_text_escapes_arguments_and_names_the_folder_first() {
+    let run = WorkerOp::Run {
+        program: r"C:\work\tools\tool.exe".to_owned(),
+        args: vec![
+            r#"a" "b"#.to_owned(),
+            "line\nbreak".to_owned(),
+            r"C:\work\".to_owned(),
+        ],
+        cwd: r"C:\work".to_owned(),
+        timeout_ms: 1_000,
+        max_output_bytes: 1_024,
+    };
+    let (_, target, summary) = describe(&run, "cl-1");
+    assert_eq!(target, r"C:\work\tools\tool.exe");
+    assert!(
+        summary.contains(r#"arguments: ["a\" \"b","line\nbreak","C:\\work\\"]"#),
+        "{summary}"
+    );
+    assert!(!summary.contains('\n'), "{summary}");
+    let folder = summary.find("working folder").expect("folder");
+    let arguments = summary.find("arguments").expect("arguments");
+    assert!(folder < arguments, "{summary}");
+    let commit = WorkerOp::GitCommit {
+        repository: r"C:\work\repo".to_owned(),
+        message: "subject\n\nbody with \"quotes\"".to_owned(),
+    };
+    let (_, _, summary) = describe(&commit, "cl-1");
+    assert!(
+        summary.contains(r#"message: "subject\n\nbody with \"quotes\"""#),
+        "{summary}"
+    );
+}
+
+/// The operation's own bounds (the worker's and the Git provider's rules)
+/// are checked before the lease is used or the person is asked: a bad
+/// request is `INVALID_REQUEST` (an oversized write `OUTPUT_LIMIT`) and
+/// costs no prompt.
+#[test]
+fn fc_requests_bad_arguments_are_refused_before_the_prompt() {
+    let port = FakePort::installed(vec![lease('1', full_scope())]);
+    let launched = launcher(&port);
+    let approval = FakeApproval::default();
+    let repository = r"C:\work\repo".to_owned();
+    let run = |timeout_ms: u64, max_output_bytes: usize, args: Vec<String>| WorkerOp::Run {
+        program: r"C:\work\tools\tool.exe".to_owned(),
+        args,
+        cwd: r"C:\work".to_owned(),
+        timeout_ms,
+        max_output_bytes,
+    };
+    let add = |paths: &[&str]| WorkerOp::GitAdd {
+        repository: repository.clone(),
+        paths: paths.iter().map(|path| (*path).to_owned()).collect(),
+    };
+    let cases = vec![
+        (run(0, 1_024, Vec::new()), FailureCode::InvalidRequest),
+        (run(50_001, 1_024, Vec::new()), FailureCode::InvalidRequest),
+        (run(1_000, 0, Vec::new()), FailureCode::InvalidRequest),
+        (run(1_000, 65_537, Vec::new()), FailureCode::InvalidRequest),
+        (
+            run(1_000, 1_024, vec!["x".to_owned(); 65]),
+            FailureCode::InvalidRequest,
+        ),
+        (
+            run(1_000, 1_024, vec!["nul\0".to_owned()]),
+            FailureCode::InvalidRequest,
+        ),
+        (add(&[]), FailureCode::InvalidRequest),
+        (add(&["../outside.txt"]), FailureCode::InvalidRequest),
+        (add(&[".git/config"]), FailureCode::InvalidRequest),
+        (add(&[r"C:\work\repo\a.txt"]), FailureCode::InvalidRequest),
+        (add(&[":(glob)*"]), FailureCode::InvalidRequest),
+        (add(&["a.txt", "a.txt"]), FailureCode::InvalidRequest),
+        (
+            WorkerOp::GitUnstage {
+                repository: repository.clone(),
+                paths: vec![".gitmodules".to_owned()],
+            },
+            FailureCode::InvalidRequest,
+        ),
+        (
+            WorkerOp::GitCommit {
+                repository: repository.clone(),
+                message: "   ".to_owned(),
+            },
+            FailureCode::InvalidRequest,
+        ),
+        (
+            WorkerOp::GitCommit {
+                repository: repository.clone(),
+                message: "x".repeat(8 * 1_024 + 1),
+            },
+            FailureCode::InvalidRequest,
+        ),
+        (
+            WorkerOp::GitBranchCreate {
+                repository: repository.clone(),
+                branch: "-delete".to_owned(),
+            },
+            FailureCode::InvalidRequest,
+        ),
+        (
+            WorkerOp::GitBranchCreate {
+                repository: repository.clone(),
+                branch: "a\nb".to_owned(),
+            },
+            FailureCode::InvalidRequest,
+        ),
+        (
+            WorkerOp::GitLog {
+                repository: repository.clone(),
+                max_count: 0,
+            },
+            FailureCode::InvalidRequest,
+        ),
+        (
+            WorkerOp::List {
+                path: r"C:\work".to_owned(),
+                max_entries: 1_001,
+            },
+            FailureCode::InvalidRequest,
+        ),
+        (
+            WorkerOp::ReadText {
+                path: r"C:\work\a.txt".to_owned(),
+                max_bytes: 0,
+            },
+            FailureCode::InvalidRequest,
+        ),
+        (
+            WorkerOp::WriteText {
+                path: r"C:\work\a.txt".to_owned(),
+                text: "x".repeat(256 * 1_024 + 1),
+                create_new: false,
+            },
+            FailureCode::OutputLimit,
+        ),
+    ];
+    for (op, expected) in cases {
+        assert_eq!(
+            op.check_arguments().err().map(|error| error.code),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            code(dispatch(&port, &launched, &approval, &fc_request(&op), 5)),
+            Some(expected),
+            "{}",
+            op.name()
+        );
+    }
+    assert!(approval.asked.borrow().is_empty(), "no prompt was shown");
+    assert!(port.0.borrow().authorized.is_empty());
+    assert_eq!(launched.runs.get(), 0);
+    // Every sample request passes the same checks.
+    for op in every_op() {
+        op.check_arguments().expect("valid sample");
     }
 }
 

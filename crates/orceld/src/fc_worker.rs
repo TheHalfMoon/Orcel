@@ -143,15 +143,93 @@ impl WorkerOp {
     /// call; their roots, link and `.git` checks, the service's
     /// audit-first `Authorize` and the dispatch job still apply. Reads
     /// (filesystem and git) ask nothing, like the Safe-mode read tools.
+    ///
+    /// The match is exhaustive on purpose: a new operation (a delete, a
+    /// move) does not compile until someone decides whether it asks.
     pub(crate) fn needs_approval(&self) -> bool {
-        matches!(
-            self,
+        match self {
             Self::Run { .. }
-                | Self::GitAdd { .. }
-                | Self::GitUnstage { .. }
-                | Self::GitCommit { .. }
-                | Self::GitBranchCreate { .. }
-        )
+            | Self::GitAdd { .. }
+            | Self::GitUnstage { .. }
+            | Self::GitCommit { .. }
+            | Self::GitBranchCreate { .. } => true,
+            // Founder amendment of 2026-11-19: lease-covered file writes.
+            Self::WriteText { .. } | Self::Mkdir { .. } => false,
+            // Reads.
+            Self::Stat { .. }
+            | Self::List { .. }
+            | Self::ReadText { .. }
+            | Self::GitStatus { .. }
+            | Self::GitDiff { .. }
+            | Self::GitLog { .. } => false,
+        }
+    }
+
+    /// SG132_SLICE8.md: the operation's own argument bounds, the same
+    /// rules the worker and the Git provider apply, checked by orceld
+    /// before the person is asked, so a malformed request never costs a
+    /// prompt (`INVALID_REQUEST`; an oversized write is `OUTPUT_LIMIT`, as
+    /// in the worker). Paths are checked by the dispatcher and the worker;
+    /// nothing here reads the disk.
+    pub(crate) fn check_arguments(&self) -> Result<(), ProviderError> {
+        match self {
+            Self::Stat { .. } | Self::Mkdir { .. } => Ok(()),
+            Self::List { max_entries, .. } => {
+                if *max_entries == 0 || *max_entries > MAX_LIST_ENTRIES {
+                    return Err(failure(
+                        FailureCode::InvalidRequest,
+                        "max_entries is 1 to 1000",
+                    ));
+                }
+                Ok(())
+            }
+            Self::ReadText { max_bytes, .. } => {
+                if *max_bytes == 0 || *max_bytes > MAX_TEXT_BYTES {
+                    return Err(failure(
+                        FailureCode::InvalidRequest,
+                        "max_bytes is 1 to 262144",
+                    ));
+                }
+                Ok(())
+            }
+            Self::WriteText { text, .. } => {
+                if text.len() > MAX_TEXT_BYTES {
+                    return Err(failure(
+                        FailureCode::OutputLimit,
+                        "write_text writes at most 262144 bytes",
+                    ));
+                }
+                Ok(())
+            }
+            Self::Run {
+                program,
+                args,
+                timeout_ms,
+                max_output_bytes,
+                ..
+            } => exec::check_run_arguments(program, args, *timeout_ms, *max_output_bytes),
+            Self::GitStatus { .. } | Self::GitDiff { .. } => Ok(()),
+            Self::GitLog { max_count, .. } => {
+                if *max_count == 0 || *max_count > exec::MAX_GIT_LOG {
+                    return Err(failure(
+                        FailureCode::InvalidRequest,
+                        "max_count is 1 to 100",
+                    ));
+                }
+                Ok(())
+            }
+            Self::GitAdd { paths, .. } | Self::GitUnstage { paths, .. } => {
+                orcel_provider_git::validate_mutation_paths(paths)
+                    .map(|_| ())
+                    .map_err(exec::git_error)
+            }
+            Self::GitCommit { message, .. } => {
+                orcel_provider_git::validate_commit_message(message).map_err(exec::git_error)
+            }
+            Self::GitBranchCreate { branch, .. } => {
+                orcel_provider_git::validate_branch_input(branch).map_err(exec::git_error)
+            }
+        }
     }
 
     /// The operation's name, as the request's `operation` must state it.

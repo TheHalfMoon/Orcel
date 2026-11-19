@@ -160,6 +160,13 @@ pub(crate) fn dispatch(
     if request.capability == STATUS_CAPABILITY {
         return status(port, &client, now_ms);
     }
+    // The operation's own bounds (the worker's and the Git provider's
+    // rules) before anything else, so a malformed request never costs the
+    // person a prompt. Arguments that are no operation at all are refused
+    // by `run_in_worker` itself.
+    if let Ok(op) = serde_json::from_value::<WorkerOp>(request.arguments.clone()) {
+        op.check_arguments()?;
+    }
     run_in_worker(port, launcher, approval, request, Some(&client), now_ms)
 }
 
@@ -213,9 +220,13 @@ impl WorkerLauncher for NoWorker {
 }
 
 /// `fc.status`: what the active Full User leases of this Windows user and
-/// logon session cover, for the agent to show the person, and this
-/// client's reference, which the person names at grant. Read-only: no
-/// `Authorize`, no job, no approval; browser leases are not listed.
+/// logon session cover for this client, for the agent to show the person,
+/// and this client's reference, which the person names at grant.
+/// Read-only: no `Authorize`, no job, no approval. Only leases this client
+/// can use are listed: a lease bound to it, or an unbound lease (one not
+/// granted to a client reference), which admits it for desktop input only
+/// (`usable_capabilities` then empty). Another client's lease and browser
+/// leases are not listed.
 pub(crate) fn status(
     port: &dyn AuthorityPort,
     client: &str,
@@ -240,6 +251,12 @@ pub(crate) fn status(
             continue;
         };
         if body.expires_at_ms <= now_ms {
+            continue;
+        }
+        let usable_by_this_client = ExecutorClass::ALL
+            .into_iter()
+            .any(|executor| body.scope.admits(executor) && body.admits_client(executor, client));
+        if !usable_by_this_client {
             continue;
         }
         let usable: Vec<&str> = [
@@ -290,17 +307,21 @@ impl<'a, B: ApprovalBroker> BrokerApproval<'a, B> {
     }
 }
 
+/// JSON text of a value: every argument, path, message and branch the
+/// dialog shows is quoted and escaped this way, so an embedded quote,
+/// backslash or line break cannot make one argument look like several.
+fn json_text<T: serde::Serialize + ?Sized>(value: &T) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "(unprintable)".to_owned())
+}
+
 /// What the Windows dialog shows for one worker operation: the action, its
-/// target and a summary of its arguments. The dialog bounds long fields;
-/// the approval itself is bound to the digest over the whole operation.
-pub(crate) fn describe(op: &WorkerOp) -> (String, String, String) {
-    let quoted = |items: &[String]| {
-        items
-            .iter()
-            .map(|item| format!("\"{item}\""))
-            .collect::<Vec<_>>()
-            .join(" ")
-    };
+/// target and a summary that starts with the asking client's reference
+/// (`client`, as `fc.status` shows it to the agent), then the operation's
+/// details: for a run the working folder before the arguments. The dialog
+/// bounds long fields; the approval itself is bound to the digest over the
+/// whole operation.
+pub(crate) fn describe(op: &WorkerOp, client: &str) -> (String, String, String) {
+    let asked_by = format!("asked by client {client}");
     match op {
         WorkerOp::Run {
             program,
@@ -312,23 +333,20 @@ pub(crate) fn describe(op: &WorkerOp) -> (String, String, String) {
             "Full Control: run a program".to_owned(),
             program.clone(),
             format!(
-                "arguments: {}; working folder: {cwd}; stops after {timeout_ms} ms; output up to {max_output_bytes} bytes",
-                if args.is_empty() {
-                    "none".to_owned()
-                } else {
-                    quoted(args)
-                }
+                "{asked_by}; working folder: {}; arguments: {}; stops after {timeout_ms} ms; output up to {max_output_bytes} bytes",
+                json_text(cwd),
+                json_text(args),
             ),
         ),
         WorkerOp::GitAdd { repository, paths } => (
             "Full Control: stage files in Git".to_owned(),
             repository.clone(),
-            format!("paths: {}", quoted(paths)),
+            format!("{asked_by}; paths: {}", json_text(paths)),
         ),
         WorkerOp::GitUnstage { repository, paths } => (
             "Full Control: unstage files in Git".to_owned(),
             repository.clone(),
-            format!("paths: {}", quoted(paths)),
+            format!("{asked_by}; paths: {}", json_text(paths)),
         ),
         WorkerOp::GitCommit {
             repository,
@@ -336,17 +354,17 @@ pub(crate) fn describe(op: &WorkerOp) -> (String, String, String) {
         } => (
             "Full Control: commit in Git".to_owned(),
             repository.clone(),
-            format!("message: {message}"),
+            format!("{asked_by}; message: {}", json_text(message)),
         ),
         WorkerOp::GitBranchCreate { repository, branch } => (
             "Full Control: create a Git branch".to_owned(),
             repository.clone(),
-            format!("branch: {branch}"),
+            format!("{asked_by}; branch: {}", json_text(branch)),
         ),
         other => (
             format!("Full Control: {}", other.name()),
             other.paths().join(", "),
-            String::new(),
+            asked_by,
         ),
     }
 }
@@ -358,7 +376,8 @@ impl<B: ApprovalBroker> ActionApproval for BrokerApproval<'_, B> {
         request: &RequestEnvelope,
         action_digest: &str,
     ) -> Result<(), ProviderError> {
-        let (action, target, summary) = describe(op);
+        let client = orcel_policy::browser_lease::client_ref(&request.client_session_id);
+        let (action, target, summary) = describe(op, &client);
         // `ApprovalPrompt::new` is SOFT, single-operation and expires on
         // its own; the broker consumes the token against the same digest.
         let prompt = ApprovalPrompt::new(

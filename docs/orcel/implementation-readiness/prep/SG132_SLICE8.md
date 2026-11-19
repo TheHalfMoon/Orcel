@@ -58,18 +58,27 @@ header of `crates/orceld/src/fc_requests.rs`.
     arguments. A shape outside the table (another `fc.*` name, an operation of another family) is
     `CAPABILITY_DENIED`; a malformed operation, a mismatch between operation and arguments, a target or an old
     protocol is `INVALID_REQUEST`.
-  - `dispatch`: the status, or `full_control_dispatch::run_in_worker` with the calling client's reference
+  - `dispatch`: the status, or, after the operation's own argument checks (`WorkerOp::check_arguments`: the run's
+    timeout, output, argument count, length and NUL bounds shared with the worker (`exec::check_run_arguments`); the
+    list, read and log bounds; the write size; the Git provider's own path, commit message and branch input checks,
+    now public in `orcel-provider-git`), so a malformed request is refused before the lease is used or the person is
+    asked, `full_control_dispatch::run_in_worker` with the calling client's reference
     (`orcel_policy::browser_lease::client_ref(client_session_id)`) as `principal_id`, as `desktop_gate` names it since
     slice 6. `run_in_worker` was built in slices 3 and 4 and is unchanged: lease (executor, client, roots), the
     approval where `needs_approval`, `Authorize` (audit first), the job, the worker, the outcome.
   - `BrokerApproval`: the production `ActionApproval`, over orceld's `ApprovalBroker` (`LocalApprovalBroker`, whose
     SOFT prompt is the Windows approval dialog; approvals stay with Windows, never an in-app control). One
     `ApprovalPrompt` per call: SOFT, single-operation, bound to the action digest the service then records, naming the
-    program and its arguments and working folder, or the repository and the paths, message or branch. Approved runs;
+    program or the repository as the target, and a summary that starts with the asking client's reference
+    (`asked by client cl-...`, the same reference `fc.status` gives the agent) and then the working folder before the
+    arguments, or the paths, message or branch. Every argument, path, message and branch is shown as JSON text, so an
+    embedded quote, backslash or line break cannot make one argument look like several. Approved runs;
     No or no answer is `APPROVAL_DENIED`; a prompt that cannot be shown is the broker's error
     (`APPROVAL_UNAVAILABLE`).
   - `status`: with the service installed, the active `DesktopFullUser` leases of this Windows user and logon session
-    the verified service reported (browser leases are not listed, expired ones are skipped): lease id, executors,
+    the verified service reported that this client can use: bound to its reference, or unbound (not granted to a client
+    reference; such a lease admits it for desktop input only). Another client's lease, browser leases and expired
+    leases are not listed. For each: lease id, executors,
     roots, shells, task, expiry, whether it is bound to this client, and which `fc.*` capabilities this client can
     use under it. Without the service: `"authority": "not_installed"` and the client's reference. It calls no
     `Authorize`, makes no job and asks nothing. An installed service that does not answer is `AUTHORITY_UNAVAILABLE`.
@@ -83,7 +92,10 @@ header of `crates/orceld/src/fc_requests.rs`.
 - **`crates/orcel-policy/src/remote_session.rs`:** `fc.` joins the remote gate's local-only prefixes, so the gate's
   own answer for an `fc.*` request is `CAPABILITY_DENIED` too (a second layer; orceld refuses first).
 - **`crates/orceld/src/fc_worker.rs`:** `WorkerOp::needs_approval` is unchanged in behaviour (it already asked for
-  `run` and the four Git changes only) and now records the founder's amendment. The `dead_code` allowances that
+  `run` and the four Git changes only), records the founder's amendment, and is now an exhaustive match over every
+  variant, so a future operation (a delete, a move) does not compile until someone decides whether it asks. New
+  `WorkerOp::check_arguments` (above). The tests derive their operation list from an exhaustive match over the enum,
+  so a new variant also fails them until it has a sample. The `dead_code` allowances that
   existed only because nothing called the worker path outside tests are gone (`Family`'s variants, `ActionApproval`,
   `run_in_worker`, `WorkerOp`'s methods).
 - **`crates/orceld/src/full_control_dispatch.rs`:** comments only (the production adapter and caller now exist).
@@ -142,7 +154,10 @@ real desktop shows.
 | **Founder amendment:** a file write or folder creation runs without a per-call approval | By decision: the lease covers `write_text` and `mkdir`. What still holds: the lease's executor, client and roots; the service's audit-first `Authorize` and its record; the dispatch job; the worker's root, link, hard link and `.git` checks; the outcome record | `fc_requests_file_writes_are_lease_covered_and_ask_nothing` (no approval asked; `Authorize`, executor `filesystem`, paths and outcome present); the worker's checks: `fc_worker_tests` (slice 3) |
 | A program or a Git change runs without the person's fresh approval, or one approval covers two actions | `run`, `git_add`, `git_unstage`, `git_commit`, `git_branch_create` ask on every call; each approval is bound to that call's digest, which the service records; a No authorizes and runs nothing | `fc_requests_process_and_git_mutations_ask_every_call` (two rounds, every digest distinct and equal to an `Authorize` digest); `fc_dispatch_process_and_git_mutations_need_a_fresh_approval_bound_to_the_digest` |
 | The approval is an in-app control, or not SOFT, or not bound to the action | `BrokerApproval` asks orceld's broker for a SOFT, single-use prompt with the action digest, the program or repository, and a local origin; No and unavailable refuse | `fc_requests_the_windows_approval_is_soft_and_bound_to_the_digest` (scripted brokers); that the broker's SOFT prompt is the Windows dialog: `orcel-approval`'s own suites; the dialog itself on a real desktop: **UNVERIFIED (founder run)** |
-| `fc.status` grants or leaks authority | Read-only: no `Authorize`, no job, no approval; lists only desktop Full User leases; shows another client's lease as not bound to this client, without its reference | `fc_requests_status_shows_the_lease_scope_and_grants_nothing` |
+| `fc.status` grants or leaks authority | Read-only: no `Authorize`, no job, no approval; lists only desktop Full User leases this client can use (bound to it, or unbound); another client's lease is not listed | `fc_requests_status_shows_the_lease_scope_and_grants_nothing` |
+| An argument forges the dialog text (an embedded quote or line break makes one argument read as several), or the person cannot tell which agent asks | Arguments, paths, message and branch are JSON text; the working folder is shown before the arguments; the summary starts with the asking client's reference | `fc_requests_the_dialog_text_escapes_arguments_and_names_the_folder_first`; `fc_requests_the_windows_approval_is_soft_and_bound_to_the_digest` |
+| A malformed request costs the person a prompt (prompt fatigue), or reaches the worker | The worker's and the Git provider's argument rules run in orceld first: out-of-range timeouts, output limits, counts, too many or NUL arguments, absolute, `..`, `.git`, `.gitmodules`, magic or duplicate Git paths, empty or oversized messages, unsafe branch names, oversized writes; nothing is authorized, asked or run | `fc_requests_bad_arguments_are_refused_before_the_prompt` |
+| A future worker operation (a delete, a move) is added without an approval decision | `needs_approval` is an exhaustive match; the tests' operation list comes from an exhaustive match over the enum | compile-time; `fc_requests_every_worker_operation_has_exactly_one_shape` |
 | The installed service admits an `fc.*` dispatch it should not, or the worker runs outside the dispatch job | The service checks the lease, executor, client, roots and paths and makes the job (slices 3 to 6); orceld runs the worker only in it | Slice 3 to 6 tests with the console harness and real jobs (`fc_worker_tests`); end to end with the installed service and these capabilities: **UNVERIFIED (founder run)** |
 
 ## 5. Residuals
@@ -161,7 +176,9 @@ real desktop shows.
 5. **The client reference is session-asserted, and a bound lease stops at an MCP restart** (slice 6 residuals 1
    and 2). For files, programs and Git a lease must be bound to the reference (section 2), so a restarted MCP server
    (a new session, a new reference) is refused until the person grants a lease to the new reference. `fc.status`
-   shows the reference; the grant confirmation showing the client is still the service's text.
+   shows the reference; the grant confirmation showing the client is still the service's text. The reference the
+   approval dialog names is the same session-asserted one: it tells the person which client session asks, not
+   which program is behind it.
 6. **Long arguments are shortened in the dialog.** The dialog bounds its fields; the approval is bound to the digest
    over the whole operation, so a long argument list the person did not see in full is still the one that runs.
 7. **No MCP tool yet.** Until option B's slice 2, only a local process that writes orceld's request line can send
@@ -184,10 +201,10 @@ real desktop shows.
 
 At head (Windows, unelevated):
 
-- `cargo test -p orceld --bin orceld -- fc_requests full_control_dispatch`: 13 new `fc_requests_` tests and the 20
-  `fc_dispatch_` tests. All pass.
+- `cargo test -p orceld --bin orceld -- fc_requests full_control_dispatch fc_worker`: 15 new `fc_requests_` tests,
+  the 20 `fc_dispatch_` tests and the `fc_worker` tests. All pass. `cargo test -p orcel-provider-git --lib`: pass.
 - `cargo test -p orceld --test ob04_shadow_scan --test ob07b_vault_scan`: pass.
 - `cargo test -p orcel-policy remote_session`: pass. Other `orcel-policy` and orceld tests fail on this PC because of
   its AppData permissions (`InsecureAcl`, before this slice); CI runs them.
-- `cargo clippy -p orceld -p orcel-policy --all-targets -- -D warnings` on Windows: clean. Linux and macOS builds and
+- `cargo clippy -p orceld -p orcel-policy -p orcel-provider-git --all-targets -- -D warnings` on Windows: clean. Linux and macOS builds and
   the workspace-wide clippy are left to CI.
