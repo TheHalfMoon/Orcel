@@ -6,9 +6,9 @@
 
 use crate::fc_worker::WorkerOp;
 use crate::full_control_dispatch::{
-    action_digest, authorize, desktop_gate, run_in_worker as dispatch_worker,
-    with_desktop_outcomes, Action, ActionApproval, AuthorityPort, Family, JobGrant, Ticket,
-    WorkerLauncher,
+    action_digest, authorize, desktop_gate, ensure_lease_host, run_in_worker as dispatch_worker,
+    with_desktop_outcomes, Action, ActionApproval, AuthorityPort, Family, HostLauncher, JobGrant,
+    Ticket, WorkerLauncher,
 };
 use orcel_authority::lease::{
     BrowserFamily, GrantEvidence, LeaseBody, LeaseScope, ObservedRequester, LEASE_CONTRACT,
@@ -92,8 +92,17 @@ struct FakeService {
     live_jobs: BTreeSet<String>,
     /// Authorization id to its job id.
     job_of: std::collections::BTreeMap<String, String>,
-    /// Job handles the dispatcher gave back unused.
-    released: Vec<u64>,
+    /// SG132_SLICE5.md: the acknowledgements orceld sent (authorization,
+    /// handle), and the code to refuse them with.
+    acks: Vec<(String, u64)>,
+    refuse_ack: Option<FailureCode>,
+    /// Desktop host jobs asked for (lease ids), the answer's override, and
+    /// a refusal.
+    desktop_hosts: Vec<String>,
+    host_answer: Option<Value>,
+    refuse_host: Option<FailureCode>,
+    /// What happened, in order ("authorize", "ack", "active", "host").
+    calls: Vec<&'static str>,
     authorized: Vec<(String, ExecutorClass, AuthorizeClaims)>,
     outcomes: Vec<(String, DispatchOutcome, Option<FailureCode>)>,
     deprecated_checks: u32,
@@ -152,6 +161,7 @@ impl AuthorityPort for FakePort {
         if service.unreachable {
             return Err(unavailable());
         }
+        service.calls.push("authorize");
         service.next += 1;
         let job = matches!(
             executor,
@@ -195,7 +205,8 @@ impl AuthorityPort for FakePort {
     }
 
     fn dispatch_active(&self, authorization_id: &str) -> Result<(), ProviderError> {
-        let service = self.0.borrow();
+        let mut service = self.0.borrow_mut();
+        service.calls.push("active");
         match service.job_of.get(authorization_id) {
             Some(job) if service.live_jobs.contains(job) => Ok(()),
             _ => Err(ProviderError::new(
@@ -205,8 +216,37 @@ impl AuthorityPort for FakePort {
         }
     }
 
-    fn release_job_handle(&self, handle: u64) {
-        self.0.borrow_mut().released.push(handle);
+    fn job_ack(&self, authorization_id: &str, job_handle: u64) -> Result<(), ProviderError> {
+        let mut service = self.0.borrow_mut();
+        service.calls.push("ack");
+        service.acks.push((authorization_id.to_owned(), job_handle));
+        match &service.refuse_ack {
+            Some(code) => Err(ProviderError::new(code.clone(), "the ack was refused")),
+            None => Ok(()),
+        }
+    }
+
+    fn desktop_host_job(&self, lease_id: &str) -> Result<Value, ProviderError> {
+        let mut service = self.0.borrow_mut();
+        service.calls.push("host");
+        if let Some(code) = &service.refuse_host {
+            return Err(ProviderError::new(code.clone(), "no desktop host job"));
+        }
+        service.next += 1;
+        let job = format!("fcj-{:032x}", service.next);
+        let authorization = format!("az-{:032x}", service.next);
+        service.live_jobs.insert(job.clone());
+        service.job_of.insert(authorization.clone(), job.clone());
+        service.desktop_hosts.push(lease_id.to_owned());
+        let handle = 0x8000 + 4 * u64::from(service.next);
+        Ok(service.host_answer.clone().unwrap_or_else(|| {
+            json!({
+                "authorization_id": authorization,
+                "lease_id": lease_id,
+                "job_id": job,
+                "job_handle": handle,
+            })
+        }))
     }
 }
 
@@ -564,8 +604,230 @@ fn fc_dispatch_a_job_family_needs_its_service_made_job() {
         code(desktop_gate(&port, &desktop, 5)),
         Some(FailureCode::AuthorityUnavailable)
     );
-    // Every handle the service sent with a refused answer was closed.
-    assert_eq!(port.0.borrow().released, vec![12, 16, 20, 24]);
+    // SG132_SLICE5.md: no handle that came with a refused answer was
+    // acknowledged (so none was used or closed here; the service withdraws
+    // unacknowledged handles itself).
+    assert!(port.0.borrow().acks.is_empty());
+}
+
+/// SG132_SLICE5.md: the job handle is acknowledged (authorization id and
+/// handle value) right after Authorize and before the worker is started;
+/// a refused acknowledgement runs nothing, closes nothing and is reported
+/// as a failed outcome.
+#[test]
+fn fc_dispatch_acknowledges_the_job_handle_before_using_it() {
+    let port = FakePort::installed(vec![lease('1', full_scope())]);
+    let launched = launcher(&port);
+    run_in_worker(
+        &port,
+        &launched,
+        &fs_request(),
+        None,
+        &read_op(r"C:\work\a.txt"),
+        5,
+    )
+    .expect("runs");
+    {
+        let service = port.0.borrow();
+        assert_eq!(service.calls, vec!["authorize", "ack", "active"]);
+        assert_eq!(
+            service.acks,
+            vec![(format!("az-{:032x}", 1), 0x4000 + 4)],
+            "the authorization and the handle value it carried"
+        );
+    }
+    // A desktop authorization carries no job and acknowledges nothing.
+    let desktop = request("desktop.input", "execute", json!({"x": 1}));
+    desktop_gate(&port, &desktop, 5).expect("desktop");
+    assert_eq!(port.0.borrow().acks.len(), 1);
+
+    // Refused: nothing runs, the outcome is recorded as failed.
+    port.with(|service| {
+        service.refuse_ack = Some(FailureCode::LeaseInvalid);
+        service.outcomes.clear();
+    });
+    let refused = run_in_worker(
+        &port,
+        &launched,
+        &fs_request(),
+        None,
+        &read_op(r"C:\work\a.txt"),
+        6,
+    );
+    assert_eq!(code(refused), Some(FailureCode::LeaseInvalid));
+    assert_eq!(launched.runs.get(), 1, "nothing ran after the refusal");
+    let service = port.0.borrow();
+    assert_eq!(service.outcomes.len(), 1);
+    assert_eq!(service.outcomes[0].1, DispatchOutcome::Failed);
+    assert_eq!(service.outcomes[0].2, Some(FailureCode::LeaseInvalid));
+}
+
+/// A fake desktop host launcher: "assigns" the suspended host and resumes
+/// it only if `confirm` succeeds, as the real one does.
+#[derive(Default)]
+struct FakeHosts {
+    running: Cell<bool>,
+    /// The generation of the host in use (moves on every replacement, as
+    /// the adapter's does).
+    generation: Cell<u64>,
+    started: RefCell<Vec<u64>>,
+    fails: Cell<bool>,
+}
+
+impl HostLauncher for FakeHosts {
+    fn running(&self, generation: u64) -> bool {
+        self.running.get() && self.generation.get() == generation
+    }
+
+    fn start_in_job(
+        &self,
+        job_handle: u64,
+        confirm: &dyn Fn() -> Result<(), ProviderError>,
+    ) -> Result<u64, ProviderError> {
+        if self.fails.get() {
+            return Err(ProviderError::new(
+                FailureCode::ProviderUnavailable,
+                "the host did not start",
+            ));
+        }
+        confirm()?;
+        self.started.borrow_mut().push(job_handle);
+        self.running.set(true);
+        self.generation.set(self.generation.get() + 1);
+        Ok(self.generation.get())
+    }
+}
+
+/// SG132_SLICE5.md: one desktop input host per lease, in that lease's
+/// service-made job: kept while it runs in the same lease's job, started
+/// fresh for a new lease or once it ended (the service ends it with the
+/// lease), after the handle is acknowledged and the job confirmed.
+#[test]
+fn fc_dispatch_the_desktop_host_runs_in_its_leases_job_and_a_new_lease_gets_a_fresh_one() {
+    let port = FakePort::installed(vec![lease('1', full_scope())]);
+    let hosts = FakeHosts::default();
+    let current = std::sync::Mutex::new(None);
+    let first_lease = format!("al-{}", "1".repeat(32));
+    let second_lease = format!("al-{}", "2".repeat(32));
+
+    let first = ensure_lease_host(&port, &hosts, &current, &first_lease).expect("first host");
+    assert_eq!(first.lease_id, first_lease);
+    assert!(first.job_id.starts_with("fcj-"));
+    assert_eq!(port.0.borrow().calls, vec!["host", "ack", "active"]);
+    assert_eq!(hosts.started.borrow().len(), 1);
+    // The same lease, host running: kept, no new job.
+    let again = ensure_lease_host(&port, &hosts, &current, &first_lease).expect("same host");
+    assert_eq!(again, first);
+    assert_eq!(hosts.started.borrow().len(), 1);
+    assert_eq!(port.0.borrow().desktop_hosts.len(), 1);
+    // The host ended (the service terminated the lease's job): a fresh one.
+    hosts.running.set(false);
+    let restarted = ensure_lease_host(&port, &hosts, &current, &first_lease).expect("restarted");
+    assert_ne!(restarted.job_id, first.job_id);
+    assert_eq!(hosts.started.borrow().len(), 2);
+    // Review of c02942bc: another host replaced the lease's one (an
+    // observation restarted a plain host after the leased one ended), and
+    // the replacement runs. It is not the lease's host: a fresh one in a
+    // fresh job, never the running plain host.
+    hosts.generation.set(hosts.generation.get() + 1);
+    assert!(!hosts.running(restarted.generation));
+    let replaced = ensure_lease_host(&port, &hosts, &current, &first_lease).expect("replaced");
+    assert_ne!(replaced.job_id, restarted.job_id);
+    assert_ne!(replaced.generation, restarted.generation);
+    assert_eq!(hosts.started.borrow().len(), 3);
+    // A new lease gets a fresh host in its own job.
+    let second = ensure_lease_host(&port, &hosts, &current, &second_lease).expect("second lease");
+    assert_eq!(second.lease_id, second_lease);
+    assert_eq!(hosts.started.borrow().len(), 4);
+    assert_eq!(
+        port.0.borrow().desktop_hosts,
+        vec![
+            first_lease.clone(),
+            first_lease.clone(),
+            first_lease.clone(),
+            second_lease.clone()
+        ]
+    );
+    // Each started host used the handle its own answer carried, acknowledged
+    // first.
+    let service = port.0.borrow();
+    let acked: Vec<u64> = service.acks.iter().map(|(_, handle)| *handle).collect();
+    assert_eq!(*hosts.started.borrow(), acked);
+}
+
+/// SG132_SLICE5.md: the desktop host never runs outside its job: a job
+/// that cannot be made, a malformed answer, a refused acknowledgement, a
+/// refused confirmation (a revoke before the resume) or a failed start
+/// refuses the desktop action and leaves the previous state alone.
+#[test]
+fn fc_dispatch_the_desktop_host_fails_closed_without_its_job() {
+    let lease_id = format!("al-{}", "1".repeat(32));
+    let fresh = || {
+        (
+            FakePort::installed(vec![lease('1', full_scope())]),
+            FakeHosts::default(),
+            std::sync::Mutex::new(None),
+        )
+    };
+    // No job.
+    let (port, hosts, current) = fresh();
+    port.with(|service| service.refuse_host = Some(FailureCode::AuthorityUnavailable));
+    assert_eq!(
+        code(ensure_lease_host(&port, &hosts, &current, &lease_id)),
+        Some(FailureCode::AuthorityUnavailable)
+    );
+    assert!(hosts.started.borrow().is_empty() && current.lock().expect("state").is_none());
+    // Malformed answers: nothing acknowledged, nothing started.
+    for answer in [
+        json!({"lease_id": lease_id, "job_id": format!("fcj-{}", "0".repeat(32)), "job_handle": 8}),
+        json!({"authorization_id": "az-1", "lease_id": lease_id, "job_id": "Local\\x", "job_handle": 8}),
+        json!({"authorization_id": "az-1", "lease_id": lease_id, "job_id": format!("fcj-{}", "0".repeat(32)), "job_handle": 0}),
+        json!({"authorization_id": "az-1", "lease_id": format!("al-{}", "9".repeat(32)), "job_id": format!("fcj-{}", "0".repeat(32)), "job_handle": 8}),
+    ] {
+        let (port, hosts, current) = fresh();
+        port.with(|service| service.host_answer = Some(answer.clone()));
+        assert_eq!(
+            code(ensure_lease_host(&port, &hosts, &current, &lease_id)),
+            Some(FailureCode::AuthorityUnavailable),
+            "{answer}"
+        );
+        assert!(port.0.borrow().acks.is_empty(), "{answer}");
+        assert!(hosts.started.borrow().is_empty(), "{answer}");
+    }
+    // A refused acknowledgement starts nothing.
+    let (port, hosts, current) = fresh();
+    port.with(|service| service.refuse_ack = Some(FailureCode::CapabilityDenied));
+    assert_eq!(
+        code(ensure_lease_host(&port, &hosts, &current, &lease_id)),
+        Some(FailureCode::CapabilityDenied)
+    );
+    assert!(hosts.started.borrow().is_empty());
+    // The job ends between the answer and the resume: DispatchActive refuses
+    // and the suspended host is never resumed.
+    let (port, hosts, current) = fresh();
+    let answer = port.desktop_host_job(&lease_id).expect("answer");
+    port.with(|service| {
+        service.live_jobs.clear();
+        service.host_answer = Some(answer.clone());
+    });
+    assert_eq!(
+        code(ensure_lease_host(&port, &hosts, &current, &lease_id)),
+        Some(FailureCode::LeaseInvalid)
+    );
+    assert!(hosts.started.borrow().is_empty());
+    assert!(current.lock().expect("state").is_none());
+    // A host that does not start leaves the earlier lease host recorded as
+    // it was (and not running, so the next action tries again).
+    let (port, hosts, current) = fresh();
+    ensure_lease_host(&port, &hosts, &current, &lease_id).expect("first");
+    hosts.running.set(false);
+    hosts.fails.set(true);
+    let before = current.lock().expect("state").clone();
+    assert_eq!(
+        code(ensure_lease_host(&port, &hosts, &current, &lease_id)),
+        Some(FailureCode::ProviderUnavailable)
+    );
+    assert_eq!(*current.lock().expect("state"), before);
 }
 
 /// Review of 291e045e (low 2): the operation that runs is the request's own

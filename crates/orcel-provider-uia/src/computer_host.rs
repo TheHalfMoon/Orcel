@@ -751,8 +751,40 @@ mod platform {
     pub(super) type HostWriter = Box<dyn Write + Send>;
     pub(super) type HostReader = Box<dyn BufRead + Send>;
 
+    /// The environment the computer host gets, by name (everything else is
+    /// cleared), with orceld's values. SG132_SLICE5.md: orceld starts the
+    /// host itself, suspended into a lease's service-made Job Object, with
+    /// exactly this environment.
+    pub fn computer_host_environment() -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+        HOST_ENV
+            .iter()
+            .filter_map(|name| std::env::var_os(name).map(|value| ((*name).into(), value)))
+            .collect()
+    }
+
+    /// SG132_SLICE5.md: a computer host process the caller started (orceld
+    /// starts it suspended, assigns it to the lease's service-made Job
+    /// Object, and resumes it once the service confirmed the job).
+    pub trait SpawnedHost: Send {
+        /// Whether the process is still running.
+        fn running(&mut self) -> bool;
+        /// Ends the process and waits for it.
+        fn end(&mut self);
+    }
+
+    impl SpawnedHost for Child {
+        fn running(&mut self) -> bool {
+            matches!(self.try_wait(), Ok(None))
+        }
+
+        fn end(&mut self) {
+            let _ = self.kill();
+            let _ = self.wait();
+        }
+    }
+
     struct HostSession {
-        child: Option<Child>,
+        child: Option<Box<dyn SpawnedHost>>,
         stdin: HostWriter,
         stdout: HostReader,
         next_id: u64,
@@ -791,7 +823,7 @@ mod platform {
                 )
             })?;
             Self::over(
-                Some(child),
+                Some(Box::new(child)),
                 Box::new(stdin),
                 Box::new(BufReader::new(stdout)),
                 crate::host_protocol::current_platform(),
@@ -801,7 +833,7 @@ mod platform {
         /// Negotiates over an established transport. A failed handshake
         /// drops the session, which ends the host.
         fn over(
-            child: Option<Child>,
+            child: Option<Box<dyn SpawnedHost>>,
             stdin: HostWriter,
             stdout: HostReader,
             platform: &str,
@@ -958,8 +990,7 @@ mod platform {
         fn drop(&mut self) {
             let _ = self.request("shutdown", None, None, None, None);
             if let Some(child) = self.child.as_mut() {
-                let _ = child.kill();
-                let _ = child.wait();
+                child.end();
             }
         }
     }
@@ -1001,6 +1032,11 @@ mod platform {
     pub struct ComputerHostAdapter {
         path: PathBuf,
         session: Mutex<HostSession>,
+        /// SG132_SLICE5.md: which host process the session talks to; it
+        /// starts at 1 and moves (under the session lock) whenever the host
+        /// is replaced, so a caller can tell the host it started from one
+        /// started after it.
+        generation: std::sync::atomic::AtomicU64,
         bindings: Mutex<BTreeMap<u64, HostTargetBinding>>,
         armed: Mutex<Option<ArmedSemantic>>,
         armed_input: Mutex<Option<ArmedInput>>,
@@ -1139,6 +1175,7 @@ mod platform {
             Ok(Self {
                 path,
                 session: Mutex::new(session),
+                generation: std::sync::atomic::AtomicU64::new(1),
                 bindings: Mutex::new(BTreeMap::new()),
                 armed: Mutex::new(None),
                 armed_input: Mutex::new(None),
@@ -1174,6 +1211,7 @@ mod platform {
             Ok(Self {
                 path,
                 session: Mutex::new(session),
+                generation: std::sync::atomic::AtomicU64::new(1),
                 bindings: Mutex::new(BTreeMap::new()),
                 armed: Mutex::new(None),
                 armed_input: Mutex::new(None),
@@ -1196,6 +1234,123 @@ mod platform {
             &self.path
         }
 
+        /// SG132_SLICE5.md: an adapter over a host process the caller
+        /// started (`path` names its image), negotiated as `from_path`
+        /// negotiates.
+        pub fn adopting(
+            path: impl Into<PathBuf>,
+            process: Box<dyn SpawnedHost>,
+            stdin: Box<dyn Write + Send>,
+            stdout: Box<dyn std::io::Read + Send>,
+        ) -> Result<Self, UiaError> {
+            let session = HostSession::over(
+                Some(process),
+                stdin,
+                Box::new(BufReader::new(stdout)),
+                crate::host_protocol::current_platform(),
+            )?;
+            Ok(Self {
+                path: path.into(),
+                session: Mutex::new(session),
+                generation: std::sync::atomic::AtomicU64::new(1),
+                bindings: Mutex::new(BTreeMap::new()),
+                armed: Mutex::new(None),
+                armed_input: Mutex::new(None),
+                last_input: Mutex::new(None),
+                observed: Mutex::new(BTreeMap::new()),
+            })
+        }
+
+        /// SG132_SLICE5.md: replaces the host process under this adapter
+        /// with one the caller started, once it negotiated; the previous
+        /// host is shut down and ended. Window bindings stay (the host's
+        /// window nonce is derived from the window's process and class, so
+        /// the new host checks them the same way); host snapshot ids and any
+        /// armed approval are dropped, since they belong to the old host.
+        /// A host that fails to negotiate is ended and the old one kept.
+        /// Returns the new host's generation ([`Self::host_running_at`]).
+        pub fn adopt_host(
+            &self,
+            process: Box<dyn SpawnedHost>,
+            stdin: Box<dyn Write + Send>,
+            stdout: Box<dyn std::io::Read + Send>,
+        ) -> Result<u64, UiaError> {
+            let session = HostSession::over(
+                Some(process),
+                stdin,
+                Box::new(BufReader::new(stdout)),
+                crate::host_protocol::current_platform(),
+            )?;
+            self.replace_session(session)
+        }
+
+        /// Whether the host process is still running (a scripted transport
+        /// counts as running).
+        pub fn host_running(&self) -> bool {
+            self.session
+                .lock()
+                .map(|mut session| session.child.as_mut().is_none_or(|child| child.running()))
+                .unwrap_or(false)
+        }
+
+        /// SG132_SLICE5.md: the generation of the host process the session
+        /// talks to now.
+        pub fn host_generation(&self) -> u64 {
+            self.generation.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        /// SG132_SLICE5.md: whether the host of `generation` is the one the
+        /// session talks to and it is still running (checked together under
+        /// the session lock).
+        pub fn host_running_at(&self, generation: u64) -> bool {
+            self.session
+                .lock()
+                .map(|mut session| {
+                    self.generation.load(std::sync::atomic::Ordering::SeqCst) == generation
+                        && session.child.as_mut().is_none_or(|child| child.running())
+                })
+                .unwrap_or(false)
+        }
+
+        /// Starts a fresh host from this adapter's path in place of one
+        /// that exited (the same start as `from_path`). Returns its
+        /// generation.
+        pub fn restart_host(&self) -> Result<u64, UiaError> {
+            let session = HostSession::spawn(&self.path)?;
+            self.replace_session(session)
+        }
+
+        fn replace_session(&self, session: HostSession) -> Result<u64, UiaError> {
+            let (previous, generation) = {
+                let mut current = self.session.lock().map_err(|_| {
+                    UiaError::new(
+                        FailureCode::ProviderUnavailable,
+                        "computer host session lock is poisoned",
+                    )
+                })?;
+                let generation = self
+                    .generation
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                    + 1;
+                (std::mem::replace(&mut *current, session), generation)
+            };
+            // The old host is shut down and ended outside the lock.
+            drop(previous);
+            if let Ok(mut observed) = self.observed.lock() {
+                for window in observed.values_mut() {
+                    window.snapshot_id = None;
+                    window.snapshot_runtime_ids.clear();
+                }
+            }
+            if let Ok(mut armed) = self.armed.lock() {
+                *armed = None;
+            }
+            if let Ok(mut armed) = self.armed_input.lock() {
+                *armed = None;
+            }
+            Ok(generation)
+        }
+
         /// An adapter over a scripted transport, negotiated for `platform`.
         #[cfg(test)]
         pub(crate) fn over_transport(
@@ -1207,6 +1362,7 @@ mod platform {
             Ok(Self {
                 path: PathBuf::from("scripted-host"),
                 session: Mutex::new(session),
+                generation: std::sync::atomic::AtomicU64::new(1),
                 bindings: Mutex::new(BTreeMap::new()),
                 armed: Mutex::new(None),
                 armed_input: Mutex::new(None),
@@ -1984,7 +2140,9 @@ mod platform {
     }
 }
 
-pub use platform::{ApprovedInput, ApprovedSemantic, ComputerHostAdapter};
+pub use platform::{
+    computer_host_environment, ApprovedInput, ApprovedSemantic, ComputerHostAdapter, SpawnedHost,
+};
 
 #[cfg(test)]
 mod tests {

@@ -431,6 +431,52 @@ fn wp110_dispatch_jobs_need_a_live_lease_and_outcomes_are_orcelds() {
     );
 }
 
+/// SG132_SLICE5.md: over the real pipe, a desktop host job needs orceld
+/// and a live desktop lease of the caller, and a job acknowledgement needs
+/// orceld and a job the service holds for that authorization; the status
+/// reports the acknowledgement timeout and the desktop host profile.
+#[test]
+fn wp110_desktop_host_jobs_and_acknowledgements_need_orceld_and_a_held_job() {
+    let trusted = start("s5", true);
+    let as_orceld = client(&trusted);
+    let status = as_orceld.status().expect("status");
+    assert_eq!(
+        status["job_objects"]["acknowledgement"]["required"],
+        Value::Bool(true)
+    );
+    assert_eq!(status["job_objects"]["desktop_host"]["lifetime"], "lease");
+    assert_eq!(status["job_objects"]["desktop_host"]["held"], 0);
+    let no_lease = format!("al-{}", "0".repeat(32));
+    assert_eq!(
+        code(as_orceld.desktop_host_job(&no_lease)),
+        Some(FailureCode::LeaseInvalid)
+    );
+    let unknown = format!("az-{}", "0".repeat(32));
+    assert_eq!(
+        code(as_orceld.job_ack(&unknown, 0x40)),
+        Some(FailureCode::LeaseInvalid)
+    );
+    assert_eq!(
+        code(as_orceld.job_ack("az-1", 0x40)),
+        Some(FailureCode::InvalidRequest)
+    );
+    assert_eq!(
+        as_orceld.status().expect("status")["job_objects"]["held"],
+        0,
+        "refusals made no job"
+    );
+    let plain = start("s5-plain", false);
+    let other = client(&plain);
+    assert_eq!(
+        code(other.desktop_host_job(&no_lease)),
+        Some(FailureCode::CapabilityDenied)
+    );
+    assert_eq!(
+        code(other.job_ack(&unknown, 0x40)),
+        Some(FailureCode::CapabilityDenied)
+    );
+}
+
 #[test]
 fn malformed_frames_are_refused_and_the_audit_chain_verifies_after_shutdown() {
     use orcel_authority::protocol::{read_frame, write_frame, Response};

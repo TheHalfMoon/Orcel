@@ -301,7 +301,8 @@ show it.
    residuals above apply to them in full.
 5. The service requiring paths for every `shell_process` dispatch.
 6. Slice 3 next steps 2 to 6 (desktop host in a job, retiring the deprecated store, the MCP principal at the
-   desktop gate, the job handle acknowledgement, founder runs) are unchanged.
+   desktop gate, the job handle acknowledgement, founder runs) are unchanged. Slice 5
+   ([SG132_SLICE5.md](SG132_SLICE5.md)) did the desktop host's job and the acknowledgement; the others remain.
 
 ## Tests
 

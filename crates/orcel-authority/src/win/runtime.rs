@@ -370,7 +370,11 @@ fn serve_connection(mut conn: Pipe, core: &Arc<Mutex<AuthorityCore>>, serving: &
                     // its caller: open the caller's process now, as the
                     // client, checked against the observed instance. The
                     // core lock is held, so the slot is this request's.
-                    let wants_process = matches!(request, Request::Authorize { .. });
+                    // SG132_SLICE5.md: so may a DesktopHostJob.
+                    let wants_process = matches!(
+                        request,
+                        Request::Authorize { .. } | Request::DesktopHostJob { .. }
+                    );
                     if wants_process {
                         if let Ok(mut slot) = serving.client_slot.lock() {
                             *slot = ClientProcess::open_impersonating(conn.raw(), facts).ok();

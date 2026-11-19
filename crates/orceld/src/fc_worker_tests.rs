@@ -65,7 +65,7 @@ mod windows {
     use crate::full_control_dispatch::{run_in_worker, AuthorityPort, JobGrant, WorkerLauncher};
     use crate::full_control_dispatch_tests::{lease, request, FakeApproval};
     use orcel_authority::caller::CallerFacts;
-    use orcel_authority::core::dispatch_jobs::JobHost;
+    use orcel_authority::core::dispatch_jobs::{JobHost, JobProfile};
     use orcel_authority::lease::{LeaseBody, LeaseScope};
     use orcel_authority::protocol::{AuthorizeClaims, DispatchOutcome};
     use orcel_authority::win::jobs::{ClientProcess, ClientSlot, ServiceJobs};
@@ -146,6 +146,10 @@ mod windows {
         /// Ends the job right after the answer (a revoke before the resume).
         revoke_after_authorize: bool,
         outcomes: RefCell<Vec<(DispatchOutcome, Option<FailureCode>)>>,
+        /// SG132_SLICE5.md: authorization id to the handle value its answer
+        /// carried, and the acknowledgements received.
+        handles: RefCell<BTreeMap<String, u64>>,
+        acked: RefCell<Vec<String>>,
     }
 
     impl JobPort {
@@ -163,19 +167,26 @@ mod windows {
                 held: RefCell::new(BTreeMap::new()),
                 revoke_after_authorize: false,
                 outcomes: RefCell::new(Vec::new()),
+                handles: RefCell::new(BTreeMap::new()),
+                acked: RefCell::new(Vec::new()),
             }
         }
 
-        fn make_job(&self) -> (String, u64) {
+        fn make_job(&self, profile: JobProfile) -> (String, u64) {
             *self.slot.lock().expect("slot") =
                 Some(ClientProcess::open(std::process::id()).expect("open"));
             let id = format!("fcj-{}", &format!("{}{}", unique(), unique())[..32]);
             let job = self
                 .jobs
                 .borrow_mut()
-                .create(&id, &this_process())
+                .create(&id, &this_process(), profile)
                 .expect("job");
             (job.id, job.handle)
+        }
+
+        /// The job of a held authorization, for the test to inspect.
+        fn job_of(&self, authorization_id: &str) -> Option<String> {
+            self.held.borrow().get(authorization_id).cloned()
         }
     }
 
@@ -198,8 +209,11 @@ mod windows {
             _executor: ExecutorClass,
             _claims: AuthorizeClaims,
         ) -> Result<Value, ProviderError> {
-            let (id, handle) = self.make_job();
+            let (id, handle) = self.make_job(JobProfile::Dispatch);
             let authorization = format!("az-{}", &format!("{}{}", unique(), unique())[..32]);
+            self.handles
+                .borrow_mut()
+                .insert(authorization.clone(), handle);
             if self.revoke_after_authorize {
                 self.jobs.borrow_mut().terminate(&id);
             } else {
@@ -227,7 +241,8 @@ mod windows {
             Ok(())
         }
         fn dispatch_active(&self, authorization_id: &str) -> Result<(), ProviderError> {
-            if self.held.borrow().contains_key(authorization_id) {
+            let acked = self.acked.borrow().iter().any(|id| id == authorization_id);
+            if self.held.borrow().contains_key(authorization_id) && acked {
                 Ok(())
             } else {
                 Err(ProviderError::new(
@@ -236,9 +251,31 @@ mod windows {
                 ))
             }
         }
-        fn release_job_handle(&self, handle: u64) {
-            // SAFETY: a handle this test duplicated into itself.
-            unsafe { windows_sys::Win32::Foundation::CloseHandle(handle as _) };
+        fn job_ack(&self, authorization_id: &str, job_handle: u64) -> Result<(), ProviderError> {
+            if self.handles.borrow().get(authorization_id) != Some(&job_handle) {
+                return Err(ProviderError::new(
+                    FailureCode::CapabilityDenied,
+                    "not the handle the service duplicated",
+                ));
+            }
+            self.acked.borrow_mut().push(authorization_id.to_owned());
+            Ok(())
+        }
+        fn desktop_host_job(&self, lease_id: &str) -> Result<Value, ProviderError> {
+            let (id, handle) = self.make_job(JobProfile::DesktopHost);
+            let authorization = format!("az-{}", &format!("{}{}", unique(), unique())[..32]);
+            self.handles
+                .borrow_mut()
+                .insert(authorization.clone(), handle);
+            self.held
+                .borrow_mut()
+                .insert(authorization.clone(), id.clone());
+            Ok(json!({
+                "authorization_id": authorization,
+                "lease_id": lease_id,
+                "job_id": id,
+                "job_handle": handle,
+            }))
         }
     }
 
@@ -374,7 +411,7 @@ mod windows {
     fn fc_worker_is_in_the_job_before_it_runs_and_a_refusal_ends_it() {
         let root = root();
         let port = JobPort::new(&root);
-        let (id, handle) = port.make_job();
+        let (id, handle) = port.make_job(JobProfile::Dispatch);
         let launcher = JobLauncher::with_program(orceld_exe());
         let seen = std::cell::Cell::new(None);
         let refused = launcher.run(
@@ -661,7 +698,7 @@ mod windows {
         std::fs::create_dir_all(&late).expect("late");
         std::fs::write(late.join(MODE_FILE), "late").expect("mode");
         let port = JobPort::new(&root);
-        let (id, handle) = port.make_job();
+        let (id, handle) = port.make_job(JobProfile::Dispatch);
         let launcher = JobLauncher::with_program(orceld_exe());
         let ran = launcher
             .run(
@@ -1375,5 +1412,275 @@ mod windows {
         }
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    /// SG132_SLICE5.md: a stand-in desktop input host launcher with the
+    /// production start (`start_suspended_in_job`, scrubbed environment, the
+    /// duplicated assign-only handle) of a real process: the built
+    /// `orceld.exe fc-worker`, which waits on its stdin like the computer
+    /// host. No host protocol and no input: the test checks the job, not the
+    /// desktop.
+    struct StandInHosts<'a> {
+        port: &'a JobPort,
+        host: RefCell<Option<(crate::desktop_host_job::JobbedHost, std::fs::File)>>,
+        /// Processes in the job while the launcher asked for confirmation
+        /// (the host suspended), per start.
+        at_confirm: RefCell<Vec<Option<u32>>>,
+        /// The job each started host went to.
+        jobs: RefCell<Vec<String>>,
+        /// The generation of the host in use.
+        generation: std::cell::Cell<u64>,
+    }
+
+    impl<'a> StandInHosts<'a> {
+        fn new(port: &'a JobPort) -> Self {
+            Self {
+                port,
+                host: RefCell::new(None),
+                at_confirm: RefCell::new(Vec::new()),
+                jobs: RefCell::new(Vec::new()),
+                generation: std::cell::Cell::new(0),
+            }
+        }
+
+        /// Whether the last started host is still running.
+        fn alive(&self) -> bool {
+            use orcel_provider_uia::SpawnedHost;
+            self.host
+                .borrow_mut()
+                .as_mut()
+                .is_some_and(|(host, _)| host.running())
+        }
+
+        fn job_of_handle(&self, handle: u64) -> Option<String> {
+            let handles = self.port.handles.borrow();
+            let authorization = handles
+                .iter()
+                .find(|(_, value)| **value == handle)
+                .map(|(id, _)| id.clone())?;
+            self.port.job_of(&authorization)
+        }
+
+        fn active(&self, job: &str) -> Option<u32> {
+            self.port.jobs.borrow().active_processes(job)
+        }
+    }
+
+    impl crate::full_control_dispatch::HostLauncher for StandInHosts<'_> {
+        fn running(&self, generation: u64) -> bool {
+            self.generation.get() == generation && self.alive()
+        }
+
+        fn start_in_job(
+            &self,
+            job_handle: u64,
+            confirm: &dyn Fn() -> Result<(), ProviderError>,
+        ) -> Result<u64, ProviderError> {
+            let job_id = self.job_of_handle(job_handle);
+            let program = orceld_exe();
+            let environment = orcel_provider_uia::computer_host_environment();
+            let checked = || {
+                let active = job_id.as_deref().and_then(|job| self.active(job));
+                self.at_confirm.borrow_mut().push(active);
+                confirm()
+            };
+            let (process, stdin, _stdout) = crate::fc_worker::start_suspended_in_job(
+                &crate::fc_worker::Launch {
+                    program: &program,
+                    arguments: "fc-worker",
+                    environment: Some(&environment),
+                    no_window: true,
+                },
+                orcel_authority::win::Owned(job_handle as _),
+                &checked,
+            )?;
+            self.jobs.borrow_mut().push(job_id.unwrap_or_default());
+            // The host it replaces is ended, as the adapter does.
+            if let Some((mut old, _)) = self
+                .host
+                .borrow_mut()
+                .replace((crate::desktop_host_job::JobbedHost(process), stdin))
+            {
+                use orcel_provider_uia::SpawnedHost;
+                old.end();
+            }
+            self.generation.set(self.generation.get() + 1);
+            Ok(self.generation.get())
+        }
+    }
+
+    fn exits_within(hosts: &StandInHosts<'_>, limit: std::time::Duration) -> bool {
+        let deadline = std::time::Instant::now() + limit;
+        while std::time::Instant::now() < deadline {
+            if !hosts.alive() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        false
+    }
+
+    /// SG132_SLICE5.md: the desktop input host is started suspended into
+    /// its lease's real, unnamed Job Object (in the job before it runs),
+    /// confirmed, resumed; kept for the same lease; ended within a second
+    /// when the service terminates the job (revoke, Stop, lock, expiry);
+    /// then a fresh host starts in a fresh job.
+    #[test]
+    fn fc_worker_the_desktop_host_runs_in_its_leases_job_and_ends_with_it() {
+        use crate::full_control_dispatch::ensure_lease_host;
+        let root = root();
+        let port = JobPort::new(&root);
+        let hosts = StandInHosts::new(&port);
+        let current = Mutex::new(None);
+        let lease_id = port.lease.lease_id.clone();
+
+        let first = ensure_lease_host(&port, &hosts, &current, &lease_id).expect("first host");
+        assert!(hosts.alive());
+        assert_eq!(
+            hosts.jobs.borrow().as_slice(),
+            std::slice::from_ref(&first.job_id)
+        );
+        assert_eq!(
+            hosts.at_confirm.borrow().as_slice(),
+            [Some(1)],
+            "assigned while suspended, before the confirmation"
+        );
+        assert_eq!(hosts.active(&first.job_id), Some(1));
+        assert_eq!(
+            port.acked.borrow().as_slice(),
+            std::slice::from_ref(&first.authorization_id)
+        );
+        // Kept for the same lease.
+        let again = ensure_lease_host(&port, &hosts, &current, &lease_id).expect("kept");
+        assert_eq!(again, first);
+        assert_eq!(hosts.jobs.borrow().len(), 1);
+
+        // The service ends the lease's job: the host ends within a second.
+        let started = std::time::Instant::now();
+        port.jobs.borrow_mut().terminate(&first.job_id);
+        assert!(exits_within(&hosts, std::time::Duration::from_secs(1)));
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+
+        // The next desktop action gets a fresh host in a fresh job.
+        let fresh = ensure_lease_host(&port, &hosts, &current, &lease_id).expect("fresh host");
+        assert_ne!(fresh.job_id, first.job_id);
+        assert!(hosts.alive());
+        assert_eq!(hosts.active(&fresh.job_id), Some(1));
+        port.jobs.borrow_mut().terminate(&fresh.job_id);
+        assert!(exits_within(&hosts, std::time::Duration::from_secs(1)));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// SG132_SLICE5.md: a host whose job ended between the service's answer
+    /// and the resume (a revoke) is never resumed: `DispatchActive` refuses
+    /// and the suspended process is terminated; a wrong handle value is
+    /// never acknowledged, so nothing starts.
+    #[test]
+    fn fc_worker_a_desktop_host_whose_job_ended_before_the_resume_never_runs() {
+        use crate::full_control_dispatch::ensure_lease_host;
+        let root = root();
+        let port = JobPort::new(&root);
+        let hosts = StandInHosts::new(&port);
+        let current = Mutex::new(None);
+        let lease_id = port.lease.lease_id.clone();
+        // The revoke lands after the acknowledgement, before the resume.
+        struct Revoking<'a>(&'a JobPort);
+        impl AuthorityPort for Revoking<'_> {
+            fn installed(&self) -> bool {
+                true
+            }
+            fn deprecated_desktop_check(&self) -> Result<(), ProviderError> {
+                self.0.deprecated_desktop_check()
+            }
+            fn leases(&self) -> Result<Vec<LeaseBody>, ProviderError> {
+                self.0.leases()
+            }
+            fn authorize(
+                &self,
+                lease_id: &str,
+                executor: ExecutorClass,
+                claims: AuthorizeClaims,
+            ) -> Result<Value, ProviderError> {
+                self.0.authorize(lease_id, executor, claims)
+            }
+            fn outcome(
+                &self,
+                authorization_id: &str,
+                outcome: DispatchOutcome,
+                code: Option<FailureCode>,
+            ) -> Result<(), ProviderError> {
+                self.0.outcome(authorization_id, outcome, code)
+            }
+            fn dispatch_active(&self, authorization_id: &str) -> Result<(), ProviderError> {
+                if let Some(job) = self.0.held.borrow_mut().remove(authorization_id) {
+                    self.0.jobs.borrow_mut().terminate(&job);
+                }
+                self.0.dispatch_active(authorization_id)
+            }
+            fn job_ack(&self, authorization_id: &str, handle: u64) -> Result<(), ProviderError> {
+                self.0.job_ack(authorization_id, handle)
+            }
+            fn desktop_host_job(&self, lease_id: &str) -> Result<Value, ProviderError> {
+                self.0.desktop_host_job(lease_id)
+            }
+        }
+        let refused = ensure_lease_host(&Revoking(&port), &hosts, &current, &lease_id);
+        assert_eq!(
+            refused.err().map(|error| error.code),
+            Some(FailureCode::LeaseInvalid)
+        );
+        assert!(!hosts.alive(), "nothing was kept");
+        assert!(hosts.jobs.borrow().is_empty(), "never resumed");
+        assert!(current.lock().expect("state").is_none());
+
+        // A wrong handle value is refused at the acknowledgement: nothing
+        // is started.
+        struct WrongHandle<'a>(&'a JobPort);
+        impl AuthorityPort for WrongHandle<'_> {
+            fn installed(&self) -> bool {
+                true
+            }
+            fn deprecated_desktop_check(&self) -> Result<(), ProviderError> {
+                self.0.deprecated_desktop_check()
+            }
+            fn leases(&self) -> Result<Vec<LeaseBody>, ProviderError> {
+                self.0.leases()
+            }
+            fn authorize(
+                &self,
+                lease_id: &str,
+                executor: ExecutorClass,
+                claims: AuthorizeClaims,
+            ) -> Result<Value, ProviderError> {
+                self.0.authorize(lease_id, executor, claims)
+            }
+            fn outcome(
+                &self,
+                authorization_id: &str,
+                outcome: DispatchOutcome,
+                code: Option<FailureCode>,
+            ) -> Result<(), ProviderError> {
+                self.0.outcome(authorization_id, outcome, code)
+            }
+            fn dispatch_active(&self, authorization_id: &str) -> Result<(), ProviderError> {
+                self.0.dispatch_active(authorization_id)
+            }
+            fn job_ack(&self, authorization_id: &str, handle: u64) -> Result<(), ProviderError> {
+                self.0.job_ack(authorization_id, handle)
+            }
+            fn desktop_host_job(&self, lease_id: &str) -> Result<Value, ProviderError> {
+                let mut answer = self.0.desktop_host_job(lease_id)?;
+                let handle = answer["job_handle"].as_u64().unwrap_or(0);
+                answer["job_handle"] = json!(handle + 4);
+                Ok(answer)
+            }
+        }
+        let refused = ensure_lease_host(&WrongHandle(&port), &hosts, &current, &lease_id);
+        assert_eq!(
+            refused.err().map(|error| error.code),
+            Some(FailureCode::CapabilityDenied)
+        );
+        assert!(hosts.jobs.borrow().is_empty());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

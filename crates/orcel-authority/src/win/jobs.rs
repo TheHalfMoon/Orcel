@@ -41,11 +41,15 @@
 //! handle out of orceld (it holds `PROCESS_DUP_HANDLE` on orceld) and assign
 //! its own processes to the job. That only puts them where the service will
 //! terminate them, and can hold a dispatch's job busy until the service's
-//! age limit ends it (SG132_SLICE3.md).
+//! age limit ends it (SG132_SLICE3.md). A desktop host job has no age limit:
+//! such processes stay until the lease ends (SG132_SLICE5.md).
+//!
+//! SG132_SLICE5.md: a desktop host job ([`JobProfile::DesktopHost`]) carries
+//! [`DESKTOP_HOST_UI_LIMITS`] instead of [`JOB_UI_LIMITS`].
 
 use super::{os_error, Owned};
 use crate::caller::CallerFacts;
-use crate::core::dispatch_jobs::{DispatchJob, JobHost};
+use crate::core::dispatch_jobs::{DispatchJob, JobHost, JobProfile};
 use crate::error::AuthorityError;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -90,6 +94,32 @@ pub const JOB_UI_LIMITS: u32 = JOB_OBJECT_UILIMIT_HANDLES
     | JOB_OBJECT_UILIMIT_DISPLAYSETTINGS
     | JOB_OBJECT_UILIMIT_READCLIPBOARD
     | JOB_OBJECT_UILIMIT_WRITECLIPBOARD;
+/// SG132_SLICE5.md: the UI restrictions of the desktop input host's job
+/// (`apps/orcel-computer-host` and its per-request workers). Desktop input
+/// on the user's desktop (the Full User model) needs the windows of other
+/// processes: listing them, reading their UI Automation trees (which uses
+/// window messages to them), `SetForegroundWindow`, `PostMessage(WM_CLOSE)`.
+/// So `HANDLES` is left out (it would refuse every USER handle of a process
+/// outside the job), and so is `GLOBALATOMS` (UI Automation and OLE in the
+/// host are not verified to work with a private global atom table; nothing
+/// in the host needs DDE). The host never uses the clipboard, never makes or
+/// switches desktops, and never changes system parameters or display
+/// settings or logs off, so those stay restricted. Synthesized input
+/// (`SendInput`) is what the host is for; no job restriction covers it.
+pub const DESKTOP_HOST_UI_LIMITS: u32 = JOB_OBJECT_UILIMIT_DESKTOP
+    | JOB_OBJECT_UILIMIT_EXITWINDOWS
+    | JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS
+    | JOB_OBJECT_UILIMIT_DISPLAYSETTINGS
+    | JOB_OBJECT_UILIMIT_READCLIPBOARD
+    | JOB_OBJECT_UILIMIT_WRITECLIPBOARD;
+
+/// The UI restrictions of a job of `profile`.
+pub fn ui_limits_for(profile: JobProfile) -> u32 {
+    match profile {
+        JobProfile::Dispatch => JOB_UI_LIMITS,
+        JobProfile::DesktopHost => DESKTOP_HOST_UI_LIMITS,
+    }
+}
 
 /// A pipe client's process, opened for handle duplication, with the
 /// creation time it was opened at.
@@ -218,6 +248,12 @@ pub fn active_processes(job: HANDLE) -> Result<u32, AuthorityError> {
 
 /// Creates an unnamed job with the dispatch limits and UI restrictions.
 pub fn create_job() -> Result<Owned, AuthorityError> {
+    create_job_for(JobProfile::Dispatch)
+}
+
+/// Creates an unnamed job with the limits and UI restrictions of
+/// `profile` (the limit flags and process limit are the same for both).
+pub fn create_job_for(profile: JobProfile) -> Result<Owned, AuthorityError> {
     // SAFETY: no attributes and no name: an unnamed job, not inheritable.
     let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
     if handle == 0 {
@@ -241,7 +277,7 @@ pub fn create_job() -> Result<Owned, AuthorityError> {
         return Err(os_error("SetInformationJobObject(dispatch limits)"));
     }
     let ui = JOBOBJECT_BASIC_UI_RESTRICTIONS {
-        UIRestrictionsClass: JOB_UI_LIMITS,
+        UIRestrictionsClass: ui_limits_for(profile),
     };
     // SAFETY: pointer and size describe `ui`; the handle has every right.
     if unsafe {
@@ -304,7 +340,12 @@ impl ServiceJobs {
 }
 
 impl JobHost for ServiceJobs {
-    fn create(&mut self, id: &str, caller: &CallerFacts) -> Result<DispatchJob, AuthorityError> {
+    fn create(
+        &mut self,
+        id: &str,
+        caller: &CallerFacts,
+        profile: JobProfile,
+    ) -> Result<DispatchJob, AuthorityError> {
         let client = self
             .slot
             .lock()
@@ -316,7 +357,7 @@ impl JobHost for ServiceJobs {
                 "the opened process is not the observed caller",
             ));
         }
-        let job = create_job()?;
+        let job = create_job_for(profile)?;
         let mut remote: HANDLE = 0;
         // SAFETY: duplicates the job handle into the verified client with
         // exactly assign-process, not inheritable.
@@ -351,18 +392,22 @@ impl JobHost for ServiceJobs {
 
     fn terminate(&mut self, id: &str) {
         if let Some(held) = self.held.remove(id) {
-            // SAFETY: the creating handle has JOB_OBJECT_TERMINATE. orceld's
-            // handle is its own to close (it may already have, and the value
-            // may be reused): a worker orceld assigns afterwards is never
-            // resumed, because `DispatchActive` refuses first.
+            // SAFETY: the creating handle has JOB_OBJECT_TERMINATE. orceld
+            // acknowledged its handle, so the handle is orceld's own to close
+            // (it may already have, and the value may be reused): a process
+            // orceld assigns afterwards is never resumed, because
+            // `DispatchActive` refuses first.
             unsafe { TerminateJobObject(held.job.0, 1) };
         }
     }
 
     fn withdraw(&mut self, id: &str) {
         if let Some(mut held) = self.held.remove(id) {
-            // The answer carrying the handle was never sent, so orceld has
-            // not used the value: closing it in orceld is safe.
+            // The answer carrying the handle was never sent, or orceld never
+            // acknowledged it (SG132_SLICE5.md): orceld uses and closes only
+            // a handle whose acknowledgement the service accepted, so it
+            // has not used or closed this value and closing it there is
+            // safe.
             held.close_remote();
             // SAFETY: the creating handle has JOB_OBJECT_TERMINATE.
             unsafe { TerminateJobObject(held.job.0, 1) };

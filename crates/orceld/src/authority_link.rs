@@ -523,15 +523,15 @@ impl crate::full_control_dispatch::AuthorityPort for ServicePort {
             .map_err(provider)
     }
 
-    fn release_job_handle(&self, handle: u64) {
-        #[cfg(windows)]
-        // SAFETY: a handle value the verified service duplicated into this
-        // process for this answer, closed once and never used.
-        unsafe {
-            windows_sys::Win32::Foundation::CloseHandle(handle as _);
-        }
-        #[cfg(not(windows))]
-        let _ = handle;
+    fn job_ack(&self, authorization_id: &str, job_handle: u64) -> Result<(), ProviderError> {
+        self.client()?
+            .job_ack(authorization_id, job_handle)
+            .map(|_| ())
+            .map_err(provider)
+    }
+
+    fn desktop_host_job(&self, lease_id: &str) -> Result<Value, ProviderError> {
+        self.client()?.desktop_host_job(lease_id).map_err(provider)
     }
 }
 
@@ -541,8 +541,12 @@ impl crate::full_control_dispatch::AuthorityPort for ServicePort {
 /// audit-first `Authorize`, and the request's outcome is reported
 /// (`full_control_dispatch::with_desktop_outcomes`); the deprecated
 /// user-readable store is consulted only where no service is installed (its
-/// existing behaviour), never as a fallback.
-pub(crate) fn desktop_input_gate(request: &RequestEnvelope) -> Result<(), ProviderError> {
+/// existing behaviour), never as a fallback. SG132_SLICE5.md: returns the
+/// service lease that admitted the action (`None` for the deprecated store),
+/// whose computer host the action must then run in.
+pub(crate) fn desktop_input_gate(
+    request: &RequestEnvelope,
+) -> Result<Option<String>, ProviderError> {
     crate::full_control_dispatch::desktop_gate(
         &ServicePort::installed_service(),
         request,

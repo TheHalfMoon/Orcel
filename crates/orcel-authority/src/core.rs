@@ -107,9 +107,8 @@ pub const EVENT_SIGNING_DOMAIN: &[u8] = b"orcel-authority-event-signature/1\n";
 const ENROLL_DOMAIN: &[u8] = b"orcel-authority-enrollment-challenge/1\n";
 
 /// What this slice does not do yet; returned by `Status` and `Authorize`.
-pub const DEFERRED: [&str; 8] = [
+pub const DEFERRED: [&str; 7] = [
     "TPM attestation freshness and AIK revocation checks (see SG132_SLICE2.md)",
-    "a service-owned Job Object for the desktop input host (WP1-10 gives one to every filesystem and shell/process dispatch)",
     "standing approvals (spec 4.15)",
     "indicator heartbeat",
     "TPM-backed signing key (the key is a CNG software key wrapped by DPAPI)",
@@ -778,7 +777,8 @@ impl AuthorityCore {
                 lease_id,
                 executor,
                 claims,
-            } => self.authorize(caller, role, &lease_id, executor, claims),
+                job_ack,
+            } => self.authorize(caller, role, &lease_id, executor, claims, job_ack),
             Request::Outcome {
                 authorization_id,
                 outcome,
@@ -787,6 +787,11 @@ impl AuthorityCore {
             Request::DispatchActive { authorization_id } => {
                 self.dispatch_active(caller, role, &authorization_id)
             }
+            Request::JobAck {
+                authorization_id,
+                job_handle,
+            } => self.job_ack(caller, role, &authorization_id, job_handle),
+            Request::DesktopHostJob { lease_id } => self.desktop_host_job(caller, role, &lease_id),
             Request::Revoke { lease_id } => self.revoke(caller, role, &lease_id),
             Request::Stop => self.stop(caller, role),
             Request::Anchor {
@@ -1944,10 +1949,19 @@ impl AuthorityCore {
         lease_id: &str,
         executor: ExecutorClass,
         claims: AuthorizeClaims,
+        job_ack: bool,
     ) -> Result<Value, AuthorityError> {
         if role != CallerRole::Orceld {
             return Err(AuthorityError::denied(
                 "only orceld (a configured trusted image) may ask for Authorize",
+            ));
+        }
+        // SG132_SLICE5.md: a job family needs an orceld that acknowledges
+        // job handles. An older one closes its handle itself, so the
+        // service would close a value it may have reused; it gets no job.
+        if dispatch_jobs::executor_runs_in_job(executor) && !job_ack {
+            return Err(AuthorityError::invalid(
+                "this orceld does not acknowledge job handles (job_ack); update orceld with the service",
             ));
         }
         if executor == ExecutorClass::Admin {

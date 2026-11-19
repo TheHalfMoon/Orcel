@@ -189,6 +189,8 @@ impl AuthorityClient {
             lease_id: lease_id.to_owned(),
             executor,
             claims,
+            // SG132_SLICE5.md: this orceld acknowledges every job handle.
+            job_ack: crate::core::dispatch_jobs::executor_runs_in_job(executor),
         })
     }
 
@@ -212,6 +214,27 @@ impl AuthorityClient {
     pub fn dispatch_active(&self, authorization_id: &str) -> Result<Value, AuthorityError> {
         self.call(&Request::DispatchActive {
             authorization_id: authorization_id.to_owned(),
+        })
+    }
+
+    /// SG132_SLICE5.md: acknowledges the job handle an answer carried,
+    /// before it is used.
+    pub fn job_ack(
+        &self,
+        authorization_id: &str,
+        job_handle: u64,
+    ) -> Result<Value, AuthorityError> {
+        self.call(&Request::JobAck {
+            authorization_id: authorization_id.to_owned(),
+            job_handle,
+        })
+    }
+
+    /// SG132_SLICE5.md: a Job Object for the desktop input host under
+    /// `lease_id` (lease lifetime).
+    pub fn desktop_host_job(&self, lease_id: &str) -> Result<Value, AuthorityError> {
+        self.call(&Request::DesktopHostJob {
+            lease_id: lease_id.to_owned(),
         })
     }
 
