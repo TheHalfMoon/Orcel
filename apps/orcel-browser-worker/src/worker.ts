@@ -34,7 +34,7 @@ import {
 } from "./protocol.js";
 import { ScreenshotError, toBase64Pieces } from "./screenshot.js";
 import type { TabInfo } from "./tabs.js";
-import type { RouteQuery } from "./routing.js";
+import type { RequestDetail, RouteQuery } from "./routing.js";
 import type { BoundedSnapshot } from "./snapshot.js";
 import type { VerifyProbe, VerifyResult } from "./verify.js";
 import type { FormAction } from "./actions/form.js";
@@ -51,6 +51,16 @@ export const ROUTE_DECISION_TIMEOUT_MS = 10_000;
 /// The host's answer to a described request.
 export interface RoutePolicy {
   decide(query: RouteQuery): Promise<boolean>;
+}
+
+/// SG-000135 OB-07b: a request body leaves the worker only for the top-level
+/// document of an approved form execution, the one request whose body the
+/// host checks (`Submission::check`). Every other body, such as a sign-in
+/// form the person posts in a Visible window, is withheld: the host gets
+/// `null` and size 0, never the fields. An empty body (none) stays empty.
+export function withheldBody(detail: RequestDetail, armed: boolean): RequestDetail {
+  if (armed || detail.body === "") return detail;
+  return { ...detail, body: null, bodyBytes: 0 };
 }
 
 export class NavigationError extends Error {
@@ -178,6 +188,9 @@ export class Worker {
   private launchedOnce = false;
   private queue: Promise<void> = Promise.resolve();
   private navigating = false;
+  /// SG-000135 OB-07b: an approved form execution is in flight. Only then
+  /// may a request body reach the host (`ask`).
+  private executing = false;
   /// BR-02: a bounded wait is running (one at a time).
   private waiting = false;
   private nextRequestId = 0;
@@ -239,7 +252,7 @@ export class Worker {
         resolve(false);
       }, ROUTE_DECISION_TIMEOUT_MS);
       this.pending.set(requestId, { resolve, timer });
-      const detail = query.detail ?? { method: "GET", contentType: "", body: "", bodyBytes: 0 };
+      const detail = withheldBody(query.detail ?? { method: "GET", contentType: "", body: "", bodyBytes: 0 }, this.executing && query.kind === "document");
       this.send({
         frame: "route_request",
         request_id: requestId,
@@ -684,6 +697,7 @@ export class Worker {
 
   private async runExecution(session: EngineSession, execId: number, tool: string, fields: ExecField[]): Promise<void> {
     let outcome: WorkerFrame;
+    this.executing = true;
     try {
       const result = await session.execute(tool, fields);
       outcome = {
@@ -699,6 +713,7 @@ export class Worker {
       const reason: NavigationFailure = error instanceof NavigationError ? error.reason : "failed";
       outcome = { frame: "execution_failed", exec_id: execId, reason };
     }
+    this.executing = false;
     this.navigating = false;
     if (this.state === "launched" && this.session === session) this.settle(outcome, { frame: "execution_failed", exec_id: execId, reason: "failed" });
   }

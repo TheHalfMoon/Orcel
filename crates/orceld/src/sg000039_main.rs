@@ -25,6 +25,9 @@ mod authority_link;
 mod bm02_tier_b_tests;
 #[cfg(all(test, windows))]
 mod bm02_tier_c_act_tests;
+// SG-000135 OB-07b: the one sanitizer for page URLs in agent-facing replies.
+#[cfg_attr(not(all(windows, feature = "live-browser-dev")), allow(dead_code))]
+mod agent_url;
 mod browser;
 // SG-000135 OB-01: the Orcel Browser Session Broker (generic over its
 // worker) and the browser_full request forms. Only the Windows

@@ -33,6 +33,8 @@
 //   owner-asserted authorization). Orcel's changes: keyed by any object (the
 //   page), not a CDP session; no annotation overlay.
 
+import { existingSecretMemory, type SecretMemory } from "./secret-memory.js";
+
 /// The largest PNG one screenshot may be, in bytes (mirrors the host).
 export const MAX_SCREENSHOT_BYTES = 2 * 1024 * 1024;
 /// The largest screenshot, in CSS pixels at scale 1 (mirrors the host).
@@ -68,8 +70,26 @@ export const SECRET_FIELD_SELECTOR = [
     `input[id*="${part}" i]`,
     `textarea[name*="${part}" i]`,
     `textarea[id*="${part}" i]`
-  ])
+  ]),
+  // SG-000135 OB-07b: an accessible label or placeholder naming a password
+  // or code (a password field a page shows in clear keeps its label).
+  ...["password", "passcode", "passphrase", "one-time", "pin"].flatMap((part) => [`input[aria-label*="${part}" i]`, `input[placeholder*="${part}" i]`])
 ].join(", ");
+
+/// SG-000135 OB-07b: the mask for a page that remembers password fields
+/// (`secret-memory.ts`): the fixed selector plus every remembered name and
+/// id, so a password field the page now shows in clear stays masked.
+export function maskSelector(memory?: SecretMemory): string {
+  if (memory === undefined || memory.names.size === 0) return SECRET_FIELD_SELECTOR;
+  const quote = (value: string) => `"${value.replace(/["\\]/g, "\\$&").replace(/[\u0000-\u001f\u007f]/g, " ")}"`;
+  const remembered = [...memory.names].flatMap((entry) => {
+    const at = entry.indexOf(":");
+    const attr = entry.slice(0, at);
+    const value = entry.slice(at + 1);
+    return attr === "name" || attr === "id" ? [`input[${attr}=${quote(value)} i]`] : [];
+  });
+  return [SECRET_FIELD_SELECTOR, ...remembered].join(", ");
+}
 
 /// Why a screenshot failed, on the wire.
 export type ScreenshotFailure = "busy" | "failed" | "oversized";
@@ -201,7 +221,8 @@ export async function capturePng(page: ShotPage, clip?: { x: number; y: number; 
   // itself). Places, not counts: a field added and another removed during
   // the capture still differ.
   const frames = page.frames();
-  const mask = frames.map((frame) => frame.locator(SECRET_FIELD_SELECTOR));
+  const selector = maskSelector(existingSecretMemory(page));
+  const mask = frames.map((frame) => frame.locator(selector));
   const census = async (): Promise<string> => {
     try {
       return JSON.stringify(await Promise.all(mask.map(placesOf)));

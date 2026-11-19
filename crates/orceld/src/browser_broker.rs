@@ -1545,6 +1545,27 @@ fn needs_you_reason(kind: &str) -> &'static str {
     }
 }
 
+/// SG-000135 OB-07: what the person does, for the session's mode. A sign-in
+/// page names the browser's own saved-password autofill as the person's
+/// choice (OB-07b, OB07B_VAULT_AUTOFILL.md): CDP has no password-manager
+/// command (its Autofill domain takes card and address data from the
+/// caller), so Orcel never triggers, fills, reads or types a saved login.
+/// The person picks the browser's suggestion or types the password in a
+/// Visible window; a persistent Orcel-managed profile keeps the sign-in
+/// (and any password the person saved there) for later runs. The guidance
+/// names what the route rules refuse: a sign-in that passes through
+/// another origin (single sign-on), and any non-GET page request (the
+/// sign-in post) once a Full Access lease was used in the lifetime
+/// (`guard_get_only`).
+fn needs_you_guidance(mode: SessionMode, kind: &str) -> &'static str {
+    match (mode, kind == "sign_in") {
+        (SessionMode::Visible, true) => "the person signs in in this session's window, by typing or by choosing the browser's own saved password; Orcel never fills, reads or types a password; only a sign-in on this page's own admitted origin can go through: a sign-in that passes through another site (single sign-on) is refused, and so is a sign-in form post once a Full Access lease was used in this session; in that case close the session and sign in in a new Visible session, with no lease used, opened on the sign-in page itself (a persistent Orcel-managed profile keeps the sign-in); once it no longer needs you (about three seconds after the sign-in form is gone), observe the page again before acting",
+        (SessionMode::Visible, false) => "the person completes it in this session's window; once it no longer needs you (about three seconds after it is gone), observe the page again before acting",
+        (SessionMode::Shadow, true) => "a Shadow session has no window for the person and Orcel never fills a password: close this session; the person signs in once in a new Visible session on a persistent Orcel-managed profile, opened on the sign-in page itself with no Full Access lease used (the browser's own saved password can fill it when the person chooses; a sign-in that passes through another site is refused), then run the task again on that profile",
+        (SessionMode::Shadow, false) => "a Shadow session has no window for the person: close this session; the person completes the check in a Visible session (a persistent profile keeps the sign-in), then run the task again",
+    }
+}
+
 /// SG-000135 OB-07: the `needs_you` list a reply and `browser_task_status`
 /// carry: per waiting page its id, kind, closed signals, a fixed reason,
 /// whether the detector already sees it gone, and the handoff for the
@@ -1557,10 +1578,6 @@ pub(crate) fn needs_you_json(mode: SessionMode, pages: &[NeedsYou]) -> Value {
         SessionMode::Visible => "visible_window",
         SessionMode::Shadow => "rerun_in_visible",
     };
-    let guidance = match mode {
-        SessionMode::Visible => "the person completes it in this session's window; once it no longer needs you (about three seconds after it is gone), observe the page again before acting",
-        SessionMode::Shadow => "a Shadow session has no window for the person: close this session; the person completes the check in a Visible session (a persistent profile keeps the sign-in), then run the task again",
-    };
     Value::Array(
         pages
             .iter()
@@ -1572,7 +1589,7 @@ pub(crate) fn needs_you_json(mode: SessionMode, pages: &[NeedsYou]) -> Value {
                     "reason": needs_you_reason(page.kind),
                     "clearing": page.clearing,
                     "handoff": handoff,
-                    "guidance": guidance,
+                    "guidance": needs_you_guidance(mode, page.kind),
                 })
             })
             .collect(),
@@ -2960,6 +2977,44 @@ mod tests {
             assert!(!text.is_empty() && !text.contains("http"), "{kind}");
         }
         assert_eq!(needs_you_json(SessionMode::Shadow, &[]), json!([]));
+    }
+
+    #[test]
+    fn ob07b_a_sign_in_page_is_the_persons_and_never_autofilled_by_orcel() {
+        let pages = [NeedsYou {
+            page_id: "pg-0123".into(),
+            kind: "sign_in",
+            signals: vec!["password_field".into()],
+            clearing: false,
+        }];
+        let visible = needs_you_json(SessionMode::Visible, &pages);
+        assert_eq!(visible[0]["kind"], "sign_in");
+        assert_eq!(visible[0]["handoff"], "visible_window");
+        let guidance = visible[0]["guidance"].as_str().unwrap();
+        assert!(guidance.contains("saved password"), "{guidance}");
+        assert!(guidance.contains("another site"), "{guidance}");
+        assert!(guidance.contains("Full Access lease"), "{guidance}");
+        assert!(
+            guidance.contains("never fills, reads or types"),
+            "{guidance}"
+        );
+        let shadow = needs_you_json(SessionMode::Shadow, &pages);
+        assert_eq!(shadow[0]["handoff"], "rerun_in_visible");
+        let guidance = shadow[0]["guidance"].as_str().unwrap();
+        assert!(
+            guidance.contains("persistent Orcel-managed profile"),
+            "{guidance}"
+        );
+        assert!(guidance.contains("never fills a password"), "{guidance}");
+        assert!(guidance.contains("no Full Access lease used"), "{guidance}");
+        assert!(guidance.contains("another site is refused"), "{guidance}");
+        // Every other kind keeps its own guidance, with no sign-in wording.
+        for kind in ["captcha", "mfa", "passkey", "other"] {
+            for mode in [SessionMode::Visible, SessionMode::Shadow] {
+                let text = needs_you_guidance(mode, kind);
+                assert!(!text.contains("password"), "{kind}");
+            }
+        }
     }
 
     #[test]

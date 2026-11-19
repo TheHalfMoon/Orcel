@@ -86,7 +86,7 @@ The `browser_takeover` tool named in the SG-000135 tool list stays open for a la
 
 ## 6. Gaps
 
-- **Saved-login autofill through the browser vault** (the rest of OB-07 in SG-000135) is not in this change. A sign-in page is handed to the person. Nothing types a password.
+- **Saved-login autofill through the browser vault** (the rest of OB-07 in SG-000135) is not in this change. A sign-in page is handed to the person. Nothing types a password. OB-07b decided that no safe mechanism exists today and kept this handoff; the person may choose the browser's own saved password in a Visible window ([`OB07B_VAULT_AUTOFILL.md`](OB07B_VAULT_AUTOFILL.md)).
 - **No human-input adapter yet.** The quiet period runs from the detector's clear, not from the person's last keystroke. Rechecks run only when the agent acts or reads status, not continuously.
 - **No real challenge** (a real CAPTCHA, code or passkey site) and no founder-present run.
 - **Background tabs** are checked when they become active, not while in the background.
