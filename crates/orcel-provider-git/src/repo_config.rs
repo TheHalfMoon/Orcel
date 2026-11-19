@@ -22,8 +22,14 @@
 //! sends the user's NTLM credentials). Includes are refused, so those files
 //! are the whole repository configuration (system and global configuration
 //! are never read). Git's own listing is checked again against the same
-//! rules before every command (`check_listed`), in case this parser and
-//! Git's ever read a file differently.
+//! rules before every command (`check_listed`), a backstop for hooks and
+//! command-valued keys in case this parser and Git's ever read a file
+//! differently. It is no backstop for includes: Git follows `include.path`
+//! while it starts up even under `--no-includes`, so this parser's refusal
+//! of `include` and `includeIf` is the only defence for the paths they
+//! name. Submodules fail closed: a `.gitmodules` entry or a `modules`
+//! folder in the Git directory refuses the repository (a submodule's own
+//! configuration and filters are outside this gate).
 
 use crate::GitProviderError;
 use orcel_contracts::FailureCode;
@@ -427,6 +433,23 @@ pub(crate) fn check_repository(workspace_root: &Path, cwd: &Path) -> Result<(), 
                 for dir in &folders {
                     check_file(&dir.join("config"), "config")?;
                     check_file(&dir.join("config.worktree"), "config.worktree")?;
+                }
+                // Re-review of #824: submodules fail closed. A submodule's
+                // own configuration (`.git/modules/<name>/config`) and
+                // filters are outside this gate, and raw Git runs them
+                // from `add` and `commit`; a repository that declares or
+                // holds one is refused.
+                if std::fs::symlink_metadata(current.join(".gitmodules")).is_ok() {
+                    return Err(refused(
+                        "the repository has submodules (.gitmodules); Orcel does not run Git in it",
+                    ));
+                }
+                for dir in &folders {
+                    if std::fs::symlink_metadata(dir.join("modules")).is_ok() {
+                        return Err(refused(
+                            "the repository holds submodule repositories (.git/modules); Orcel does not run Git in it",
+                        ));
+                    }
                 }
                 return Ok(());
             }

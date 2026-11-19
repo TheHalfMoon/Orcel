@@ -99,10 +99,19 @@ are in the provider, so the Safe-mode git capabilities get them too:
   credentials). With includes refused and system and global configuration never read, those files are the whole
   repository configuration. The parser follows Git's syntax (quotes, escapes, `\` continuations, comments, the old
   `[section.subsection]` form, a byte-order mark) and refuses what it cannot parse. Git's own listing
-  (`config --list --show-scope --no-includes`) is checked against the same rules before every command, in case the
-  two ever read a file differently. Decision: filter drivers stay neutralized rather than refused (every driver's
+  (`config --list --show-scope --no-includes`) is checked against the same rules before every command: a backstop
+  for hooks and command-valued keys if the two ever read a file differently, but not for includes. Git still
+  follows `include.path` while it starts up (`--no-includes` only changes what the listing prints; the re-review
+  confirmed it), so for a path an include names, including a share, the hand-written parser's refusal of
+  `include` and `includeIf` is the only defence. Decision: filter drivers stay neutralized rather than refused (every driver's
   `clean`, `smudge` and `process` emptied on every command, and adding a file a filter attribute names is
   refused), so repositories set up for Git LFS keep working; the review listed `filter` among sections to deny.
+- **Submodules fail closed (re-review).** A submodule's own configuration (`.git/modules/<name>/config`) and its
+  filters are outside the gate, and raw Git runs a submodule's clean filter from `git add -- sm` and from `commit`.
+  A repository with a `.gitmodules` entry or a `modules` folder in its Git directory (or common directory) is
+  refused before Git runs. A gitlink to a nested repository without them is never entered: every command carries
+  `-c diff.ignoreSubmodules=all`, `-c status.submoduleSummary=false` and `-c submodule.recurse=false`, status and
+  diff pass `--ignore-submodules=all`, and the mutations accept file paths only (a directory is refused).
 - **Discovery.** `GIT_CEILING_DIRECTORIES` is the workspace root's parent, so Git never looks for a repository or
   its configuration above the root, and `-c safe.bareRepository=explicit` refuses a bare repository found by
   discovery (where the gate does not look). `GIT_DISCOVERY_ACROSS_FILESYSTEM` stays unset (Git's default: no
@@ -110,8 +119,10 @@ are in the provider, so the Safe-mode git capabilities get them too:
 - **Full Control writes into `.git` (review high 1).** The worker's `write_text` and `mkdir` refuse any path whose
   resolved parent, or whose existing entry, has a `.git` component (case-insensitive, so `.GIT` and the short name
   `GIT~1` are caught), so Full Control's filesystem operations cannot plant a configuration, hook or `.git` pointer.
-  Decision: `.gitattributes` and `.gitmodules` stay writable (a filter attribute only makes the add refuse; no
-  submodule operation exists, and status and diff ignore submodules); reads inside `.git` stay allowed.
+  Decision: `.gitattributes` and `.gitmodules` stay writable (a filter attribute only makes the add refuse; a
+  `.gitmodules` file makes the gate refuse the whole repository); reads inside `.git` stay allowed.
+- **Safe mode's network commands.** The fetch and push transports start their own Git processes (with
+  `neutralizing_args`); the gate now runs right before each of them as well (`fetch.rs`, `push.rs`).
 
 - The provider's workspace root is the lease root holding the repository, so the repository's top level, its Git
   directory and its common directory must all resolve inside that root (a `.git` file pointing outside is
@@ -191,6 +202,7 @@ show it.
 | Run a shell, script host, launcher, batch file or Git through `run` | Refused (`CAPABILITY_DENIED`) before anything starts | `fc_worker_tests::windows::fc_worker_runs_only_resolved_exe_programs_inside_the_roots` |
 | A repository's `.git/hooks` or filter drivers run a program | None runs through status, add, diff, commit, branch, unstage or log; a filter-attributed file is refused; the same repository with plain Git does run its hook (control) | `fc_worker_tests::windows::fc_worker_git_honors_no_hook_or_hostile_configuration` |
 | Hooks defined in configuration (`hook.<name>.command` and `.event`: post-index-change from a diff, reference-transaction, post-commit), `core.hooksPath`, fsmonitor, pager, external diff, textconv, signing program, ssh command, askpass or credential helper (review high 1) | The repository is refused before any Git command runs, for reads and mutations; one configured hook is enough; Git on this PC (2.56) and the CI runners does run such hooks (control printed by the provider test) | `fc_worker_tests::windows::fc_worker_git_refuses_a_repository_whose_configuration_runs_programs`; `review824_config_gate::review824_config_defined_hooks_refuse_the_repository_before_git_runs`, `review824_hooks_in_the_worktree_config_and_old_section_forms_are_refused`, `review824_command_valued_keys_and_includes_are_refused` (Linux, macOS and Windows); parser and rules: `repo_config::tests` |
+| A repository with submodules, or a gitlink to a nested repository with its own filter (re-review) | Submodules refused before Git runs; a nested repository is never entered, and its filter does not run through status, diff, add or commit | `review824_config_gate::review824_submodules_are_refused_and_nested_repositories_never_entered`; `tests::a_submodules_filters_never_run` in `orcel-provider-git` (now refused) |
 | A `.git` file, `commondir` or configuration value names a network share or device (NTLM leak; review medium 2) | Refused from the files themselves before Git could open anything | `review824_config_gate::review824_a_git_file_naming_a_share_is_refused_before_git_opens_it`, `review824_command_valued_keys_and_includes_are_refused`, `repo_config::tests::command_valued_and_share_valued_keys_are_refused` |
 | Plant a hook, configuration or `.git` pointer through Full Control's filesystem writes | Refused (`CAPABILITY_DENIED`) | `fc_worker_tests::windows::fc_worker_filesystem_never_writes_into_git_folders` |
 | Swap the program between its checks and its start (review low 3) | The file is held without write or delete sharing; the path is resolved again and its identity compared right before the start | `fc_worker_tests::windows::fc_worker_holds_the_checked_program_and_refuses_the_git_installation` |
@@ -280,4 +292,7 @@ At head (Windows, unelevated):
 | High 1: hooks defined in configuration (`hook.<name>.command` and `.event`) run despite `core.hooksPath` and `--no-verify`, from a diff (no approval) and from mutations; `.git/config` writable through `write_text`; same flaw in the Safe-mode provider | The configuration gate in the shared provider refuses the `hook` section and the other command-valued, include, credential, transport and rewrite keys before any Git command, and Git's own listing is checked again before each command; Full Control's filesystem writes refuse `.git` paths; regression tests with real Git, including post-index-change from a diff and reference-transaction (sections 1 and 4). Filter drivers stay neutralized, not refused (Git LFS), recorded as a deviation |
 | Medium 2: `config --list` and `rev-parse` ran before the in-roots check, so a share in `gitdir:` or a path-valued key could make Git open SMB (NTLM leak) | The gate reads the `.git` pointer, `commondir` and configuration files without Git and refuses shares, devices and links; includes are refused; `GIT_CEILING_DIRECTORIES` stops discovery at the root; `safe.bareRepository=explicit` |
 | Low-medium 3: the program could change between the checks and the start | Held without write or delete sharing from the checks to the start; re-resolved with its identity compared right before the start; identity reported. Not in the digest (orceld does not open the user's files before `Authorize`); the remaining instant is in section 5 |
+| Re-review low: Git's listing is no backstop for includes | Documented: the parser's refusal of `include` and `includeIf` is the only defence for include-named paths |
+| Re-review low: submodule configuration and filters | Submodules refused; nested repositories never entered (`diff.ignoreSubmodules=all`, `submodule.recurse=false`) |
+| Re-review low: Safe-mode fetch and push started Git without the gate | The gate runs right before each fetch and push transport command |
 | Low 4: Git's bundled programs; "Closed" overclaimed for window routes | Names starting with `git`, Git for Windows' shells and tools, and everything under a Git installation are refused; the window row now says reduced, with `SendInput` and GUI windows as residuals |

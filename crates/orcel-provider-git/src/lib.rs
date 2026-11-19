@@ -425,6 +425,15 @@ fn run_plain_with(
             // found by discovery, where the gate would not look).
             "-c",
             "safe.bareRepository=explicit",
+            // Never enter a nested repository a gitlink names (its own
+            // configuration is outside the gate): no submodule diff,
+            // status or recursion.
+            "-c",
+            "diff.ignoreSubmodules=all",
+            "-c",
+            "status.submoduleSummary=false",
+            "-c",
+            "submodule.recurse=false",
             "-c",
             "core.fsmonitor=false",
             "-c",
@@ -935,9 +944,17 @@ mod tests {
         fs::remove_file(&marker).unwrap();
 
         touch_later(&sub.join("a.txt"));
+        // Re-review of #824: a repository with submodules is now refused
+        // before any Git command runs in it.
         let provider = GitProvider::new(&root).unwrap();
-        provider.status(".").unwrap();
-        provider.diff(".", false).unwrap();
+        assert_eq!(
+            provider.status(".").unwrap_err().code,
+            FailureCode::CapabilityDenied
+        );
+        assert_eq!(
+            provider.diff(".", false).unwrap_err().code,
+            FailureCode::CapabilityDenied
+        );
         assert!(!marker.exists(), "a submodule filter ran");
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(inner);

@@ -208,3 +208,77 @@ fn review824_a_git_file_naming_a_share_is_refused_before_git_opens_it() {
         let _ = fs::remove_dir_all(&root);
     }
 }
+
+/// Re-review of #824: submodules fail closed (their own configuration and
+/// filters are outside the gate), and a gitlink to a nested repository
+/// without `.gitmodules` is never entered.
+#[test]
+fn review824_submodules_are_refused_and_nested_repositories_never_entered() {
+    let repo = repository();
+    fs::write(
+        repo.join(".gitmodules"),
+        "[submodule \"sm\"]\n\tpath = sm\n\turl = ./sm\n",
+    )
+    .expect(".gitmodules");
+    let provider = GitProvider::new(&repo).expect("provider");
+    assert_eq!(
+        provider.status(".").map(|_| ()).unwrap_err().code,
+        FailureCode::CapabilityDenied
+    );
+    fs::remove_file(repo.join(".gitmodules")).expect("remove");
+    let modules = repo.join(".git").join("modules").join("sm");
+    fs::create_dir_all(&modules).expect("modules");
+    fs::write(
+        modules.join("config"),
+        "[filter \"evil\"]\n\tclean = evil\n",
+    )
+    .expect("config");
+    assert_eq!(
+        provider.status(".").map(|_| ()).unwrap_err().code,
+        FailureCode::CapabilityDenied
+    );
+    fs::remove_dir_all(repo.join(".git").join("modules")).expect("remove");
+
+    // A nested repository whose own filter would leave a marker, staged in
+    // the parent as a gitlink (no .gitmodules).
+    let nested = repo.join("sm");
+    fs::create_dir_all(&nested).expect("nested");
+    assert!(git(&nested, &["init", "-q"]));
+    assert!(git(&nested, &["config", "user.name", "Orcel Test"]));
+    assert!(git(
+        &nested,
+        &["config", "user.email", "orcel@example.invalid"]
+    ));
+    fs::write(nested.join("x.txt"), "x\n").expect("x");
+    assert!(git(&nested, &["add", "x.txt"]));
+    assert!(git(&nested, &["commit", "-q", "-m", "nested"]));
+    let marker = repo.parent().expect("parent").join(format!(
+        "{}-nested-marker",
+        repo.file_name().and_then(|n| n.to_str()).expect("name")
+    ));
+    let target = marker.display().to_string().replace('\\', "/");
+    assert!(git(
+        &nested,
+        &[
+            "config",
+            "filter.evil.clean",
+            &format!("sh -c \"echo ran > '{target}'; cat\"")
+        ]
+    ));
+    fs::write(nested.join(".gitattributes"), "* filter=evil\n").expect("attributes");
+    fs::write(nested.join("x.txt"), "changed\n").expect("x");
+    assert!(git(&repo, &["add", "sm"]));
+    let _ = fs::remove_file(&marker);
+    fs::write(repo.join("a.txt"), "two\n").expect("a");
+    provider.status(".").expect("status");
+    provider.diff(".", false).expect("diff");
+    provider.diff(".", true).expect("staged diff");
+    let paths = vec!["a.txt".to_owned()];
+    let state = provider.path_state(".", &paths).expect("state");
+    provider.stage(".", &paths, &state).expect("stage");
+    let staged = provider.staged_state(".").expect("staged");
+    provider.commit(".", "change", &staged).expect("commit");
+    assert!(!marker.exists(), "the nested repository's filter ran");
+    let _ = fs::remove_dir_all(&repo);
+    let _ = fs::remove_file(&marker);
+}
