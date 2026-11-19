@@ -192,6 +192,21 @@ impl AuthorityClient {
         })
     }
 
+    /// WP1-12: reports how an authorized dispatch ended; the service
+    /// records it and terminates the dispatch's Job Object.
+    pub fn outcome(
+        &self,
+        authorization_id: &str,
+        outcome: crate::protocol::DispatchOutcome,
+        code: Option<orcel_contracts::FailureCode>,
+    ) -> Result<Value, AuthorityError> {
+        self.call(&Request::Outcome {
+            authorization_id: authorization_id.to_owned(),
+            outcome,
+            code,
+        })
+    }
+
     pub fn revoke(&self, lease_id: &str) -> Result<Value, AuthorityError> {
         self.call(&Request::Revoke {
             lease_id: lease_id.to_owned(),

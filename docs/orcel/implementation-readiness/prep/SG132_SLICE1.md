@@ -287,6 +287,7 @@ UAC "Always notify".
 
 1. Enrollment as designed above and the user-session grant CLI; founder's first real grant; verify
    `WTSSendMessageW` from the virtual account.
-2. Service-owned Job Objects, `orceld fc-worker`, `Authorize` returning `job_name`.
+2. Service-owned Job Objects, `orceld fc-worker`, `Authorize` returning `job_name` (done in
+   [SG132_SLICE3.md](SG132_SLICE3.md)).
 3. Dispatcher, desktop path migration, retirement of `authority.key`.
 4. Standing approvals, indicator and heartbeat; OB-08 wiring; TPM key; WP1-10 input proof; Event Log channel.

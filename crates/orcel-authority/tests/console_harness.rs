@@ -144,6 +144,7 @@ fn claims() -> AuthorizeClaims {
         task: "a task".into(),
         action_digest: "0".repeat(64),
         origin: None,
+        paths: None,
     }
 }
 
@@ -387,6 +388,44 @@ fn authorize_needs_the_trusted_orceld_image_and_a_live_lease() {
         claims(),
     );
     assert_eq!(code(refused), Some(FailureCode::CapabilityDenied));
+}
+
+/// WP1-12: the console runtime holds real dispatch Job Objects (in its
+/// session's `Local\` namespace); a filesystem Authorize without a live
+/// lease makes none, and only orceld reports an outcome, once, for an
+/// authorization it holds.
+#[test]
+fn wp112_dispatch_jobs_need_a_live_lease_and_outcomes_are_orcelds() {
+    use orcel_authority::protocol::DispatchOutcome;
+    let trusted = start("wp112", true);
+    let as_orceld = client(&trusted);
+    let status = as_orceld.status().expect("status");
+    assert_eq!(status["job_objects"]["namespace"], "Local");
+    assert_eq!(status["job_objects"]["held"], 0);
+    assert_eq!(status["job_objects"]["breakaway"], Value::Bool(false));
+    let refused = as_orceld.authorize(
+        "al-00000000000000000000000000000000",
+        ExecutorClass::Filesystem,
+        AuthorizeClaims {
+            paths: Some(vec![r"C:\work\a.txt".into()]),
+            ..claims()
+        },
+    );
+    assert_eq!(code(refused), Some(FailureCode::LeaseInvalid));
+    assert_eq!(
+        as_orceld.status().expect("status")["job_objects"]["held"],
+        0
+    );
+    let unknown = format!("az-{}", "0".repeat(32));
+    assert_eq!(
+        code(as_orceld.outcome(&unknown, DispatchOutcome::Succeeded, None)),
+        Some(FailureCode::InvalidRequest)
+    );
+    let plain = start("wp112-plain", false);
+    assert_eq!(
+        code(client(&plain).outcome(&unknown, DispatchOutcome::Succeeded, None)),
+        Some(FailureCode::CapabilityDenied)
+    );
 }
 
 #[test]

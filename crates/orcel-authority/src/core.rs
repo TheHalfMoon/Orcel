@@ -55,6 +55,10 @@
 // to the core's own audit and Event Log paths).
 #[path = "chain_anchor.rs"]
 pub mod chain_anchor;
+// WP1-12: the named Job Object each filesystem and shell/process dispatch
+// runs in, created and held by the service, and the dispatch outcomes.
+#[path = "dispatch_jobs.rs"]
+pub mod dispatch_jobs;
 
 use crate::attestation::AttestationReport;
 use crate::audit::{AuditChain, AuditRecord, Observed};
@@ -105,7 +109,7 @@ const ENROLL_DOMAIN: &[u8] = b"orcel-authority-enrollment-challenge/1\n";
 /// What this slice does not do yet; returned by `Status` and `Authorize`.
 pub const DEFERRED: [&str; 8] = [
     "TPM attestation freshness and AIK revocation checks (see SG132_SLICE2.md)",
-    "service-owned Job Objects (Authorize returns job_name null)",
+    "a service-owned Job Object for the desktop input host (WP1-12 gives one to every filesystem and shell/process dispatch)",
     "standing approvals (spec 4.15)",
     "indicator heartbeat",
     "TPM-backed signing key (the key is a CNG software key wrapped by DPAPI)",
@@ -197,6 +201,8 @@ pub struct Services {
     pub uac: Box<dyn UacPolicy>,
     pub events: Box<dyn EventSink>,
     pub entropy: Box<dyn Entropy>,
+    /// WP1-12: creates and terminates the dispatch Job Objects.
+    pub jobs: Box<dyn dispatch_jobs::JobHost>,
     pub clock: fn() -> u64,
 }
 
@@ -385,6 +391,11 @@ pub struct AuthorityCore {
     /// Confirmations requests asked for (enrollment), for the runtime to
     /// render outside the lock.
     pending_confirmations: Vec<ConfirmationTask>,
+    /// WP1-12: the dispatch Job Objects the service holds (in memory only:
+    /// a restarted service holds no handle, so kill-on-close ended them).
+    jobs: Vec<dispatch_jobs::HeldJob>,
+    /// WP1-12: authorizations whose outcome orceld has not reported yet.
+    open_dispatches: std::collections::VecDeque<dispatch_jobs::OpenDispatch>,
 }
 
 fn observed(caller: &CallerFacts, role: CallerRole) -> Observed {
@@ -509,6 +520,8 @@ impl AuthorityCore {
             intents: Vec::new(),
             audit,
             pending_confirmations: Vec::new(),
+            jobs: Vec::new(),
+            open_dispatches: std::collections::VecDeque::new(),
         };
         core.persist()?;
         let detail = json!({
@@ -702,6 +715,9 @@ impl AuthorityCore {
         let role = self.policy.classify(caller);
         let op = request.op();
         let result = self.dispatch(caller, role, request);
+        // WP1-12: a lease this request ended (revoke, stop, enrollment)
+        // takes its Job Objects with it before the answer leaves.
+        self.sweep_jobs();
         if let Err(error) = &result {
             if !matches!(op, "status" | "intent_status" | "anchor_status") {
                 let detail = json!({
@@ -763,6 +779,11 @@ impl AuthorityCore {
                 executor,
                 claims,
             } => self.authorize(caller, role, &lease_id, executor, claims),
+            Request::Outcome {
+                authorization_id,
+                outcome,
+                code,
+            } => self.outcome(caller, role, &authorization_id, outcome, code),
             Request::Revoke { lease_id } => self.revoke(caller, role, &lease_id),
             Request::Stop => self.stop(caller, role),
             Request::Anchor {
@@ -805,6 +826,7 @@ impl AuthorityCore {
             "caller_is_owner_cli": self.policy.is_owner_cli(caller),
             "caller_is_builtin_administrator": is_builtin_administrator(&caller.user_sid),
             "can_issue": self.can_issue(),
+            "job_objects": self.job_status(),
             "deferred": DEFERRED,
         })
     }
@@ -1990,9 +2012,15 @@ impl AuthorityCore {
                 }
             }
         }
+        // WP1-12: paths lie inside the lease's roots; a filesystem
+        // dispatch names at least one.
+        Self::check_dispatch_paths(&body.scope, executor, claims.paths.as_deref())?;
         let authorization_id = format!("az-{}", hex(&self.random(16)?));
+        // WP1-12: the dispatch's Job Object exists before the allow record
+        // names it; if the record cannot be written the job is terminated.
+        let job_name = self.create_dispatch_job(caller, executor, lease_id, &authorization_id)?;
         // Write before dispatch: the record is on disk before the answer.
-        self.audit(
+        let recorded = self.audit(
             "authorize",
             json!({
                 "request_id": claims.request_id,
@@ -2002,6 +2030,7 @@ impl AuthorityCore {
                 "task": claims.task,
                 "action_digest": claims.action_digest,
                 "origin": claims.origin,
+                "paths": claims.paths,
                 "executor": executor,
             }),
             observed(caller, role),
@@ -2010,15 +2039,22 @@ impl AuthorityCore {
                 "authorization_id": authorization_id,
                 "lease_id": lease_id,
                 "epoch": self.state.epoch,
-                "job_name": Value::Null,
+                "job_name": job_name,
             }),
-        )?;
+        );
+        if let Err(error) = recorded {
+            if let Some(name) = &job_name {
+                self.end_job(name);
+            }
+            return Err(error);
+        }
+        self.open_dispatch(caller, &authorization_id, lease_id, job_name.as_deref());
         Ok(json!({
             "authorization_id": authorization_id,
             "lease_id": lease_id,
             "epoch": self.state.epoch,
             "revocations": self.state.revocations,
-            "job_name": Value::Null,
+            "job_name": job_name,
             "deferred": DEFERRED,
         }))
     }
@@ -2124,10 +2160,13 @@ impl AuthorityCore {
         self.intents.retain(|intent| {
             intent.ts_session_id != ts_session_id || (lock && intent.state == Awaiting::Unlock)
         });
+        self.sweep_jobs();
         if ended.is_empty() {
             return Ok(());
         }
         self.advance_epoch()?;
+        // The epoch moved: every older lease's jobs end too.
+        self.sweep_jobs();
         self.persist()?;
         self.audit_service(
             "emergency_stop",
@@ -2156,10 +2195,15 @@ impl AuthorityCore {
                 self.end_lease(index, LeaseState::Expired, now);
             }
         }
+        // WP1-12: idle dispatch jobs are closed; jobs of ended leases go.
+        self.reap_idle_jobs(now);
+        self.sweep_jobs();
         if ended.is_empty() {
             return Ok(());
         }
         self.advance_epoch()?;
+        // The epoch moved: every older lease's jobs end too.
+        self.sweep_jobs();
         self.persist()?;
         self.audit_service(
             "emergency_stop",

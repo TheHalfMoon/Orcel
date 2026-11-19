@@ -194,6 +194,16 @@ pub fn start(config: RunConfig) -> Result<Runtime, AuthorityError> {
         uac: Box::new(super::uac::MachineUacPolicy),
         events,
         entropy: Box::new(SystemEntropy),
+        // WP1-12: the installed service names its jobs in Global (it holds
+        // SeCreateGlobalPrivilege); the console harness, a standard user,
+        // in its own session's Local namespace.
+        jobs: Box::new(super::jobs::ServiceJobs::new(
+            match config.mode {
+                RunMode::Service => "Global",
+                RunMode::Console => "Local",
+            },
+            &config.owner_sid,
+        )),
         clock: crate::now_ms,
     };
     let core = AuthorityCore::open(

@@ -209,6 +209,7 @@ lease. A Hello failure cancels the intent.
   lease's own principal in `Authorize` (orceld does not know the MCP client at that gate); WP1-12's dispatcher
   carries the real client.
 - Next: WP1-12 moves every lease-gated executor behind `Authorize` with Job Objects, then the store is retired.
+  The dispatcher, the service-made Job Objects and `orceld fc-worker` are in [SG132_SLICE3.md](SG132_SLICE3.md).
 
 ## 6. Threat model updates (same-user agent with Full Control)
 
