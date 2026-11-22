@@ -302,7 +302,7 @@ mod macos {
                 return Ok(());
             };
             let config = crate::config::Config::load(layout)?;
-            let mut environment = launchd::orcel_variables(&crate::ipc::child_environment(&config));
+            let mut environment = launchd::agent_environment(&config);
             environment.extend(extra);
             let spec = AgentSpec {
                 label: label.clone(),

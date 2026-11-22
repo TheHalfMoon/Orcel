@@ -16,6 +16,7 @@
 //! the macOS M1 grain is activated: `host_platform()` still refuses the
 //! lifecycle commands there.
 
+use crate::config::{ApprovalPreviews, Config};
 use crate::LifecycleError;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -54,16 +55,22 @@ pub fn socket_path(runtime_dir: &Path) -> PathBuf {
     runtime_dir.join("orcel").join(SOCKET_FILE)
 }
 
-/// Only the `ORCEL_*` variables of a child environment
-/// ([`crate::ipc::child_environment`]): launchd already gives the agent the
-/// user's `HOME` and a fixed `PATH`, and nothing else from the CLI's own
-/// environment belongs in a file that outlives it.
-pub fn orcel_variables(environment: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+/// The agent's environment, from the saved configuration alone: the
+/// workspaces, the default workspace and the saved preview choice, as
+/// [`crate::ipc::child_environment`] sets them. Nothing comes from the
+/// installing shell's environment (such as `ORCEL_DAEMON` or a session id),
+/// because the plist outlives it; launchd gives the agent the user's `HOME`
+/// and a fixed `PATH`.
+pub fn agent_environment(config: &Config) -> BTreeMap<String, String> {
+    let mut environment =
+        BTreeMap::from([("ORCEL_WORKSPACES_JSON".to_owned(), config.workspaces_json())]);
+    if let Some(default) = config.default_workspace() {
+        environment.insert("ORCEL_DEFAULT_WORKSPACE".to_owned(), default.to_owned());
+    }
+    if config.approval_previews == Some(ApprovalPreviews::Sizes) {
+        environment.insert("ORCEL_APPROVAL_PREVIEWS".to_owned(), "sizes".to_owned());
+    }
     environment
-        .iter()
-        .filter(|(name, _)| name.starts_with("ORCEL_"))
-        .map(|(name, value)| (name.clone(), value.clone()))
-        .collect()
 }
 
 fn text(what: &str, path: &Path) -> Result<String, LifecycleError> {
@@ -259,19 +266,49 @@ mod tests {
         assert!(plist(&name).is_err());
     }
 
+    /// The plist's environment comes from the configuration alone: a stray
+    /// `ORCEL_*` variable in the installing shell is never written into it.
     #[test]
-    fn only_orcel_variables_go_into_the_plist() {
-        let env = BTreeMap::from([
-            ("ORCEL_WORKSPACES_JSON".to_owned(), "[]".to_owned()),
-            ("ORCEL_DEFAULT_WORKSPACE".to_owned(), "a".to_owned()),
-            ("PATH".to_owned(), "/usr/bin".to_owned()),
-            ("HOME".to_owned(), "/Users/ana".to_owned()),
-        ]);
-        let kept = orcel_variables(&env);
+    fn the_agent_environment_comes_from_the_configuration_alone() {
+        let stray = "ORCEL_DAEMON";
+        // The test process's own environment, as the installing shell's.
+        std::env::set_var(stray, "/tmp/elsewhere/orceld");
+        let config = Config {
+            workspaces: vec![crate::config::WorkspaceEntry {
+                id: "a".into(),
+                root: PathBuf::from("/Users/ana/work"),
+            }],
+            approval_previews: Some(ApprovalPreviews::Sizes),
+            ..Config::default()
+        };
+        let environment = agent_environment(&config);
         assert_eq!(
-            kept.keys().collect::<Vec<_>>(),
-            vec!["ORCEL_DEFAULT_WORKSPACE", "ORCEL_WORKSPACES_JSON"]
+            environment.keys().collect::<Vec<_>>(),
+            vec![
+                "ORCEL_APPROVAL_PREVIEWS",
+                "ORCEL_DEFAULT_WORKSPACE",
+                "ORCEL_WORKSPACES_JSON"
+            ]
         );
+        assert_eq!(
+            environment["ORCEL_WORKSPACES_JSON"],
+            config.workspaces_json()
+        );
+        assert_eq!(environment["ORCEL_DEFAULT_WORKSPACE"], "a");
+        assert_eq!(environment["ORCEL_APPROVAL_PREVIEWS"], "sizes");
+        let text = plist(&AgentSpec {
+            environment,
+            ..spec()
+        })
+        .unwrap();
+        assert!(!text.contains(stray), "{text}");
+        std::env::remove_var(stray);
+        // Without a saved preview choice, no preview variable.
+        let plain = agent_environment(&Config {
+            approval_previews: None,
+            ..config
+        });
+        assert!(!plain.contains_key("ORCEL_APPROVAL_PREVIEWS"));
     }
 
     #[test]
