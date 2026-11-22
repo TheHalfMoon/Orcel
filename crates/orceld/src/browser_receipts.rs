@@ -691,6 +691,9 @@ pub(crate) struct Intent {
     pub seq: u64,
     pub session_id: String,
     pub mode: String,
+    /// SG-000135 OB-09: the session's caller (local, or the remote
+    /// provider, device and paired connection).
+    pub caller: crate::browser_remote::Caller,
     pub profile: Option<String>,
     pub draft: IntentDraft,
     pub at_ms: u64,
@@ -708,6 +711,7 @@ impl Intent {
             "session_id": self.session_id,
             "action": self.draft.action,
             "mode": self.mode,
+            "caller": self.caller.to_json(),
             "profile": self.profile,
             "page_id": self.draft.page_id,
             "generation_before": self.draft.generation_before,

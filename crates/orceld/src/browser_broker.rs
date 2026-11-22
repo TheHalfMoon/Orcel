@@ -156,6 +156,9 @@ pub(crate) struct SessionOptions {
     /// A persistent Orcel-managed profile, held for the session's life;
     /// `None` for the default ephemeral profile.
     pub profile: Option<crate::browser_profiles::ProfileLease>,
+    /// SG-000135 OB-09: who opened it (local, or a remote caller), fixed
+    /// for the session's life and named by every intent and receipt.
+    pub caller: crate::browser_remote::Caller,
 }
 
 /// What the broker needs from a session's worker.
@@ -391,6 +394,9 @@ pub(crate) struct Receipt {
     pub action: String,
     /// SG-000135 OB-04: `shadow` or `visible`.
     pub mode: String,
+    /// SG-000135 OB-09: the session's caller (local, or the remote
+    /// provider, device and paired connection).
+    pub caller: crate::browser_remote::Caller,
     pub page_id: Option<String>,
     pub generation_before: Option<u64>,
     pub generation_after: Option<u64>,
@@ -456,6 +462,7 @@ impl Receipt {
             "session_id": self.session_id,
             "action": self.action,
             "mode": self.mode,
+            "caller": self.caller.to_json(),
             "profile": self.profile,
             "page_id": self.page_id,
             "generation_before": self.generation_before,
@@ -575,6 +582,8 @@ pub(crate) struct BrokerSession<W> {
     pub created_ms: u64,
     /// SG-000135 OB-04: Shadow or Visible, fixed for the session's life.
     pub mode: SessionMode,
+    /// SG-000135 OB-09: local, or the remote caller that opened it.
+    pub caller: crate::browser_remote::Caller,
     /// SG-000135 OB-04: the persistent profile held, released when the
     /// session ends (after its worker is gone).
     profile: Option<crate::browser_profiles::ProfileLease>,
@@ -632,6 +641,7 @@ impl<W> BrokerSession<W> {
             seq,
             session_id: self.id.clone(),
             mode: self.mode.as_str().to_owned(),
+            caller: self.caller.clone(),
             profile: self.profile_name().map(str::to_owned),
             draft,
             at_ms,
@@ -681,6 +691,7 @@ impl<W> BrokerSession<W> {
             session_id: self.id.clone(),
             action: record.action,
             mode: self.mode.as_str().to_owned(),
+            caller: self.caller.clone(),
             page_id: record.page_id,
             generation_before: record.generation_before,
             generation_after: record.generation_after,
@@ -1238,6 +1249,7 @@ impl<W: SessionWorker> Broker<W> {
             dirs,
             created_ms: now_ms,
             mode: options.mode,
+            caller: options.caller,
             profile: options.profile,
             worker,
             page_id: None,
@@ -1264,6 +1276,7 @@ impl<W: SessionWorker> Broker<W> {
             "event": "session_start",
             "session_id": session.id,
             "mode": session.mode.as_str(),
+            "caller": session.caller.to_json(),
             "profile": session.profile_name(),
             "task_sha256": session
                 .task
@@ -3373,6 +3386,7 @@ mod tests {
                 SessionOptions {
                     mode: SessionMode::Shadow,
                     profile: Some(lease),
+                    ..Default::default()
                 },
                 "session=kept",
             )
@@ -3417,6 +3431,7 @@ mod tests {
                 SessionOptions {
                     mode: SessionMode::Shadow,
                     profile: Some(lease),
+                    ..Default::default()
                 },
                 "session=kept",
             )
@@ -3444,6 +3459,7 @@ mod tests {
                     SessionOptions {
                         mode: SessionMode::Shadow,
                         profile: Some(lease),
+                        ..Default::default()
                     },
                     name,
                 )
@@ -3489,6 +3505,7 @@ mod tests {
                 SessionOptions {
                     mode: SessionMode::Visible,
                     profile: None,
+                    ..Default::default()
                 },
                 "v",
             )
@@ -3526,6 +3543,7 @@ mod tests {
             SessionOptions {
                 mode: SessionMode::Shadow,
                 profile: Some(lease),
+                ..Default::default()
             },
             "x",
         );
@@ -3548,6 +3566,7 @@ mod tests {
                 SessionOptions {
                     mode: SessionMode::Shadow,
                     profile: Some(lease),
+                    ..Default::default()
                 },
                 "stuck",
             )
@@ -3590,6 +3609,7 @@ mod tests {
                 SessionOptions {
                     mode: SessionMode::Shadow,
                     profile: Some(lease),
+                    ..Default::default()
                 },
                 "x",
             )
@@ -3632,6 +3652,104 @@ mod tests {
         broker.note_profile_approved("default", "client-a", "work");
         broker.end_all(EndReason::EmergencyStop);
         assert!(!broker.profile_approved("default", "client-a", "work"));
+        Ok(())
+    }
+
+    /// SG-000135 OB-09: a remote caller's session names its remote origin
+    /// (provider, device and paired connection) in its start event, every
+    /// intent and every receipt, each covered by its digest, and the chain
+    /// still verifies; a local session names `local`.
+    #[test]
+    fn ob09_receipts_carry_the_remote_origin() -> Result<(), String> {
+        let mut scene = Scene::new("ob09-remote");
+        let (mut broker, chain_path, _store) = chained(&scene, INSTANCE, "remote")?;
+        let remote = orcel_contracts::RemoteContext {
+            principal: format!("rp-{}", "a".repeat(32)),
+            remote_connection_id: format!("rc-{}", "b".repeat(32)),
+            connection_id: "cn-1".into(),
+            device_id: format!("dev-{}", "c".repeat(32)),
+            device_epoch: 1,
+            provider_kind: "openai".into(),
+            client_profile_id: "chatgpt".into(),
+            client_profile_revision: 1,
+            tool_surface_profile: "browser_full".into(),
+            scopes: vec!["orcel.execute".into()],
+        };
+        let caller = crate::browser_remote::Caller::of(Some(&remote));
+        let client = caller.broker_client("s1");
+        let (shutdowns, usable) = (Rc::clone(&scene.shutdowns), Rc::clone(&scene.usable));
+        let random = scene.random();
+        let id = broker
+            .create_with(
+                &client,
+                Some("task"),
+                SessionOptions {
+                    caller: caller.clone(),
+                    ..Default::default()
+                },
+                random,
+                1,
+                move |_, dirs| {
+                    Ok(TestWorker {
+                        profile_marker: dirs.profiles.join("cookies.txt"),
+                        usable,
+                        shutdowns,
+                    })
+                },
+            )
+            .map(|session| session.id.clone())
+            .map_err(|e| e.message)?;
+        // Another client (the same MCP session id, locally) cannot reach it.
+        assert!(broker.session("s1", &id).is_err());
+        let session = broker.session(&client, &id).map_err(|e| e.message)?;
+        let receipt = act_once(
+            session,
+            draft("browser_click", Some("n1")),
+            record("browser_click", "done"),
+            10,
+        )?;
+        let expected = json!({
+            "kind": "remote",
+            "provider": "openai",
+            "device": remote.device_id,
+            "connection": remote.remote_connection_id,
+        });
+        let json = receipt.to_json();
+        assert_eq!(json["caller"], expected);
+        let digest = crate::browser_receipts::receipt_digest_of(&json);
+        assert_eq!(digest.as_deref(), Some(receipt.receipt_sha256.as_str()));
+        // The intent and the session start on the chain name it too.
+        let mut seen = 0;
+        for event in events(&chain_path)? {
+            let payload = &event.detail;
+            if payload["event"] == "session_start" {
+                assert_eq!(payload["caller"], expected);
+                seen += 1;
+            }
+            if let Some(intent) = payload.get("intent") {
+                assert_eq!(intent["caller"], expected);
+                seen += 1;
+            }
+            if let Some(receipt) = payload.get("receipt") {
+                assert_eq!(receipt["caller"], expected);
+                seen += 1;
+            }
+        }
+        assert_eq!(seen, 3);
+        let report = crate::browser_receipts::verify_receipts(&chain_path, None, None, None)?;
+        assert!(!report.broken && !report.unrecorded, "{}", report.value);
+        // A local session names `local`.
+        let local = scene
+            .create(&mut broker, "client-a", "1")
+            .map_err(|e| e.message)?;
+        let session = broker.session("client-a", &local).map_err(|e| e.message)?;
+        let receipt = act_once(
+            session,
+            draft("browser_open", None),
+            record("browser_open", "done"),
+            20,
+        )?;
+        assert_eq!(receipt.to_json()["caller"], json!({"kind": "local"}));
         Ok(())
     }
 }

@@ -34,6 +34,18 @@
 //! agrees with `BROWSER_FULL_TOOLS` in `apps/orcel-mcp/src/tool_contract.ts`
 //! and `BROWSER_FULL_MCP_TOOLS` in `orcel-browser-host`'s exposure list
 //! (`apps/orcel-mcp/src/browser-full.test.ts`).
+//!
+//! SG-000135 OB-09 lifts SG-000079's "no remote mapping" for `browser_full`
+//! only (founder-delegated, engineering-chosen (2026-11-22)): a
+//! remote request may reach the remote-safe broker shapes
+//! (`REMOTE_BROWSER_FULL_SHAPES`) when its authenticated remote context
+//! names the `browser_full` tool-surface profile. The gate admits the shape
+//! only; the SG-000055 STRONG remote-session lease for that profile is
+//! checked next, before anything else (`remote_lease::gate_remote`), and
+//! every approval the request raises is the owner's Windows dialog, marked
+//! remote. The persistent profile shapes and a persistent profile named at
+//! create stay local-only. `browser_structured`'s live shapes stay local
+//! only.
 
 use orcel_contracts::{FailureCode, RemoteContext, RequestEnvelope};
 
@@ -69,6 +81,27 @@ pub const BROWSER_FULL_SHAPES: &[(&str, &str)] = &[
     ("browser.session", "profiles"),
     ("browser.session", "profile_create"),
     ("browser.session", "profile_delete"),
+];
+
+/// SG-000135 OB-09: the broker shapes a remote `browser_full` caller may
+/// reach (after the SG-000055 remote-session lease), each with the remote
+/// scope `orcel_policy::remote_session::required_browser_full_scopes`
+/// gives it. Left out: the persistent profile shapes (list, create,
+/// delete), which manage profiles that may be signed in to the owner's
+/// accounts.
+pub const REMOTE_BROWSER_FULL_SHAPES: &[(&str, &str)] = &[
+    ("browser.session", "create"),
+    ("browser.session", "open"),
+    ("browser.session", "snapshot"),
+    ("browser.session", "click"),
+    ("browser.session", "fill"),
+    ("browser.session", "select"),
+    ("browser.session", "verify"),
+    ("browser.session", "extract"),
+    ("browser.session", "screenshot"),
+    ("browser.session", "tabs"),
+    ("browser.session", "close"),
+    ("browser.session", "status"),
 ];
 
 /// The live browser shapes, each with an MCP tool (capability, operation):
@@ -147,16 +180,51 @@ fn gate_full(
     if !names(shapes, request) {
         return Ok(());
     }
-    if remote.is_some() {
-        return Err((
-            FailureCode::CapabilityDenied,
-            "SG-000135 browser_full shapes are local-only; remote browser mapping is disabled",
-        ));
+    if let Some(remote) = remote {
+        return gate_remote_full(request, profile, remote);
     }
+    crate::browser_remote::check_local_client(&request.client_session_id)?;
     if profile != Some(BROWSER_FULL_PROFILE) {
         return Err((
             FailureCode::CapabilityDenied,
             "SG-000135 browser_full shapes require the browser_full profile, selected by local configuration",
+        ));
+    }
+    Ok(())
+}
+
+/// SG-000135 OB-09: a remote broker request. Its authenticated remote
+/// context must name `browser_full` (a request profile, which a remote
+/// edge never sends, must not name another), the shape must be remote-safe,
+/// and a new session must not name a persistent profile.
+fn gate_remote_full(
+    request: &RequestEnvelope,
+    profile: Option<&str>,
+    remote: &RemoteContext,
+) -> Result<(), (FailureCode, &'static str)> {
+    if remote.tool_surface_profile != BROWSER_FULL_PROFILE
+        || profile.is_some_and(|profile| profile != BROWSER_FULL_PROFILE)
+    {
+        return Err((
+            FailureCode::CapabilityDenied,
+            "SG-000135 browser_full shapes reach a remote caller only under the remote browser_full profile",
+        ));
+    }
+    if !names(REMOTE_BROWSER_FULL_SHAPES, request) {
+        return Err((
+            FailureCode::CapabilityDenied,
+            "SG-000135 OB-09: persistent Orcel-managed browser profiles are local-only",
+        ));
+    }
+    if request.operation == "create"
+        && request
+            .arguments
+            .get("profile")
+            .is_some_and(|profile| !profile.is_null())
+    {
+        return Err((
+            FailureCode::CapabilityDenied,
+            "SG-000135 OB-09: persistent Orcel-managed browser profiles are local-only; a remote caller gets an ephemeral session",
         ));
     }
     Ok(())
@@ -303,9 +371,12 @@ mod tests {
                 assert_eq!(refused.0, FailureCode::CapabilityDenied, "{profile:?}");
                 assert!(refused.1.contains("browser_full profile"));
             }
+            // SG-000135 OB-09: a remote caller under the core profile never
+            // reaches a broker shape (only the remote browser_full profile
+            // does; see the OB-09 tests).
             let refused = gate(&full, Some(BROWSER_FULL_PROFILE), Some(&remote)).unwrap_err();
             assert_eq!(refused.0, FailureCode::CapabilityDenied);
-            assert!(refused.1.contains("remote browser mapping is disabled"));
+            assert!(refused.1.contains("remote browser_full profile"));
             // A broker shape is never one of the denied model-only shapes.
             assert!(
                 !orcel_provider_browser::DENIED_BROWSER_SHAPES.contains(&(*capability, *operation))
@@ -379,6 +450,102 @@ mod tests {
             let refused = gate(&live, Some(BROWSER_STRUCTURED_PROFILE), Some(&remote)).unwrap_err();
             assert!(refused.1.contains("local-only"));
             assert_eq!(gate(&live, Some(BROWSER_STRUCTURED_PROFILE), None), Ok(()));
+        }
+    }
+
+    fn browser_remote() -> RemoteContext {
+        RemoteContext {
+            tool_surface_profile: BROWSER_FULL_PROFILE.into(),
+            ..remote()
+        }
+    }
+
+    /// SG-000135 OB-09: a remote caller reaches exactly the remote-safe
+    /// broker shapes, and only under the remote browser_full profile; the
+    /// remote-session lease is checked after this gate.
+    #[test]
+    fn ob09_remote_browser_full_reaches_only_the_remote_safe_shapes() {
+        assert_eq!(REMOTE_BROWSER_FULL_SHAPES.len(), 12);
+        let browser = browser_remote();
+        for (capability, operation) in BROWSER_FULL_SHAPES {
+            let full = request(capability, operation);
+            let remote_safe = REMOTE_BROWSER_FULL_SHAPES.contains(&(*capability, *operation));
+            // Every remote-safe shape has a remote scope; the rest none.
+            assert_eq!(
+                orcel_policy::remote_session::required_browser_full_scopes(capability, operation)
+                    .is_some(),
+                remote_safe,
+                "{capability}/{operation}"
+            );
+            for profile in [None, Some(BROWSER_FULL_PROFILE)] {
+                let gated = gate(&full, profile, Some(&browser));
+                if remote_safe {
+                    assert_eq!(gated, Ok(()), "{capability}/{operation}");
+                } else {
+                    let refused = gated.unwrap_err();
+                    assert_eq!(refused.0, FailureCode::CapabilityDenied);
+                    assert!(refused.1.contains("local-only"), "{}", refused.1);
+                }
+            }
+            // A request profile naming another profile is refused.
+            for profile in [Some(BROWSER_STRUCTURED_PROFILE), Some("core"), Some("")] {
+                assert!(gate(&full, profile, Some(&browser)).is_err());
+            }
+            // Any other remote profile is refused.
+            for profile in ["core", "browser_structured", "desktop_structured", ""] {
+                let other = RemoteContext {
+                    tool_surface_profile: profile.into(),
+                    ..remote()
+                };
+                let refused = gate(&full, None, Some(&other)).unwrap_err();
+                assert_eq!(refused.0, FailureCode::CapabilityDenied, "{profile}");
+            }
+        }
+        for (capability, operation) in REMOTE_BROWSER_FULL_SHAPES {
+            assert!(BROWSER_FULL_SHAPES.contains(&(*capability, *operation)));
+        }
+        // browser_structured's live shapes stay local-only, whatever the
+        // remote profile.
+        for (capability, operation) in LIVE_BROWSER_SHAPES {
+            let live = request(capability, operation);
+            for profile in [
+                None,
+                Some(BROWSER_STRUCTURED_PROFILE),
+                Some(BROWSER_FULL_PROFILE),
+            ] {
+                let refused = gate(&live, profile, Some(&browser)).unwrap_err();
+                assert!(refused.1.contains("local-only"));
+            }
+        }
+    }
+
+    #[test]
+    fn ob09_a_remote_session_never_names_a_persistent_profile() {
+        let browser = browser_remote();
+        let mut named = request("browser.session", "create");
+        named.arguments = json!({"profile": "work"});
+        let refused = gate(&named, None, Some(&browser)).unwrap_err();
+        assert_eq!(refused.0, FailureCode::CapabilityDenied);
+        assert!(refused.1.contains("ephemeral"));
+        // Locally the same request passes the gate (OB-04 asks the owner).
+        assert_eq!(gate(&named, Some(BROWSER_FULL_PROFILE), None), Ok(()));
+        let mut ephemeral = request("browser.session", "create");
+        ephemeral.arguments = json!({"task": "Book a table", "mode": "visible"});
+        assert_eq!(gate(&ephemeral, None, Some(&browser)), Ok(()));
+    }
+
+    /// SG-000135 OB-09: local behaviour is unchanged, except that a local
+    /// MCP session id may not pose as a remote caller's broker client.
+    #[test]
+    fn ob09_local_browser_full_is_unchanged() {
+        for (capability, operation) in BROWSER_FULL_SHAPES {
+            let full = request(capability, operation);
+            assert_eq!(gate(&full, Some(BROWSER_FULL_PROFILE), None), Ok(()));
+            let mut posing = request(capability, operation);
+            posing.client_session_id =
+                format!("{}rc-x:rp-y:s", crate::browser_remote::REMOTE_CLIENT_PREFIX);
+            let refused = gate(&posing, Some(BROWSER_FULL_PROFILE), None).unwrap_err();
+            assert_eq!(refused.0, FailureCode::InvalidRequest);
         }
     }
 }

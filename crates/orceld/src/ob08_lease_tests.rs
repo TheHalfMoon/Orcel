@@ -12,7 +12,7 @@
 use crate::authority_link::admit_browser_lease;
 use crate::browser_lease::{
     dispatch_management, refuse_untrusted, AuthorityView, CoveredAction, FillValue, FullAccess,
-    LeaseDecision, LeaseManager, LeaseMoment, LeaseQuery, LeaseSource, SecretMatcher,
+    LeaseDecision, LeaseIssuer, LeaseManager, LeaseMoment, LeaseQuery, LeaseSource, SecretMatcher,
     LEASE_INVALID,
 };
 use orcel_approval::test_support::FixedApprovalBroker;
@@ -231,12 +231,23 @@ struct Scripted {
     authorized: RefCell<Vec<CoveredAction>>,
     refuse_authorize: Cell<bool>,
     ended: RefCell<Vec<String>>,
+    /// SG-000135 OB-09: the source stands in for the interim per-user
+    /// full-control store instead of the authority service.
+    interim: Cell<bool>,
 }
 
 #[derive(Clone)]
 struct Source(Rc<Scripted>);
 
 impl LeaseSource for Source {
+    fn issuer(&self) -> LeaseIssuer {
+        if self.0.interim.get() {
+            LeaseIssuer::InterimStore
+        } else {
+            LeaseIssuer::AuthorityService
+        }
+    }
+
     fn read(&self) -> Result<Option<AuthorityView>, ProviderError> {
         self.0.reads.set(self.0.reads.get() + 1);
         match self.0.view.borrow().clone() {
@@ -1363,4 +1374,190 @@ fn ob08_review_unimplemented_families_are_never_admitted() {
             "{family:?}"
         );
     }
+}
+
+// ---------------------------------------------------------------------
+// SG-000135 OB-09: a remote browser_full caller's session.
+// ---------------------------------------------------------------------
+
+fn remote_context(connection: char) -> orcel_contracts::RemoteContext {
+    orcel_contracts::RemoteContext {
+        principal: format!("rp-{}", "a".repeat(32)),
+        remote_connection_id: format!("rc-{}", connection.to_string().repeat(32)),
+        connection_id: "cn-1".into(),
+        device_id: format!("dev-{}", "c".repeat(32)),
+        device_epoch: 1,
+        provider_kind: "openai".into(),
+        client_profile_id: "chatgpt".into(),
+        client_profile_revision: 1,
+        tool_surface_profile: "browser_full".into(),
+        scopes: vec!["orcel.read".into(), "orcel.execute".into()],
+    }
+}
+
+/// The broker client of the remote caller on paired connection
+/// `connection` (MCP session `s1`).
+fn remote_client(connection: char) -> String {
+    crate::browser_remote::Caller::of(Some(&remote_context(connection))).broker_client("s1")
+}
+
+/// A remote caller's session (client `remote_client('b')`) over a scripted
+/// service reporting `lease`; `interim` makes the source the interim store.
+fn remote_scene(lease: BrowserLease, interim: bool) -> Scene {
+    let service = Rc::new(Scripted::default());
+    service.interim.set(interim);
+    *service.view.borrow_mut() = Some(Ok(Some(view_of(vec![lease.clone()]))));
+    let access = FullAccess::new(
+        SESSION,
+        &client_ref(&remote_client('b')),
+        Some(TASK),
+        Box::new(Source(Rc::clone(&service))),
+        Box::new(NoSecrets),
+        Some((SID.into(), LOGON)),
+    )
+    .for_remote_caller();
+    Scene {
+        service,
+        access,
+        lease,
+    }
+}
+
+/// A service lease issued to the remote caller on connection `connection`.
+fn remote_lease(connection: char) -> BrowserLease {
+    proof_lease(&routine_families(), |spec| {
+        spec.client_ref = client_ref(&remote_client(connection));
+    })
+}
+
+fn lease_invalid_message(decision: &LeaseDecision) -> String {
+    match decision {
+        LeaseDecision::Refuse(error) => error.message.clone(),
+        other => format!("not refused: {other:?}"),
+    }
+}
+
+/// Routine remote actions under a service lease issued to this remote
+/// client are covered, confirmed against a fresh service read and admitted
+/// by the service's Authorize, exactly as locally.
+#[test]
+fn ob09_routine_remote_actions_under_this_clients_service_lease_are_covered() {
+    let mut scene = remote_scene(remote_lease('b'), false);
+    for family in [
+        BrowserFamily::Navigate,
+        BrowserFamily::Click,
+        BrowserFamily::Type,
+    ] {
+        let used = covered(
+            scene
+                .access
+                .decide(&query(family, Impact::Routine), &moment()),
+        );
+        assert!(scene.access.confirm(&used, &moment()).is_ok(), "{family:?}");
+        assert_eq!(used.lease_id, scene.lease.lease_id);
+    }
+    let authorized = scene.service.authorized.borrow();
+    assert_eq!(authorized.len(), 3);
+    assert!(authorized
+        .iter()
+        .all(|action| action.principal_id == client_ref(&remote_client('b'))));
+}
+
+/// The interim per-user full-control store never covers a remote caller:
+/// its lease is refused once (CAPABILITY_DENIED, nothing sent), and later
+/// actions ask. A local session is unchanged.
+#[test]
+fn ob09_an_interim_store_lease_never_covers_a_remote_caller() {
+    let mut scene = remote_scene(remote_lease('b'), true);
+    let first = scene
+        .access
+        .decide(&query(BrowserFamily::Click, Impact::Routine), &moment());
+    assert!(is_lease_invalid(&first), "{first:?}");
+    assert!(
+        lease_invalid_message(&first).contains("interim-store lease never covers a remote caller")
+    );
+    assert!(is_ask(&scene.access.decide(
+        &query(BrowserFamily::Click, Impact::Routine),
+        &moment()
+    )));
+    assert!(scene.service.authorized.borrow().is_empty());
+
+    // A service lease covered at decide, whose source is found to be the
+    // interim store at confirm, is refused there (nothing sent).
+    let mut scene = remote_scene(remote_lease('b'), false);
+    let used = covered(
+        scene
+            .access
+            .decide(&query(BrowserFamily::Click, Impact::Routine), &moment()),
+    );
+    scene.service.interim.set(true);
+    let refused = scene.access.confirm(&used, &moment());
+    assert!(
+        matches!(&refused, Err(error) if error.code == FailureCode::CapabilityDenied
+            && error.message.contains("interim-store")),
+        "{refused:?}"
+    );
+    assert!(scene.service.authorized.borrow().is_empty());
+
+    // Local behaviour is unchanged: the issuer is not consulted.
+    let mut local = Scene::new();
+    local.service.interim.set(true);
+    let used = covered(
+        local
+            .access
+            .decide(&query(BrowserFamily::Click, Impact::Routine), &moment()),
+    );
+    assert!(local.access.confirm(&used, &moment()).is_ok());
+}
+
+/// A service lease bound to another client (a local MCP session, or
+/// another remote client) never covers the remote caller's session.
+#[test]
+fn ob09_a_service_lease_bound_to_another_client_is_refused_for_remote() {
+    for other in [proof_lease(&routine_families(), |_| {}), remote_lease('d')] {
+        let mut scene = remote_scene(other, false);
+        let first = scene
+            .access
+            .decide(&query(BrowserFamily::Click, Impact::Routine), &moment());
+        assert!(is_lease_invalid(&first), "{first:?}");
+        assert!(lease_invalid_message(&first).contains("another client"));
+        assert!(is_ask(&scene.access.decide(
+            &query(BrowserFamily::Navigate, Impact::Routine),
+            &moment()
+        )));
+        assert!(scene.service.authorized.borrow().is_empty());
+    }
+    // The local client's lease does not cover the remote caller, and the
+    // remote caller's lease does not cover a local session.
+    let mut local = Scene::with(remote_lease('b'));
+    assert!(is_lease_invalid(&local.access.decide(
+        &query(BrowserFamily::Click, Impact::Routine),
+        &moment()
+    )));
+}
+
+/// High-impact and unclassified remote actions are never covered: they ask
+/// (the owner's Windows dialog on the PC, marked remote), exactly as
+/// locally, and the lease is not used for them.
+#[test]
+fn ob09_high_impact_and_unclassified_remote_actions_always_ask() {
+    let mut scene = remote_scene(remote_lease('b'), false);
+    for family in [
+        BrowserFamily::Click,
+        BrowserFamily::Type,
+        BrowserFamily::Select,
+        BrowserFamily::Navigate,
+    ] {
+        for impact in [Impact::HighImpact, Impact::Unknown] {
+            let decision = scene.access.decide(&query(family, impact), &moment());
+            assert!(is_ask(&decision), "{family:?} {impact:?}: {decision:?}");
+        }
+    }
+    // A cross-origin effect is never routine either.
+    let mut cross = query(BrowserFamily::Click, Impact::Routine);
+    cross.effect_origin = "https://other.test";
+    assert!(is_ask(&scene.access.decide(&cross, &moment())));
+    assert!(scene.service.authorized.borrow().is_empty());
+    // A secret-looking value is never typed under a remote lease.
+    assert_eq!(scene.access.fill_value("my password"), FillValue::Secret);
 }

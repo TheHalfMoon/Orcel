@@ -26,8 +26,14 @@ pub const LEASE_MAX_DURATION_MS: u64 = 15 * 60 * 1000;
 pub const LEASE_MIN_DURATION_MS: u64 = 60 * 1000;
 /// Bounded number of stored leases.
 pub const MAX_LEASES: usize = 8;
-/// The only tool-surface profile mapped for remote use.
+/// The core tool-surface profile mapped for remote use.
 pub const REMOTE_PROFILE_CORE: &str = "core";
+/// SG-000135 OB-09: the remote `browser_full` profile. A lease for it
+/// covers only the remote-safe Orcel Browser broker shapes
+/// (`required_browser_full_scopes`), and a `core` lease never covers them.
+pub const REMOTE_PROFILE_BROWSER_FULL: &str = "browser_full";
+/// Every tool-surface profile mapped for remote use.
+pub const REMOTE_PROFILES: [&str; 2] = [REMOTE_PROFILE_CORE, REMOTE_PROFILE_BROWSER_FULL];
 /// Remote OAuth scope vocabulary (SG-000054).
 pub const REMOTE_SCOPES: [&str; 3] = ["orcel.read", "orcel.write", "orcel.execute"];
 
@@ -234,6 +240,48 @@ pub fn is_read_capability(capability: &str, operation: &str) -> bool {
     required_scopes(capability, operation) == Some(&["orcel.read"][..])
 }
 
+/// SG-000135 OB-09: the required remote scopes of each Orcel Browser broker
+/// shape mapped for the remote `browser_full` profile. Reads of the
+/// session's own page need `orcel.read`; actions need `orcel.execute`.
+/// The persistent profile shapes (`profiles`, `profile_create`,
+/// `profile_delete`) stay local-only, and no shape of the core table or of
+/// `browser_structured` is mapped here.
+pub fn required_browser_full_scopes(
+    capability: &str,
+    operation: &str,
+) -> Option<&'static [&'static str]> {
+    const READ: &[&str] = &["orcel.read"];
+    const EXECUTE: &[&str] = &["orcel.execute"];
+    if capability != "browser.session" {
+        return None;
+    }
+    Some(match operation {
+        "snapshot" | "verify" | "extract" | "screenshot" | "status" => READ,
+        "create" | "open" | "click" | "fill" | "select" | "tabs" | "close" => EXECUTE,
+        _ => return None,
+    })
+}
+
+/// The required remote scopes of a shape under a remote tool-surface
+/// profile: `core` maps the core table only, `browser_full` the broker
+/// shapes only, and any other profile maps nothing.
+pub fn required_scopes_for(
+    profile: &str,
+    capability: &str,
+    operation: &str,
+) -> Option<&'static [&'static str]> {
+    match profile {
+        REMOTE_PROFILE_CORE => required_scopes(capability, operation),
+        REMOTE_PROFILE_BROWSER_FULL => required_browser_full_scopes(capability, operation),
+        _ => None,
+    }
+}
+
+/// Whether `profile` is a tool-surface profile mapped for remote use.
+pub fn is_remote_profile(profile: &str) -> bool {
+    REMOTE_PROFILES.contains(&profile)
+}
+
 /// Whether a capability manages local authority and is local-only.
 pub fn is_local_only_capability(capability: &str) -> bool {
     LOCAL_ONLY_PREFIXES
@@ -253,7 +301,7 @@ pub fn validate_remote_context(remote: &RemoteContext) -> Result<(), PolicyError
     {
         return Err(inactive("remote context is malformed"));
     }
-    if remote.tool_surface_profile != REMOTE_PROFILE_CORE {
+    if !is_remote_profile(&remote.tool_surface_profile) {
         return Err(inactive("remote tool-surface profile is not mapped"));
     }
     if remote.scopes.is_empty() || !remote.scopes.iter().all(|s| is_known_scope(s)) {
@@ -377,8 +425,15 @@ pub fn check_remote_dispatch(
             "the workspace trust changed since the remote-session lease was created",
         ));
     }
-    let required = required_scopes(&request.capability, &request.operation)
-        .ok_or_else(|| inactive("the capability is not covered by the remote-session lease"))?;
+    // SG-000135 OB-09: the lease's own profile picks the table, so a core
+    // lease never covers a browser shape and a browser_full lease covers
+    // nothing else.
+    let required = required_scopes_for(
+        &lease.tool_surface_profile,
+        &request.capability,
+        &request.operation,
+    )
+    .ok_or_else(|| inactive("the capability is not covered by the remote-session lease"))?;
     for scope in required {
         if !remote.scopes.iter().any(|s| s == scope)
             || !lease.scope_ceiling.iter().any(|s| s == scope)
@@ -388,7 +443,7 @@ pub fn check_remote_dispatch(
             ));
         }
     }
-    let read = is_read_capability(&request.capability, &request.operation);
+    let read = required == ["orcel.read"];
     if read && lease.read_mode == ReadMode::Disabled {
         return Err(inactive(
             "remote reads are disabled for this remote-session lease",
@@ -418,9 +473,9 @@ pub fn build_lease(
     {
         return Err(invalid("lease route identifiers are malformed"));
     }
-    if request.tool_surface_profile != REMOTE_PROFILE_CORE {
+    if !is_remote_profile(&request.tool_surface_profile) {
         return Err(invalid(
-            "only the core tool-surface profile is mapped for remote use",
+            "only the core and browser_full tool-surface profiles are mapped for remote use",
         ));
     }
     if request.scope_ceiling.is_empty() || !request.scope_ceiling.iter().all(|s| is_known_scope(s))
@@ -1202,5 +1257,201 @@ pub(crate) mod tests {
         extra.remote_connection_id = format!("rc-{}", "e".repeat(32));
         assert!(upsert_lease(&many, extra.clone(), NOW).is_err());
         assert!(upsert_lease(&many, extra, NOW + 11 * 60 * 1000).is_ok());
+    }
+
+    /// SG-000135 OB-09: a browser_full remote-session lease, created by the
+    /// same STRONG-gated local command as a core one.
+    fn browser_lease(scopes: &[&str]) -> RemoteSessionLease {
+        let mut req = lease_request();
+        req.tool_surface_profile = REMOTE_PROFILE_BROWSER_FULL.into();
+        req.scope_ceiling = scopes.iter().map(|s| (*s).to_owned()).collect();
+        build_lease(&req, "lease-b".into(), &env(NOW), &["default".into()]).unwrap()
+    }
+
+    fn browser_remote(scopes: &[&str]) -> RemoteContext {
+        RemoteContext {
+            tool_surface_profile: REMOTE_PROFILE_BROWSER_FULL.into(),
+            scopes: scopes.iter().map(|s| (*s).to_owned()).collect(),
+            ..remote()
+        }
+    }
+
+    fn browser_request(operation: &str) -> RequestEnvelope {
+        let mut request = request("browser.session", operation, "default");
+        request.target = None;
+        request
+    }
+
+    #[test]
+    fn ob09_remote_browser_full_without_a_strong_session_lease_is_refused() {
+        let both = ["orcel.read", "orcel.execute"];
+        for operation in ["create", "open", "click", "snapshot", "status"] {
+            let message = inactive_code(check_remote_dispatch(
+                &[],
+                &browser_request(operation),
+                &browser_remote(&both),
+                &env(NOW + 1000),
+            ));
+            assert!(message.contains("no remote-session lease"), "{message}");
+        }
+        // A revoked or expired browser_full lease is no lease either.
+        let mut revoked = browser_lease(&both);
+        revoked.revoked = true;
+        inactive_code(check_remote_dispatch(
+            &[revoked],
+            &browser_request("click"),
+            &browser_remote(&both),
+            &env(NOW + 1000),
+        ));
+        inactive_code(check_remote_dispatch(
+            &[browser_lease(&both)],
+            &browser_request("click"),
+            &browser_remote(&both),
+            &env(NOW + LEASE_MAX_DURATION_MS + 1),
+        ));
+    }
+
+    #[test]
+    fn ob09_a_browser_full_session_lease_covers_only_the_remote_safe_broker_shapes() {
+        let both = ["orcel.read", "orcel.execute"];
+        let leases = vec![browser_lease(&both)];
+        for operation in [
+            "create",
+            "open",
+            "snapshot",
+            "click",
+            "fill",
+            "select",
+            "verify",
+            "extract",
+            "screenshot",
+            "tabs",
+            "close",
+            "status",
+        ] {
+            let grant = check_remote_dispatch(
+                &leases,
+                &browser_request(operation),
+                &browser_remote(&both),
+                &env(NOW + 1000),
+            );
+            assert!(grant.is_ok(), "{operation}: {grant:?}");
+            assert!(grant.is_ok_and(|grant| !grant.read_requires_approval));
+        }
+        // The persistent profile shapes, the core table and every
+        // browser_structured shape stay outside a browser_full lease.
+        for (capability, operation) in [
+            ("browser.session", "profiles"),
+            ("browser.session", "profile_create"),
+            ("browser.session", "profile_delete"),
+            ("browser.session", "evaluate"),
+            ("fs.read", "read"),
+            ("fs.write", "write"),
+            ("process.spawn", "spawn"),
+            ("browser.dom", "click"),
+            ("browser.form", "enter"),
+        ] {
+            let mut request = request(capability, operation, "default");
+            request.target = None;
+            let message = inactive_code(check_remote_dispatch(
+                &leases,
+                &request,
+                &browser_remote(&both),
+                &env(NOW + 1000),
+            ));
+            assert!(
+                message.contains("not covered"),
+                "{capability}/{operation}: {message}"
+            );
+        }
+        // Reads need orcel.read and actions orcel.execute, in the token and
+        // in the leased ceiling.
+        let read_only = vec![browser_lease(&["orcel.read"])];
+        assert!(check_remote_dispatch(
+            &read_only,
+            &browser_request("snapshot"),
+            &browser_remote(&both),
+            &env(NOW + 1000),
+        )
+        .is_ok());
+        inactive_code(check_remote_dispatch(
+            &read_only,
+            &browser_request("click"),
+            &browser_remote(&both),
+            &env(NOW + 1000),
+        ));
+        inactive_code(check_remote_dispatch(
+            &leases,
+            &browser_request("click"),
+            &browser_remote(&["orcel.read"]),
+            &env(NOW + 1000),
+        ));
+        // Per-request read mode asks for each browser read, not for actions
+        // (each of which keeps its own approval).
+        let mut req = lease_request();
+        req.tool_surface_profile = REMOTE_PROFILE_BROWSER_FULL.into();
+        req.scope_ceiling = vec!["orcel.read".into(), "orcel.execute".into()];
+        req.read_mode = ReadMode::PerRequest;
+        let per_request =
+            vec![build_lease(&req, "l".into(), &env(NOW), &["default".into()]).unwrap()];
+        let read = check_remote_dispatch(
+            &per_request,
+            &browser_request("extract"),
+            &browser_remote(&both),
+            &env(NOW + 1000),
+        );
+        assert!(read.is_ok_and(|grant| grant.read_requires_approval));
+        let act = check_remote_dispatch(
+            &per_request,
+            &browser_request("click"),
+            &browser_remote(&both),
+            &env(NOW + 1000),
+        );
+        assert!(act.is_ok_and(|grant| !grant.read_requires_approval));
+    }
+
+    #[test]
+    fn ob09_core_and_browser_full_leases_never_cover_each_other() {
+        let both = ["orcel.read", "orcel.execute"];
+        // A core lease does not admit a browser_full context, and the core
+        // profile maps no broker shape.
+        let core = vec![lease()];
+        inactive_code(check_remote_dispatch(
+            &core,
+            &browser_request("snapshot"),
+            &browser_remote(&both),
+            &env(NOW + 1000),
+        ));
+        inactive_code(check_remote_dispatch(
+            &core,
+            &browser_request("snapshot"),
+            &remote(),
+            &env(NOW + 1000),
+        ));
+        // A browser_full lease does not admit a core context.
+        inactive_code(check_remote_dispatch(
+            &[browser_lease(&both)],
+            &request("fs.read", "read", "default"),
+            &remote(),
+            &env(NOW + 1000),
+        ));
+        // Unmapped remote profiles still fail closed.
+        for profile in ["browser_structured", "desktop_structured", "developer", ""] {
+            let mut forged = browser_remote(&both);
+            forged.tool_surface_profile = profile.into();
+            assert!(validate_remote_context(&forged).is_err(), "{profile}");
+            let mut req = lease_request();
+            req.tool_surface_profile = profile.into();
+            assert!(build_lease(&req, "l".into(), &env(NOW), &["default".into()]).is_err());
+        }
+        assert_eq!(
+            required_scopes_for("core", "browser.session", "click"),
+            None
+        );
+        assert_eq!(required_scopes_for("browser_full", "fs.read", "read"), None);
+        assert_eq!(
+            required_scopes_for("browser_structured", "browser.session", "click"),
+            None
+        );
     }
 }

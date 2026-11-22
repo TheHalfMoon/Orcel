@@ -52,6 +52,12 @@ mod browser_profiles;
 // verifier, which `orceld audit-verify --receipts` runs in every build.
 #[cfg_attr(not(all(windows, feature = "live-browser-dev")), allow(dead_code))]
 mod browser_receipts;
+// SG-000135 OB-09: who a browser_full request comes from (local, or a
+// remote caller admitted by the SG-000055 remote-session lease) and what
+// that changes. Only the Windows live-browser-dev build drives a session
+// with it; every build routes and gates remote requests through it.
+#[cfg_attr(not(all(windows, feature = "live-browser-dev")), allow(dead_code))]
+mod browser_remote;
 // SG-000135 OB-01 end-to-end harness, test builds only: the scripted SOFT
 // consent. Compiled only with both live browser features and the harness
 // feature, never in a development or release build.
@@ -516,6 +522,29 @@ impl<B: ApprovalBroker> ApprovalBroker for OriginStamp<'_, B> {
     }
 }
 
+/// SG-000055: check one remote-context request against the local
+/// remote-session lease store, immediately before dispatch. An unavailable
+/// store or trust store fails closed.
+fn remote_session_gate(
+    workspace_set: &remote_lease::WorkspaceSet,
+    approval: &impl ApprovalBroker,
+    request: &RequestEnvelope,
+    remote: &orcel_contracts::RemoteContext,
+) -> Result<(), ProviderError> {
+    let lease_path = orcel_policy::remote_session::default_lease_store_path()
+        .map_err(|error| state_unavailable("remote-session lease store", &error))?;
+    let probe = workstation::current;
+    let clock = orcel_approval::now_ms;
+    let ctx = remote_lease::LeaseContext {
+        lease_path: &lease_path,
+        workspaces: workspace_set,
+        workstation: &probe,
+        now_ms: &clock,
+    };
+    let trust_store = load_trust_store()?;
+    remote_lease::gate_remote(&ctx, approval, &trust_store, request, remote)
+}
+
 /// SG-000055 entry: remote-context requests must pass the local
 /// remote-session lease gate before any policy or dispatch step, and local
 /// remote-lease management never reaches workspace dispatch.
@@ -558,8 +587,21 @@ fn handle_envelope(
     }
     // SG-000135 OB-02: a broker shape the gate admitted (local,
     // `browser_full`) runs through the Orcel Browser Session Broker.
+    // SG-000135 OB-09: so does a remote-safe broker shape the gate admitted
+    // for a remote caller under the remote `browser_full` profile, after the
+    // SG-000055 STRONG remote-session lease for that profile and with every
+    // approval it raises marked remote (the owner's Windows dialog).
     if profile_gate::is_browser_full_shape(&request) {
-        return handle_browser_full(policy, audit, approval, request);
+        let caller = browser_remote::Caller::of(remote.as_ref());
+        if let Some(remote) = &remote {
+            let approval = &OriginStamp::new(approval, remote);
+            if let Err(error) = remote_session_gate(workspace_set, approval, &request, remote) {
+                let _ = audit.record(&request, POLICY_REVISION, "REMOTE_DENIED");
+                return ResponseEnvelope::failure(request.request_id, error.code, error.message);
+            }
+            return handle_browser_full(policy, audit, approval, request, &caller);
+        }
+        return handle_browser_full(policy, audit, approval, request, &caller);
     }
     // SG-000135 OB-08: Full Access browser lease management is the owner's
     // local path only: never remote, never under a tool surface profile,
@@ -603,14 +645,7 @@ fn handle_envelope(
                 "SG-000095 Full User desktop authority is local-only; Remote Full Control remains unavailable",
             );
         }
-        let gated = ctx
-            .as_ref()
-            .map_err(|error| ProviderError::new(error.code.clone(), error.message.clone()))
-            .and_then(|ctx| {
-                let trust_store = load_trust_store()?;
-                remote_lease::gate_remote(ctx, approval, &trust_store, &request, remote)
-            });
-        if let Err(error) = gated {
+        if let Err(error) = remote_session_gate(workspace_set, approval, &request, remote) {
             let _ = audit.record(&request, POLICY_REVISION, "REMOTE_DENIED");
             return ResponseEnvelope::failure(request.request_id, error.code, error.message);
         }
@@ -912,6 +947,7 @@ fn handle_browser_full(
     audit: &AuditLogger,
     approval: &impl ApprovalBroker,
     request: RequestEnvelope,
+    caller: &browser_remote::Caller,
 ) -> ResponseEnvelope {
     let deny = |request: RequestEnvelope, error: ProviderError| {
         let _ = audit.record(&request, POLICY_REVISION, "DENIED");
@@ -921,6 +957,11 @@ fn handle_browser_full(
         Ok(action) => action,
         Err(error) => return deny(request, error),
     };
+    // SG-000135 OB-09: a remote caller never uses or manages a persistent
+    // Orcel-managed profile (the profile gate refused it already).
+    if let Err(error) = browser_remote::refuse_remote_profile(caller, &action) {
+        return deny(request, error);
+    }
     if let Some(live) = action.live_request(&request, browser_full::VALIDATION_PAGE_ID, 0) {
         if let Err(error) = policy.authorize_live_browser(&live) {
             return deny(request, ProviderError::new(error.code, error.message));
@@ -938,7 +979,7 @@ fn handle_browser_full(
     if let Err(refused) = audit_before_dispatch(audit, &request, POLICY_REVISION) {
         return *refused;
     }
-    let result = live_dispatch::dispatch_full(&workspace, approval, &request, &action);
+    let result = live_dispatch::dispatch_full(&workspace, approval, &request, &action, caller);
     finish(audit, request, POLICY_REVISION, result)
 }
 
@@ -3076,6 +3117,65 @@ mod sg000055_envelope_tests {
                 },
             );
             assert_eq!(code(&response), FailureCode::CapabilityDenied);
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// SG-000135 OB-09: a remote browser_full request is gated before any
+    /// dispatch: under the core profile it never reaches a broker shape, the
+    /// persistent profile shapes stay local-only, and a remote-safe shape
+    /// with no exact active SG-000055 remote-session lease is refused
+    /// REMOTE_SESSION_INACTIVE. Each refusal is audited.
+    #[test]
+    fn ob09_remote_browser_full_without_a_strong_session_lease_never_reaches_dispatch() {
+        let (policy, audit, root) = fixture();
+        let workspaces =
+            remote_lease::WorkspaceSet::from_pairs(&[("default".into(), root.join("workspace"))]);
+        let approval = FixedApprovalBroker(ApprovalDecision::Approved);
+        let browser = RemoteContext {
+            tool_surface_profile: "browser_full".into(),
+            scopes: vec!["orcel.read".into(), "orcel.execute".into()],
+            ..remote()
+        };
+        let send = |operation: &str, arguments: Value, remote: RemoteContext| {
+            let mut request = request("browser.session", operation, "default");
+            request.target = None;
+            request.arguments = arguments;
+            handle_envelope(
+                &policy,
+                &audit,
+                &approval,
+                &workspaces,
+                RemoteRequestEnvelope {
+                    request,
+                    remote: Some(remote),
+                    profile: None,
+                },
+            )
+        };
+        let session = json!({"session_id": "bs-0123456789abcdef-1-0001020304050607"});
+        for (operation, arguments) in [
+            ("create", json!({})),
+            ("snapshot", session.clone()),
+            ("status", session.clone()),
+        ] {
+            let core = send(operation, arguments.clone(), remote());
+            assert_eq!(code(&core), FailureCode::CapabilityDenied, "{operation}");
+            let unleased = send(operation, arguments, browser.clone());
+            assert_eq!(
+                code(&unleased),
+                FailureCode::RemoteSessionInactive,
+                "{operation}"
+            );
+        }
+        for (operation, arguments) in [
+            ("profiles", json!({})),
+            ("profile_create", json!({"name": "work"})),
+            ("profile_delete", json!({"name": "work"})),
+            ("create", json!({"profile": "work"})),
+        ] {
+            let refused = send(operation, arguments, browser.clone());
+            assert_eq!(code(&refused), FailureCode::CapabilityDenied, "{operation}");
         }
         let _ = std::fs::remove_dir_all(root);
     }
