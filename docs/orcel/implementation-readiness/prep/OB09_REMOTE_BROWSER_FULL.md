@@ -45,9 +45,13 @@ No tool types into a secret field, handles a credential, or evaluates page scrip
 - `crates/orceld/src/browser_lease.rs`. `FullAccess::for_remote_caller` marks a remote session. `LeaseSource::issuer` says who issues a source's leases. For a remote session, a lease from any issuer but the authority service, without the service's `al-` id, or naming another client or principal, is refused `lease_invalid` (CAPABILITY_DENIED, an existing code) at decide and again at confirm. Nothing is sent, and later actions ask. The routine and high-impact classification, the takeover gate, the epoch and revoke checks, and the service's audit-first `Authorize` are unchanged.
 - `crates/orceld/src/browser_broker.rs` and `browser_receipts.rs`. Each session keeps its `Caller`. Its `session_start` event, every intent and every receipt carry `caller`: `{"kind":"local"}`, or `{"kind":"remote","provider","device","connection"}`. Each digest covers it.
 
-**What is unchanged:** OB-06 takeover, OB-07 handoff (`HUMAN_VERIFICATION_REQUIRED`, which is refused before any lease is consulted), OB-07b sign-in and `agent_url`, the Shadow and Visible mode rules, and every local behaviour except the `remote:` prefix refusal.
+- `crates/orceld/src/browser_broker.rs` (`needs_you_json`). In a remote caller's session, each Needs-you entry also carries `remote_caller` (provider and device, from the authenticated remote context, as the approval prompt's Origin line does). Its guidance says that a remote client drives the session, not someone at this PC, and that once the person completes the page (a sign-in included), that remote client acts in it as the signed-in account until the session ends. It never points at a persistent profile. The remote caller's reply carries nothing from the person's sign-in: only fixed words, the page id and the detector's closed signal names. Later replies show page URLs through `agent_url`, which masks query and fragment values after a sign-in.
+
+**What is unchanged:** OB-06 takeover, OB-07 handoff (`HUMAN_VERIFICATION_REQUIRED`, which is refused before any lease is consulted, with the same failure code and handoff values), OB-07b sign-in and `agent_url`, the Shadow and Visible mode rules, and every local behaviour except the `remote:` prefix refusal. A local session's Needs-you entry is unchanged.
 
 ## 3. Threat model
+
+**The interim-store exclusion is structural, not only a runtime check.** orceld has one real lease source, `authority_link::ServiceLeaseSource`. Its `issuer()` is `LeaseIssuer::AuthorityService`, and it admits a lease only after verifying the service's ECDSA signature with the public key the verified service reported. Every broker session's lease cache is built by `FullAccess::service_backed` (`live_dispatch.rs`, `start`), which wires in that source. `LeaseIssuer::InterimStore` is constructed only by the test source in `ob08_lease_tests.rs`, and no build of orceld issues or stores a browser lease. The runtime check in `FullAccess::refuse_for_remote` is defence in depth: it requires the service as issuer, the service's `al-` lease id, and a lease whose `client_ref` and principal both equal the remote session's own `client_ref`. That `client_ref` is derived from the remote broker client (paired connection, principal and MCP session), so a lease issued to any other client, local or remote, never matches. `check_browser_lease` checks the client binding again.
 
 | Threat | Mitigation | Test |
 |---|---|---|
@@ -59,6 +63,7 @@ No tool types into a secret field, handles a credential, or evaluates page scrip
 | A remote caller submits, buys, publishes or deletes without the owner | High-impact and unknown actions are never covered and ask on the Windows dialog, marked remote | `ob09_high_impact_and_unclassified_remote_actions_always_ask`, `a_remote_requests_approvals_are_marked_remote` (existing) |
 | A local process poses as a remote client to reach its sessions | Local ids with the `remote:` prefix are refused | `ob09_local_browser_full_is_unchanged`, `ob09_local_callers_are_unchanged` |
 | Receipts cannot tell a remote action from a local one | `caller` is in every intent, receipt and session start, and digest-covered | `ob09_receipts_carry_the_remote_origin`, `ob09_receipts_name_the_remote_origin` |
+| The person signs in for a session without knowing that a remote client will then drive it, or the remote reply leaks something from that sign-in | Remote Needs-you entries name the remote provider and device and say that the remote client then acts in the page; the entries hold fixed words only; URLs are masked after a sign-in | `ob09_a_remote_sessions_handoff_names_the_remote_client_and_carries_nothing_from_the_sign_in` |
 | Routine remote actions under the right lease still prompt every time (FA-D usability) | They are covered as locally, after the service's `Authorize` | `ob09_routine_remote_actions_under_this_clients_service_lease_are_covered` |
 
 ## 4. Residuals
@@ -70,6 +75,12 @@ No tool types into a secret field, handles a credential, or evaluates page scrip
 - High-impact signals are still the OB-08 heuristics (open choice 4). An action that is wrongly classified routine would be covered. The host's GET-only binding while covered actions run still blocks a non-GET request.
 - A per-request read mode asks for each remote read, which makes snapshots slow. A session read mode is the owner's choice at lease creation.
 
-## 5. Tests run
+## 5. Next steps (part 2, the MCP remote profile)
+
+- **`client_session_id` for a remote caller must be the server-assigned MCP session id, never chosen by the caller.** The remote broker client and the `client_ref` that a lease must name are built from it (with the paired connection and the principal). The MCP edge behind the uplink or the tunnel must set it from its own session (today `KernelClient.sessionId`, a server-side `randomUUID` per remote kernel), and must never take it from a tool argument, a header or anything the remote caller sends. Part 2 needs a test that pins this.
+- The pairing record and the remote context carry `browser_full` (`PairedConnection.toolSurfaceProfile`, the uplink, the tunnel route, enrollment, the relay's own scope check), chosen locally by the owner at pairing.
+- The remote tool contract gets the twelve remote-safe tools with the scopes of `required_browser_full_scopes`, and a cross-language test pins it. The OAuth ceilings get a `browser_full` profile limited to those tools. `TOOL_CONTRACT.md` is regenerated.
+
+## 6. Tests run
 
 `cargo test -p orcel-policy --lib remote_session` (16 passed). In the orceld unit tests, every `ob09`, `ob08`, `ob05`, `ob02` and profile-gate test passed. `cargo test -p orceld --test ob04_shadow_scan --test ob07b_vault_scan --test dependency_direction` passed, and so did `cargo test -p orcel-lifecycle --test release_blocker_sweep`. Clippy with `-D warnings` is clean for `orceld` and `orcel-policy` (default build), and for `orceld --features live-browser-dev`.

@@ -1037,7 +1037,7 @@ mod full {
                     live.worker.check_challenge_throttled();
                     let pages = live.worker.needs_you();
                     (
-                        crate::browser_broker::needs_you_json(live.mode, &pages),
+                        crate::browser_broker::needs_you_json(live.mode, &pages, &live.caller),
                         live.worker.page_state(),
                         live.worker.takeover_input_source(),
                         live.worker.peak_memory_bytes(),
@@ -1165,7 +1165,7 @@ mod full {
             if let Value::Object(map) = &mut done.reply {
                 map.insert(
                     "needs_you".into(),
-                    crate::browser_broker::needs_you_json(session.mode, &pages),
+                    crate::browser_broker::needs_you_json(session.mode, &pages, &session.caller),
                 );
             }
         }

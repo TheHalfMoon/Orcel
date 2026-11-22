@@ -1586,7 +1586,20 @@ fn needs_you_guidance(mode: SessionMode, kind: &str) -> &'static str {
 /// its challenge ends the mission there, and the person completes the check
 /// in a Visible session (with a persistent profile, a sign-in carries over
 /// to the next Shadow run). A Visible session's person uses its window.
-pub(crate) fn needs_you_json(mode: SessionMode, pages: &[NeedsYou]) -> Value {
+///
+/// SG-000135 OB-09: in a remote caller's session each entry also names the
+/// remote provider and device (from the authenticated remote context, as
+/// the approval prompt's Origin line does), and the guidance says that the
+/// remote client drives the page once the person has signed in, so the
+/// person knows whose session they complete. The reply carries nothing from
+/// the person's sign-in: only fixed words, the page id and the detector's
+/// closed signal names; later replies show page URLs through `agent_url`,
+/// which masks query and fragment values after a sign-in.
+pub(crate) fn needs_you_json(
+    mode: SessionMode,
+    pages: &[NeedsYou],
+    caller: &crate::browser_remote::Caller,
+) -> Value {
     let handoff = match mode {
         SessionMode::Visible => "visible_window",
         SessionMode::Shadow => "rerun_in_visible",
@@ -1595,7 +1608,7 @@ pub(crate) fn needs_you_json(mode: SessionMode, pages: &[NeedsYou]) -> Value {
         pages
             .iter()
             .map(|page| {
-                json!({
+                let mut entry = json!({
                     "page_id": page.page_id,
                     "kind": page.kind,
                     "signals": page.signals,
@@ -1603,10 +1616,45 @@ pub(crate) fn needs_you_json(mode: SessionMode, pages: &[NeedsYou]) -> Value {
                     "clearing": page.clearing,
                     "handoff": handoff,
                     "guidance": needs_you_guidance(mode, page.kind),
-                })
+                });
+                if let (crate::browser_remote::Caller::Remote(remote), Value::Object(map)) =
+                    (caller, &mut entry)
+                {
+                    map.insert(
+                        "remote_caller".into(),
+                        json!({"provider": remote.provider, "device": remote.device}),
+                    );
+                    map.insert(
+                        "guidance".into(),
+                        Value::String(remote_needs_you_guidance(mode, page.kind, remote)),
+                    );
+                }
+                entry
             })
             .collect(),
     )
+}
+
+/// SG-000135 OB-09: the handoff for a remote caller's session. It names
+/// the remote provider and device, says that the remote client then acts in
+/// the signed-in page, and never points at a persistent profile (a remote
+/// caller cannot use one).
+fn remote_needs_you_guidance(
+    mode: SessionMode,
+    kind: &str,
+    remote: &crate::browser_remote::RemoteCaller,
+) -> String {
+    let notice = format!(
+        "this session is driven by a remote client (provider {}, device {}), not by someone at this PC; once the person completes this page, that remote client acts in it, as the signed-in account if this is a sign-in, until the session ends; complete it only for a task started from that client; Orcel never reads a password typed here, and after a sign-in the remote client sees page URLs without their query or fragment values",
+        remote.provider, remote.device
+    );
+    let handoff = match (mode, kind == "sign_in") {
+        (SessionMode::Visible, true) => "the person at this PC signs in in this session's window, by typing or by choosing the browser's own saved password; Orcel never fills, reads or types a password; only a sign-in on this page's own admitted origin can go through, and not once a Full Access lease was used in this session; once it no longer needs you (about three seconds after the sign-in form is gone), observe the page again before acting",
+        (SessionMode::Visible, false) => "the person at this PC completes it in this session's window; once it no longer needs you (about three seconds after it is gone), observe the page again before acting",
+        (SessionMode::Shadow, true) => "a Shadow session has no window for the person, and a remote client cannot use a persistent Orcel-managed profile, so no sign-in carries over: close this session, create a Visible session, open the sign-in page itself, and the person at this PC signs in in its window with no Full Access lease used; then continue there",
+        (SessionMode::Shadow, false) => "a Shadow session has no window for the person: close this session, create a Visible session, and the person at this PC completes the check in its window; then continue there",
+    };
+    format!("{notice}; {handoff}")
 }
 
 fn unknown_session() -> ProviderError {
@@ -2977,19 +3025,34 @@ mod tests {
             signals: vec!["captcha_widget".into()],
             clearing: false,
         }];
-        let shadow = needs_you_json(SessionMode::Shadow, &pages);
+        let shadow = needs_you_json(
+            SessionMode::Shadow,
+            &pages,
+            &crate::browser_remote::Caller::Local,
+        );
         assert_eq!(shadow[0]["page_id"], "pg-0123");
         assert_eq!(shadow[0]["kind"], "captcha");
         assert_eq!(shadow[0]["signals"][0], "captcha_widget");
         assert_eq!(shadow[0]["handoff"], "rerun_in_visible");
         assert_eq!(shadow[0]["clearing"], false);
-        let visible = needs_you_json(SessionMode::Visible, &pages);
+        let visible = needs_you_json(
+            SessionMode::Visible,
+            &pages,
+            &crate::browser_remote::Caller::Local,
+        );
         assert_eq!(visible[0]["handoff"], "visible_window");
         for kind in ["captcha", "mfa", "sign_in", "passkey", "other"] {
             let text = needs_you_reason(kind);
             assert!(!text.is_empty() && !text.contains("http"), "{kind}");
         }
-        assert_eq!(needs_you_json(SessionMode::Shadow, &[]), json!([]));
+        assert_eq!(
+            needs_you_json(
+                SessionMode::Shadow,
+                &[],
+                &crate::browser_remote::Caller::Local
+            ),
+            json!([])
+        );
     }
 
     #[test]
@@ -3000,7 +3063,11 @@ mod tests {
             signals: vec!["password_field".into()],
             clearing: false,
         }];
-        let visible = needs_you_json(SessionMode::Visible, &pages);
+        let visible = needs_you_json(
+            SessionMode::Visible,
+            &pages,
+            &crate::browser_remote::Caller::Local,
+        );
         assert_eq!(visible[0]["kind"], "sign_in");
         assert_eq!(visible[0]["handoff"], "visible_window");
         let guidance = visible[0]["guidance"].as_str().unwrap();
@@ -3011,7 +3078,11 @@ mod tests {
             guidance.contains("never fills, reads or types"),
             "{guidance}"
         );
-        let shadow = needs_you_json(SessionMode::Shadow, &pages);
+        let shadow = needs_you_json(
+            SessionMode::Shadow,
+            &pages,
+            &crate::browser_remote::Caller::Local,
+        );
         assert_eq!(shadow[0]["handoff"], "rerun_in_visible");
         let guidance = shadow[0]["guidance"].as_str().unwrap();
         assert!(
@@ -3751,5 +3822,99 @@ mod tests {
         )?;
         assert_eq!(receipt.to_json()["caller"], json!({"kind": "local"}));
         Ok(())
+    }
+
+    /// SG-000135 OB-09: in a remote caller's session the Needs-you handoff
+    /// names the remote provider and device and says the remote client then
+    /// drives the page, never points at a persistent profile, and carries
+    /// nothing from the person's sign-in (fixed words, the page id and the
+    /// closed signal names only; URLs after a sign-in mask their values).
+    #[test]
+    fn ob09_a_remote_sessions_handoff_names_the_remote_client_and_carries_nothing_from_the_sign_in()
+    {
+        let remote = orcel_contracts::RemoteContext {
+            principal: format!("rp-{}", "a".repeat(32)),
+            remote_connection_id: format!("rc-{}", "b".repeat(32)),
+            connection_id: "cn-1".into(),
+            device_id: format!("dev-{}", "c".repeat(32)),
+            device_epoch: 1,
+            provider_kind: "openai".into(),
+            client_profile_id: "chatgpt".into(),
+            client_profile_revision: 1,
+            tool_surface_profile: "browser_full".into(),
+            scopes: vec!["orcel.execute".into()],
+        };
+        let caller = crate::browser_remote::Caller::of(Some(&remote));
+        for kind in ["sign_in", "mfa", "passkey", "captcha", "other"] {
+            let pages = [NeedsYou {
+                page_id: "pg-0123".into(),
+                kind,
+                signals: vec!["password_field".into()],
+                clearing: false,
+            }];
+            for mode in [SessionMode::Visible, SessionMode::Shadow] {
+                let entry = &needs_you_json(mode, &pages, &caller)[0];
+                assert_eq!(
+                    entry["remote_caller"],
+                    json!({"provider": "openai", "device": remote.device_id})
+                );
+                let guidance = entry["guidance"].as_str().unwrap_or_default();
+                assert!(guidance.contains("remote client (provider openai, device dev-"));
+                assert!(
+                    guidance.contains("that remote client acts in it"),
+                    "{guidance}"
+                );
+                assert!(guidance.contains("person at this PC"), "{guidance}");
+                // A remote caller cannot use a persistent profile.
+                assert!(!guidance.contains("persistent Orcel-managed profile keeps"));
+                assert!(!guidance.contains("on that profile"), "{guidance}");
+                // Only fixed fields: no value, URL or page text.
+                let mut keys: Vec<&str> = entry
+                    .as_object()
+                    .map(|map| map.keys().map(String::as_str).collect())
+                    .unwrap_or_default();
+                keys.sort_unstable();
+                assert_eq!(
+                    keys,
+                    [
+                        "clearing",
+                        "guidance",
+                        "handoff",
+                        "kind",
+                        "page_id",
+                        "reason",
+                        "remote_caller",
+                        "signals"
+                    ]
+                );
+                assert!(!entry.to_string().contains("http"));
+            }
+        }
+        // A local session's handoff is unchanged.
+        let pages = [NeedsYou {
+            page_id: "pg-0123".into(),
+            kind: "sign_in",
+            signals: vec!["password_field".into()],
+            clearing: false,
+        }];
+        let local = &needs_you_json(
+            SessionMode::Shadow,
+            &pages,
+            &crate::browser_remote::Caller::Local,
+        )[0];
+        assert!(local.get("remote_caller").is_none());
+        assert_eq!(
+            local["guidance"],
+            needs_you_guidance(SessionMode::Shadow, "sign_in")
+        );
+        // After the person's sign-in, a URL the remote client reads masks
+        // its query and fragment values.
+        let shown = crate::agent_url::agent_url(
+            "https://fixture.test/home?session=abc123&user=ada#token=xyz",
+            true,
+        );
+        for secret in ["abc123", "ada", "xyz"] {
+            assert!(!shown.contains(secret), "{shown}");
+        }
     }
 }
