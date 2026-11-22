@@ -14,7 +14,9 @@ import {
 /**
  * SG-000135 OB-02: the `browser_full` profile's tools. Registered only when
  * local configuration selects `browser_full` (`ORCEL_TOOL_SURFACE_PROFILE`),
- * never remote. Each tool forwards one `browser.session` shape to orceld's
+ * or, since SG-000135 OB-09, for a tunnel or paired connection the owner set
+ * up for the remote `browser_full` profile (its remote-safe tools only; the
+ * contract gate filters the rest). Each tool forwards one `browser.session` shape to orceld's
  * Orcel Browser Session Broker, which is the sole authority with its
  * profile gate, policy, takeover gate and approval broker:
  *

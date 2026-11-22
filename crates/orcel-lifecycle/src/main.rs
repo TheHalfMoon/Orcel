@@ -33,7 +33,7 @@ Configuration:
   orcel workspace list                    List workspaces and their trust state.
   orcel workspace trust <id>              Grant workspace trust (Windows Hello).
   orcel workspace untrust <id>            Revoke workspace trust (Windows Hello).
-  orcel tunnel setup --client <tunnel-client.exe> --tunnel-id <tunnel_...> [--key-file <path>]
+  orcel tunnel setup --client <tunnel-client.exe> --tunnel-id <tunnel_...> [--key-file <path>] [--profile core|browser_full]
       Configure the official OpenAI tunnel client. Without --key-file the runtime key
       is read from a hidden console prompt. The key is stored owner-only and passed to
       the tunnel client by file reference; it is never printed or logged.

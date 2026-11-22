@@ -3950,6 +3950,7 @@ mod sg000058_lease_boundary_tests {
             workspace_ids: vec!["default".into()],
             read_mode: ReadMode::Session,
             duration_ms: 5 * 60 * 1000,
+            tunnel_id: None,
         };
         let WorkstationState::Unlocked(_) = state else {
             assert!(build_lease(&request, "lease-sg58".into(), &env, &workspaces.ids).is_err());

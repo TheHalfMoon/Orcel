@@ -190,7 +190,8 @@ test("a desktop tool called through the tunnel is refused with the relay's error
   });
   const route = parseTunnelRoute(JSON.stringify(ROUTE));
   const binding: ConnectionBinding = {
-    paired: route.paired,
+    // The core tunnel route, as a relay paired connection (core only).
+    paired: { ...route.paired, toolSurfaceProfile: "core" },
     connectionId: "conn-0001",
     scopes: route.paired.scopeCeiling,
     remote: { ...stdioSessionConfig(tunnelEnv()).remote!, connectionId: "conn-0001" }

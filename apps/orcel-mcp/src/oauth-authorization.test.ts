@@ -976,7 +976,9 @@ test("scope to tool matrix covers exactly the canonical catalog with default den
   for (const [tool, scopes] of Object.entries(OAUTH_SCOPE_TOOL_MATRIX)) {
     assert.ok(scopes.length > 0, `${tool} must state required scopes`);
   }
-  assert.deepEqual(Object.keys(OAUTH_PROFILE_TOOL_CEILINGS), ["core"]);
+  // SG-000135 OB-09: browser_full is the second mapped remote profile; the
+  // core ceiling is unchanged (pinned above and in tool-contract.test.ts).
+  assert.deepEqual(Object.keys(OAUTH_PROFILE_TOOL_CEILINGS), ["core", "browser_full"]);
   const readOnly = ["system_status", "workspace_get", "fs_stat", "fs_list", "fs_read", "fs_search", "git_status", "git_diff", "git_log", "fs_read_range", "fs_find"];
   for (const tool of CANONICAL_TOOL_NAMES) {
     if (LOCAL_ONLY_TOOL_NAMES.includes(tool)) continue;

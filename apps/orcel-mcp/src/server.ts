@@ -19,9 +19,11 @@ import {
   contractEntryFor,
   TOOL_SURFACE_PROFILE_ENV,
   localProfileFromConfig,
+  isRemoteProfileAllowed,
   profileTools,
-  remoteProfileForProvider,
+  remoteProfileTools,
   securitySchemesFor,
+  type RemoteToolSurfaceProfile,
   type ToolSurfaceProfile
 } from "./tool_contract.js";
 
@@ -75,12 +77,19 @@ export function localTransportContext(env: NodeJS.ProcessEnv = process.env): Tra
 /**
  * #395: the ChatGPT Secure MCP Tunnel's context. It is remote, so it serves
  * the `core` profile; no local configuration can select another one.
+ * SG-000135 OB-09: or the remote `browser_full` profile, when the owner set
+ * the tunnel up for it on the PC (`orcel tunnel setup --profile
+ * browser_full`); the profile comes from the tunnel route the tunnel host
+ * derives, never from anything a remote peer sends.
  */
-export function tunnelTransportContext(providerKind: string): TransportContext {
+export function tunnelTransportContext(
+  providerKind: string,
+  toolSurfaceProfile: RemoteToolSurfaceProfile = "core"
+): TransportContext {
   return {
     transportKind: "tunnel",
     providerKind,
-    toolSurfaceProfile: "core"
+    toolSurfaceProfile
   };
 }
 
@@ -88,14 +97,20 @@ export function tunnelTransportContext(providerKind: string): TransportContext {
  * Resolve the tools a transport context may register. A remote transport
  * (the relay or the tunnel) may serve only the profile mapped for its
  * provider kind, which is `core` for every known provider; unknown provider
- * kinds and unmapped profiles fail closed.
+ * kinds and unmapped profiles fail closed. SG-000135 OB-09 (engineering-
+ * chosen 2026-11-22 under the founder's delegation): only a ChatGPT Secure
+ * MCP Tunnel set up for `browser_full` serves it, and then the remote-safe
+ * broker tools only, never a core tool; the relay serves `core` only.
  */
 export function allowedToolsFor(context: TransportContext): ReadonlySet<string> {
   if (isRemoteTransport(context.transportKind)) {
-    const mapped = remoteProfileForProvider(context.providerKind);
-    if (mapped === null || mapped !== context.toolSurfaceProfile) {
+    if (
+      (context.transportKind !== "tunnel" && context.toolSurfaceProfile !== "core") ||
+      !isRemoteProfileAllowed(context.providerKind, context.toolSurfaceProfile)
+    ) {
       throw new Error("TOOL_SURFACE_DENIED: the remote provider kind or tool surface profile is not mapped");
     }
+    return remoteProfileTools(context.toolSurfaceProfile);
   }
   return profileTools(context.toolSurfaceProfile);
 }
@@ -117,7 +132,7 @@ function contractGatedServer(server: McpServer, allowed: ReadonlySet<string>, pr
       return undefined;
     }
     const { title, ...hints } = entry.annotations;
-    const meta = securitySchemesFor(name);
+    const meta = securitySchemesFor(name, profile);
     return (server.registerTool as unknown as (n: string, c: Record<string, unknown>, h: unknown) => unknown).call(
       server,
       name,

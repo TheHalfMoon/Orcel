@@ -23,6 +23,18 @@ import type { OAuthScope } from "./oauth_authorization.js";
 
 export type ToolSurfaceProfile = "core" | "desktop_structured" | "browser_structured" | "browser_full";
 
+/**
+ * SG-000135 OB-09: the tool-surface profiles a remote path may serve. A
+ * tunnel serves exactly one of them, chosen by the owner on the PC; `core`
+ * stays the default, and the relay serves `core` only.
+ */
+export type RemoteToolSurfaceProfile = "core" | "browser_full";
+export const REMOTE_TOOL_SURFACE_PROFILES: readonly RemoteToolSurfaceProfile[] = Object.freeze(["core", "browser_full"] as const);
+
+export function isRemoteToolSurfaceProfile(value: unknown): value is RemoteToolSurfaceProfile {
+  return typeof value === "string" && (REMOTE_TOOL_SURFACE_PROFILES as readonly string[]).includes(value);
+}
+
 export type EffectClass =
   | "read"
   | "preview"
@@ -412,9 +424,11 @@ export const TOOL_CONTRACT: Readonly<Record<string, ToolContractEntry>> = {
  * none because no remote path may call them. No tool is anonymous.
  */
 export function securitySchemesFor(
-  name: string
+  name: string,
+  profile: ToolSurfaceProfile = "core"
 ): ReadonlyArray<{ readonly type: "oauth2"; readonly scopes: readonly OAuthScope[] }> | null {
-  const remote = TOOL_CONTRACT[name]?.remote;
+  // SG-000135 OB-09: under `browser_full` a broker tool's own entry decides.
+  const remote = contractEntryFor(name, profile)?.remote;
   if (remote === undefined || remote === "local_only") {
     return null;
   }
@@ -456,8 +470,13 @@ export const LIVE_BROWSER_TOOLS: readonly string[] = Object.freeze([
 ]);
 
 /**
- * SG-000135 OB-02: the `browser_full` profile's own contract, served only
- * when local configuration selects `browser_full`, never remote. Each tool
+ * SG-000135 OB-02: the `browser_full` profile's own contract. SG-000135
+ * OB-09: locally it is served when local configuration selects
+ * `browser_full`; remotely, only a ChatGPT Secure MCP Tunnel the owner set
+ * up for the `browser_full` profile serves the twelve remote-safe tools (those with
+ * remote scopes here: reads `orcel.read`, actions `orcel.execute`, equal to
+ * `required_browser_full_scopes` in `crates/orcel-policy/src/remote_session.rs`);
+ * the persistent profile tools stay local-only. Each tool
  * forwards one `browser.session` shape to orceld's Orcel Browser Session
  * Broker, which maps it onto the existing live host action with that
  * action's own approval (SOFT for open, click, fill and select). Four names
@@ -475,64 +494,64 @@ export const BROWSER_FULL_CONTRACT: Readonly<Record<string, ToolContractEntry>> 
     // SG-000135 OB-04: SOFT when it opens a Visible window or uses a
     // persistent profile for the first time in this MCP session; a Shadow
     // session on an ephemeral profile asks nothing.
-    capability: "browser.session", operation: "create", effect: "write", approval: "SOFT", remote: "local_only",
+    capability: "browser.session", operation: "create", effect: "write", approval: "SOFT", remote: EXECUTE,
     outputBound: "one broker session id, its task label, the orceld instance id, its mode (shadow or visible, and whether it claims no interference) and its profile (ephemeral, or the persistent profile's name)",
     annotations: change("Create isolated browser session", { destructive: false, idempotent: false })
   },
   browser_open: {
-    capability: "browser.session", operation: "open", effect: "network", approval: "SOFT", remote: "local_only",
+    capability: "browser.session", operation: "open", effect: "network", approval: "SOFT", remote: EXECUTE,
     outputBound: "the session's page id, the committed URL, status and generation, and one evidence receipt",
     annotations: change("Open URL in isolated browser session", { destructive: false, idempotent: false, openWorld: true })
   },
   browser_snapshot: {
-    capability: "browser.session", operation: "snapshot", effect: "read", approval: "none", remote: "local_only",
+    capability: "browser.session", operation: "snapshot", effect: "read", approval: "none", remote: READ,
     outputBound: "one frame of node identities and keyed digests, untrusted names of at most 256 bytes for main-frame form controls, and one evidence receipt",
     annotations: read("Snapshot isolated browser session page")
   },
   browser_click: {
-    capability: "browser.session", operation: "click", effect: "network", approval: "SOFT", remote: "local_only",
+    capability: "browser.session", operation: "click", effect: "network", approval: "SOFT", remote: EXECUTE,
     outputBound: "the opened URL, status and generation, and one evidence receipt",
     annotations: change("Open a link in isolated browser session", { destructive: false, idempotent: false, openWorld: true })
   },
   browser_fill: {
-    capability: "browser.session", operation: "fill", effect: "network", approval: "SOFT", remote: "local_only",
+    capability: "browser.session", operation: "fill", effect: "network", approval: "SOFT", remote: EXECUTE,
     outputBound: "the page id, generation, node id, committed URL, record id and one evidence receipt; never the value",
     annotations: change("Fill a text field in isolated browser session", { destructive: false, idempotent: false, openWorld: true })
   },
   browser_select: {
-    capability: "browser.session", operation: "select", effect: "network", approval: "SOFT", remote: "local_only",
+    capability: "browser.session", operation: "select", effect: "network", approval: "SOFT", remote: EXECUTE,
     outputBound: "the page id, generation, node id, committed URL, record id and one evidence receipt; never the option label",
     annotations: change("Choose an option in isolated browser session", { destructive: false, idempotent: false, openWorld: true })
   },
   browser_verify: {
-    capability: "browser.session", operation: "verify", effect: "read", approval: "none", remote: "local_only",
+    capability: "browser.session", operation: "verify", effect: "read", approval: "none", remote: READ,
     outputBound: "at most 16 pass or fail results with fixed evidence words and counts, the committed URL, a report digest and one evidence receipt",
     annotations: read("Verify isolated browser session page")
   },
   browser_extract: {
-    capability: "browser.session", operation: "extract", effect: "read", approval: "none", remote: "local_only",
+    capability: "browser.session", operation: "extract", effect: "read", approval: "none", remote: READ,
     outputBound: "the committed page's rendered content as untrusted Markdown of at most 32768 characters, cut and marked, and one evidence receipt",
     annotations: read("Extract isolated browser session page")
   },
   // SG-000135 OB-03: a bounded, masked screenshot of the session's own
   // active tab (never another session, app or the desktop), and its tabs.
   browser_screenshot: {
-    capability: "browser.session", operation: "screenshot", effect: "read", approval: "none", remote: "local_only",
+    capability: "browser.session", operation: "screenshot", effect: "read", approval: "none", remote: READ,
     outputBound: "one PNG image of the session's active tab, at most 2 MiB and 2048 x 4096 CSS pixels, secret fields masked, its size and SHA-256, and one evidence receipt that keeps the digest only",
     annotations: read("Screenshot isolated browser session page")
   },
   browser_tabs: {
-    capability: "browser.session", operation: "tabs", effect: "network", approval: "SOFT", remote: "local_only",
+    capability: "browser.session", operation: "tabs", effect: "network", approval: "SOFT", remote: EXECUTE,
     outputBound: "the session's tabs (at most 8: page id, generation, URL without credentials, query or fragment, and which is active), a new tab's navigation result, and one evidence receipt",
     annotations: change("Manage tabs of isolated browser session", { destructive: false, idempotent: false, openWorld: true })
   },
   browser_close: {
-    capability: "browser.session", operation: "close", effect: "read", approval: "none", remote: "local_only",
+    capability: "browser.session", operation: "close", effect: "read", approval: "none", remote: EXECUTE,
     outputBound: "whether the session's worker ended and its profile was removed",
     annotations: { ...read("Close isolated browser session"), idempotentHint: false }
   },
   browser_task_status: {
-    capability: "browser.session", operation: "status", effect: "read", approval: "none", remote: "local_only",
+    capability: "browser.session", operation: "status", effect: "read", approval: "none", remote: READ,
     outputBound: "the session's state, budgets, at most 128 evidence receipts, measured latency and its Full Access lease status (read-only)",
     annotations: read("Read isolated browser session status")
   },
@@ -558,6 +577,34 @@ export const BROWSER_FULL_CONTRACT: Readonly<Record<string, ToolContractEntry>> 
 
 /** SG-000135 OB-02: the `browser_full` broker tools, in contract order. */
 export const BROWSER_FULL_TOOLS: readonly string[] = Object.freeze(Object.keys(BROWSER_FULL_CONTRACT));
+
+/**
+ * SG-000135 OB-09: the `browser_full` tools a remote path may serve, in
+ * contract order: every broker tool with remote scopes. Must equal
+ * `REMOTE_BROWSER_FULL_SHAPES` in `crates/orceld/src/profile_gate.rs`.
+ */
+export const REMOTE_BROWSER_FULL_TOOLS: readonly string[] = Object.freeze(
+  BROWSER_FULL_TOOLS.filter((name) => BROWSER_FULL_CONTRACT[name]?.remote !== "local_only")
+);
+
+/**
+ * SG-000135 OB-09: exact remote profile membership. `core` is unchanged
+ * (`REMOTE_TOOL_NAMES`); `browser_full` is the remote-safe broker tools
+ * only, with no core tool, served only by a ChatGPT Secure MCP Tunnel the
+ * owner set up for it (one profile per tunnel).
+ */
+export const REMOTE_SURFACE_PROFILES: Readonly<Record<RemoteToolSurfaceProfile, readonly string[]>> = {
+  core: REMOTE_TOOL_NAMES,
+  browser_full: REMOTE_BROWSER_FULL_TOOLS
+};
+
+/** The tools a remote path serving `profile` may register. */
+export function remoteProfileTools(profile: string): ReadonlySet<string> {
+  if (!isRemoteToolSurfaceProfile(profile)) {
+    throw new Error(`remote tool surface profile is not mapped: ${profile}`);
+  }
+  return new Set(REMOTE_SURFACE_PROFILES[profile]);
+}
 
 /**
  * The contract entry a tool has under `profile`: its `browser_full` entry
@@ -658,7 +705,8 @@ export const SURFACE_PROFILES: Readonly<Record<ToolSurfaceProfile, readonly stri
   core: REMOTE_TOOL_NAMES,
   desktop_structured: Object.freeze([...DESKTOP_STRUCTURED_TOOLS, ...FULL_CONTROL_TOOLS]),
   browser_structured: Object.freeze([...DESKTOP_STRUCTURED_TOOLS, ...LIVE_BROWSER_TOOLS]),
-  // SG-000135 OB-02: local configuration only; never remote.
+  // SG-000135 OB-02: the local profile, by local configuration only. The
+  // remote browser_full surface is REMOTE_SURFACE_PROFILES (OB-09).
   browser_full: Object.freeze([...DESKTOP_STRUCTURED_TOOLS, ...BROWSER_FULL_TOOLS])
 };
 
@@ -712,4 +760,27 @@ export const REMOTE_PROVIDER_PROFILES: Readonly<Record<string, ToolSurfaceProfil
 
 export function remoteProfileForProvider(providerKind: string): ToolSurfaceProfile | null {
   return Object.hasOwn(REMOTE_PROVIDER_PROFILES, providerKind) ? (REMOTE_PROVIDER_PROFILES[providerKind] ?? null) : null;
+}
+
+/**
+ * SG-000135 OB-09 (engineering-chosen 2026-11-22 under the founder's
+ * delegation): the provider kinds that may be served the remote
+ * `browser_full` profile: `openai` only, through the ChatGPT Secure MCP
+ * Tunnel set up for it on the PC. The relay never serves it
+ * (`allowedToolsFor`), and every other provider keeps `core` alone.
+ */
+export const REMOTE_BROWSER_FULL_PROVIDERS: readonly string[] = Object.freeze(["openai"]);
+
+/**
+ * SG-000135 OB-09: whether a remote path from `providerKind` may serve
+ * `profile`: its default profile (`core` for every known provider), or
+ * `browser_full` for the providers listed above. Unknown providers and
+ * profiles fail closed.
+ */
+export function isRemoteProfileAllowed(providerKind: string, profile: string): boolean {
+  const mapped = remoteProfileForProvider(providerKind);
+  if (mapped === null) {
+    return false;
+  }
+  return profile === mapped || (profile === "browser_full" && REMOTE_BROWSER_FULL_PROVIDERS.includes(providerKind));
 }

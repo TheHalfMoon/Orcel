@@ -48,7 +48,13 @@ import {
   type RevocationRecord
 } from "./device_identity.js";
 import { RELAY_FAILURE_CODES, type RelayFailureCode } from "./relay_contract.js";
-import { LOCAL_ONLY_TOOL_NAMES, REMOTE_TOOL_NAMES, TOOL_CONTRACT } from "./tool_contract.js";
+import {
+  BROWSER_FULL_CONTRACT,
+  LOCAL_ONLY_TOOL_NAMES,
+  REMOTE_BROWSER_FULL_TOOLS,
+  REMOTE_TOOL_NAMES,
+  TOOL_CONTRACT
+} from "./tool_contract.js";
 
 /** Initial remote OAuth scope vocabulary. Any other scope is unknown. */
 export const OAUTH_SCOPES = ["orcel.read", "orcel.write", "orcel.execute"] as const;
@@ -1593,19 +1599,41 @@ export const OAUTH_SCOPE_TOOL_MATRIX: Readonly<Record<string, readonly OAuthScop
 export { LOCAL_ONLY_TOOL_NAMES };
 
 /**
- * Tool-surface profiles mapped for remote use. Only `core` is mapped; the
- * `developer`, `desktop_structured`, and `coordinate_fallback` profiles are
- * unmapped until a later governed grain maps them, so they deny.
+ * SG-000135 OB-09: the scope requirements of the remote `browser_full`
+ * profile's tools, from their `browser_full` contract entries: reads of the
+ * session's own page need `orcel.read`, browser actions `orcel.execute`.
+ * Four names are shared with local-only `browser_structured` tools, so this
+ * is its own matrix, used only for the `browser_full` profile.
+ */
+export const OAUTH_BROWSER_FULL_SCOPE_MATRIX: Readonly<Record<string, readonly OAuthScope[]>> = Object.fromEntries(
+  REMOTE_BROWSER_FULL_TOOLS.map((name) => {
+    const remote = BROWSER_FULL_CONTRACT[name]?.remote;
+    return [name, Array.isArray(remote) ? [...remote] : []];
+  })
+);
+
+/** SG-000135 OB-09: each remote profile's scope matrix. */
+const OAUTH_PROFILE_SCOPE_MATRICES: Readonly<Record<string, Readonly<Record<string, readonly OAuthScope[]>>>> = {
+  core: OAUTH_SCOPE_TOOL_MATRIX,
+  browser_full: OAUTH_BROWSER_FULL_SCOPE_MATRIX
+};
+
+/**
+ * Tool-surface profiles mapped for remote use: `core`, and since SG-000135
+ * OB-09 `browser_full` (the remote-safe Orcel Browser tools only, for a
+ * connection the owner set up for that profile). The `developer`,
+ * `desktop_structured`, `browser_structured` and `coordinate_fallback`
+ * profiles are unmapped until a later governed grain maps them, so they deny.
  */
 export const OAUTH_PROFILE_TOOL_CEILINGS: Readonly<Record<string, readonly string[]>> = {
-  core: Object.keys(OAUTH_SCOPE_TOOL_MATRIX)
+  core: Object.keys(OAUTH_SCOPE_TOOL_MATRIX),
+  browser_full: Object.keys(OAUTH_BROWSER_FULL_SCOPE_MATRIX)
 };
 
 export const UNMAPPED_REMOTE_PROFILES = [
   "developer",
   "desktop_structured",
   "browser_structured",
-  "browser_full",
   "coordinate_fallback"
 ] as const;
 
@@ -1623,10 +1651,11 @@ export function authorizeToolByScopes(
   tokenScopes: readonly string[],
   leasedScopeCeiling: readonly string[]
 ): OAuthCheck {
-  if (!Object.hasOwn(OAUTH_PROFILE_TOOL_CEILINGS, profile)) {
+  if (!Object.hasOwn(OAUTH_PROFILE_TOOL_CEILINGS, profile) || !Object.hasOwn(OAUTH_PROFILE_SCOPE_MATRICES, profile)) {
     return deny("TOOL_SURFACE_DENIED", "profile_unmapped");
   }
-  if (!Object.hasOwn(OAUTH_SCOPE_TOOL_MATRIX, tool)) {
+  const matrix = OAUTH_PROFILE_SCOPE_MATRICES[profile] ?? {};
+  if (!Object.hasOwn(matrix, tool)) {
     return deny("TOOL_SURFACE_DENIED", "tool_unmapped");
   }
   const profileTools = OAUTH_PROFILE_TOOL_CEILINGS[profile] ?? [];
@@ -1638,7 +1667,7 @@ export function authorizeToolByScopes(
       return deny("REMOTE_SCOPE_DENIED", "scope_unknown");
     }
   }
-  const required = OAUTH_SCOPE_TOOL_MATRIX[tool] ?? [];
+  const required = matrix[tool] ?? [];
   if (required.length === 0) {
     return deny("TOOL_SURFACE_DENIED", "tool_unmapped");
   }

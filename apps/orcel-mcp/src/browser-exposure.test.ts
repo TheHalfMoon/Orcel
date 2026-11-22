@@ -13,6 +13,7 @@ import {
 } from "./oauth_authorization.js";
 import { allowedToolsFor, localTransportContext, tunnelTransportContext } from "./server.js";
 import {
+  BROWSER_FULL_CONTRACT,
   DESKTOP_STRUCTURED_TOOLS,
   FULL_CONTROL_TOOLS,
   LIVE_BROWSER_TOOLS,
@@ -148,8 +149,13 @@ test("SG-000122 slices A3 and A4: fill, the text wait, the verifier, select, che
     assert.ok(LOCAL_ONLY_TOOL_NAMES.includes(tool), tool);
     assert.equal(REMOTE_TOOL_NAMES.includes(tool), false, tool);
     assert.equal(Object.hasOwn(OAUTH_SCOPE_TOOL_MATRIX, tool), false, tool);
-    for (const ceiling of Object.values(OAUTH_PROFILE_TOOL_CEILINGS)) {
-      assert.equal(ceiling.includes(tool), false, tool);
+    assert.equal((OAUTH_PROFILE_TOOL_CEILINGS.core ?? []).includes(tool), false, tool);
+    // SG-000135 OB-09: under the remote browser_full profile a shared name
+    // (browser_fill, browser_select, browser_verify) is the broker tool, a
+    // browser.session shape, never this live form.
+    if ((OAUTH_PROFILE_TOOL_CEILINGS.browser_full ?? []).includes(tool)) {
+      assert.equal(BROWSER_FULL_CONTRACT[tool]?.capability, "browser.session", tool);
+      assert.notEqual(BROWSER_FULL_CONTRACT[tool]?.capability, entry?.capability, tool);
     }
     assert.equal(securitySchemesFor(tool), null, tool);
     assert.equal(authorizeToolByScopes(tool, "core", all, all).ok, false, tool);

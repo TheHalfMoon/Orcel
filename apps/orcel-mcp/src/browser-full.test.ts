@@ -29,6 +29,7 @@ import {
   DESKTOP_STRUCTURED_TOOLS,
   LIVE_BROWSER_TOOLS,
   LOCAL_TOOL_SURFACE_PROFILES,
+  REMOTE_BROWSER_FULL_TOOLS,
   REMOTE_PROVIDER_PROFILES,
   REMOTE_TOOL_NAMES,
   TOOL_CONTRACT,
@@ -143,7 +144,14 @@ test("the broker contract follows the annotation, effect and approval rules", ()
   const soft = ["browser_session_create", "browser_open", "browser_click", "browser_fill", "browser_select", "browser_tabs", "browser_profile_create", "browser_profile_delete"];
   for (const [name, entry] of Object.entries(BROWSER_FULL_CONTRACT)) {
     const a = entry.annotations;
-    assert.equal(entry.remote, "local_only", name);
+    // SG-000135 OB-09: the persistent profile tools stay local-only; the
+    // remote-safe tools read with orcel.read and act with orcel.execute.
+    const remote = ["browser_profiles", "browser_profile_create", "browser_profile_delete"].includes(name)
+      ? "local_only"
+      : entry.effect === "read" && name !== "browser_close"
+        ? ["orcel.read"]
+        : ["orcel.execute"];
+    assert.deepEqual(entry.remote, remote, name);
     assert.ok(entry.outputBound.length > 0, name);
     assert.deepEqual(Object.keys(entry).sort(), ["annotations", "approval", "capability", "effect", "operation", "outputBound", "remote"]);
     if (["read", "preview"].includes(entry.effect)) {
@@ -162,7 +170,7 @@ test("the broker contract follows the annotation, effect and approval rules", ()
   assert.equal(new Set(titles).size, titles.length, "titles are unique across both contracts");
 });
 
-test("only local configuration selects browser_full, and no remote path maps it", () => {
+test("only local configuration selects the local browser_full profile; a remote path maps only its remote-safe tools", () => {
   assert.equal(localProfileFromConfig("browser_full"), "browser_full");
   assert.deepEqual([...LOCAL_TOOL_SURFACE_PROFILES], ["desktop_structured", "browser_structured", "browser_full"]);
   for (const value of ["Browser_Full", " browser_full", "browser-full", "browser_full "]) {
@@ -171,19 +179,28 @@ test("only local configuration selects browser_full, and no remote path maps it"
   const local = localTransportContext({ [TOOL_SURFACE_PROFILE_ENV]: "browser_full" });
   assert.equal(local.toolSurfaceProfile, "browser_full");
   assert.equal(local.transportKind, "stdio");
-  assert.ok((UNMAPPED_REMOTE_PROFILES as readonly string[]).includes("browser_full"));
-  assert.equal(Object.hasOwn(OAUTH_PROFILE_TOOL_CEILINGS, "browser_full"), false);
+  // SG-000135 OB-09: browser_full is mapped remotely, separately from core.
+  assert.equal((UNMAPPED_REMOTE_PROFILES as readonly string[]).includes("browser_full"), false);
+  assert.deepEqual(OAUTH_PROFILE_TOOL_CEILINGS.browser_full, [...REMOTE_BROWSER_FULL_TOOLS]);
   const all = ["orcel.read", "orcel.write", "orcel.execute"];
   for (const provider of Object.keys(REMOTE_PROVIDER_PROFILES)) {
+    // Every provider's default stays core, unchanged.
     assert.equal(REMOTE_PROVIDER_PROFILES[provider], "core");
     assert.equal(tunnelTransportContext(provider).toolSurfaceProfile, "core");
     for (const transportKind of ["tunnel", "relay"] as const) {
-      assert.throws(
-        () => allowedToolsFor({ transportKind, providerKind: provider, toolSurfaceProfile: "browser_full" }),
-        /TOOL_SURFACE_DENIED/
-      );
+      const context = { transportKind, providerKind: provider, toolSurfaceProfile: "browser_full" } as const;
+      if (provider === "openai" && transportKind === "tunnel") {
+        // Engineering-chosen 2026-11-22 under the founder's delegation: only
+        // a ChatGPT tunnel set up for browser_full, and then the remote-safe
+        // broker tools only. The relay never serves it.
+        assert.deepEqual([...allowedToolsFor(context)].sort(), [...REMOTE_BROWSER_FULL_TOOLS].sort());
+      } else {
+        assert.throws(() => allowedToolsFor(context), /TOOL_SURFACE_DENIED/, provider);
+      }
       const served = allowedToolsFor({ transportKind, providerKind: provider, toolSurfaceProfile: "core" });
       for (const tool of BROWSER_FULL_TOOLS) {
+        // A core route never serves a broker tool (the shared names are the
+        // local-only browser_structured forms, which core never lists).
         assert.equal(served.has(tool), false, `${tool} ${transportKind} ${provider}`);
       }
     }
@@ -191,7 +208,7 @@ test("only local configuration selects browser_full, and no remote path maps it"
   for (const tool of BROWSER_FULL_TOOLS) {
     assert.equal(Object.hasOwn(OAUTH_SCOPE_TOOL_MATRIX, tool), false, tool);
     assert.equal(authorizeToolByScopes(tool, "core", all, all).ok, false, tool);
-    assert.equal(authorizeToolByScopes(tool, "browser_full", all, all).ok, false, tool);
+    assert.equal(authorizeToolByScopes(tool, "browser_full", all, all).ok, REMOTE_BROWSER_FULL_TOOLS.includes(tool), tool);
   }
 });
 
@@ -385,11 +402,13 @@ test("OB-04: mode is shadow or visible and a profile is a checked name, never a 
 test("the contract document lists the browser_full profile and its broker tools", () => {
   const doc = readFileSync(join(repo, "docs", "p16", "TOOL_CONTRACT.md"), "utf8");
   const yes = (value: boolean): string => (value ? "yes" : "no");
-  assert.ok(doc.includes("## browser_full (SG-000135, local only)"));
-  assert.ok(doc.includes(`It holds ${String(profileTools("browser_full").size)} tools`));
+  assert.ok(doc.includes("## browser_full (SG-000135; remote-safe tools also remote, OB-09)"));
+  assert.ok(doc.includes(`Locally it holds ${String(profileTools("browser_full").size)} tools`));
+  assert.ok(doc.includes("the relay serves `core` only") && doc.includes(`${String(REMOTE_BROWSER_FULL_TOOLS.length)} broker tools with remote scopes`));
   for (const [name, e] of Object.entries(BROWSER_FULL_CONTRACT)) {
     const a = e.annotations;
-    const row = `| \`${name}\` | \`${e.capability}/${e.operation}\` | ${e.effect} | ${e.approval} | local-only | ${yes(a.readOnlyHint)} | ${yes(a.destructiveHint)} | ${yes(a.idempotentHint)} | ${yes(a.openWorldHint)} | ${e.outputBound} |`;
+    const remote = e.remote === "local_only" ? "local-only" : e.remote.join(" ");
+    const row = `| \`${name}\` | \`${e.capability}/${e.operation}\` | ${e.effect} | ${e.approval} | ${remote} | ${yes(a.readOnlyHint)} | ${yes(a.destructiveHint)} | ${yes(a.idempotentHint)} | ${yes(a.openWorldHint)} | ${e.outputBound} |`;
     assert.ok(doc.includes(row), `${name} row is current`);
   }
 });

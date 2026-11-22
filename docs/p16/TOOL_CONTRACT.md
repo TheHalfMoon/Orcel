@@ -109,27 +109,34 @@ O = openWorldHint (reaches network peers or runs a registered executable).
 | `web_search` | `search/query` | network | SOFT | local-only | yes | no | no | yes | at most 10 untrusted results; titles 300 and snippets 1000 characters; provider response at most 512 KiB |
 | `workspace_get` | `workspace.get/get` | read | none | orcel.read | yes | no | yes | no | fixed-size workspace metadata |
 
-## browser_full (SG-000135, local only)
+## browser_full (SG-000135; remote-safe tools also remote, OB-09)
 
-Served by stdio and loopback HTTP only when local configuration selects it (`ORCEL_TOOL_SURFACE_PROFILE=browser_full`);
-never remote. It holds 60 tools: `desktop_structured` plus the Orcel Browser Session Broker tools below,
+Served by stdio and loopback HTTP only when local configuration selects it (`ORCEL_TOOL_SURFACE_PROFILE=browser_full`).
+Locally it holds 60 tools: `desktop_structured` plus the Orcel Browser Session Broker tools below,
 which orceld's broker maps onto the existing live host actions. Under this profile `browser_click`, `browser_fill`,
 `browser_select` and `browser_verify` are the broker tools listed here; `browser_structured` keeps its own forms.
 
+Remotely (SG-000135 OB-09, engineering-chosen 2026-11-22 under the founder's delegation), only a ChatGPT Secure MCP Tunnel
+the owner set up on the PC for `browser_full` serves the 12 broker tools with remote scopes below (providers: openai),
+never a core tool; a tunnel serves one profile, and the relay serves `core` only. orceld still requires the SG-000055
+STRONG remote-session lease for that profile, asks the owner on
+the Windows dialog for every consequential action outside a Full Access lease the authority service issued to that
+client, and keeps the persistent profile tools local-only.
+
 | Tool | Kernel shape | Effect | Approval | Remote | R | D | I | O | Output bound |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `browser_session_create` | `browser.session/create` | write | SOFT | local-only | no | no | no | no | one broker session id, its task label, the orceld instance id, its mode (shadow or visible, and whether it claims no interference) and its profile (ephemeral, or the persistent profile's name) |
-| `browser_open` | `browser.session/open` | network | SOFT | local-only | no | no | no | yes | the session's page id, the committed URL, status and generation, and one evidence receipt |
-| `browser_snapshot` | `browser.session/snapshot` | read | none | local-only | yes | no | yes | no | one frame of node identities and keyed digests, untrusted names of at most 256 bytes for main-frame form controls, and one evidence receipt |
-| `browser_click` | `browser.session/click` | network | SOFT | local-only | no | no | no | yes | the opened URL, status and generation, and one evidence receipt |
-| `browser_fill` | `browser.session/fill` | network | SOFT | local-only | no | no | no | yes | the page id, generation, node id, committed URL, record id and one evidence receipt; never the value |
-| `browser_select` | `browser.session/select` | network | SOFT | local-only | no | no | no | yes | the page id, generation, node id, committed URL, record id and one evidence receipt; never the option label |
-| `browser_verify` | `browser.session/verify` | read | none | local-only | yes | no | yes | no | at most 16 pass or fail results with fixed evidence words and counts, the committed URL, a report digest and one evidence receipt |
-| `browser_extract` | `browser.session/extract` | read | none | local-only | yes | no | yes | no | the committed page's rendered content as untrusted Markdown of at most 32768 characters, cut and marked, and one evidence receipt |
-| `browser_screenshot` | `browser.session/screenshot` | read | none | local-only | yes | no | yes | no | one PNG image of the session's active tab, at most 2 MiB and 2048 x 4096 CSS pixels, secret fields masked, its size and SHA-256, and one evidence receipt that keeps the digest only |
-| `browser_tabs` | `browser.session/tabs` | network | SOFT | local-only | no | no | no | yes | the session's tabs (at most 8: page id, generation, URL without credentials, query or fragment, and which is active), a new tab's navigation result, and one evidence receipt |
-| `browser_close` | `browser.session/close` | read | none | local-only | yes | no | no | no | whether the session's worker ended and its profile was removed |
-| `browser_task_status` | `browser.session/status` | read | none | local-only | yes | no | yes | no | the session's state, budgets, at most 128 evidence receipts, measured latency and its Full Access lease status (read-only) |
+| `browser_session_create` | `browser.session/create` | write | SOFT | orcel.execute | no | no | no | no | one broker session id, its task label, the orceld instance id, its mode (shadow or visible, and whether it claims no interference) and its profile (ephemeral, or the persistent profile's name) |
+| `browser_open` | `browser.session/open` | network | SOFT | orcel.execute | no | no | no | yes | the session's page id, the committed URL, status and generation, and one evidence receipt |
+| `browser_snapshot` | `browser.session/snapshot` | read | none | orcel.read | yes | no | yes | no | one frame of node identities and keyed digests, untrusted names of at most 256 bytes for main-frame form controls, and one evidence receipt |
+| `browser_click` | `browser.session/click` | network | SOFT | orcel.execute | no | no | no | yes | the opened URL, status and generation, and one evidence receipt |
+| `browser_fill` | `browser.session/fill` | network | SOFT | orcel.execute | no | no | no | yes | the page id, generation, node id, committed URL, record id and one evidence receipt; never the value |
+| `browser_select` | `browser.session/select` | network | SOFT | orcel.execute | no | no | no | yes | the page id, generation, node id, committed URL, record id and one evidence receipt; never the option label |
+| `browser_verify` | `browser.session/verify` | read | none | orcel.read | yes | no | yes | no | at most 16 pass or fail results with fixed evidence words and counts, the committed URL, a report digest and one evidence receipt |
+| `browser_extract` | `browser.session/extract` | read | none | orcel.read | yes | no | yes | no | the committed page's rendered content as untrusted Markdown of at most 32768 characters, cut and marked, and one evidence receipt |
+| `browser_screenshot` | `browser.session/screenshot` | read | none | orcel.read | yes | no | yes | no | one PNG image of the session's active tab, at most 2 MiB and 2048 x 4096 CSS pixels, secret fields masked, its size and SHA-256, and one evidence receipt that keeps the digest only |
+| `browser_tabs` | `browser.session/tabs` | network | SOFT | orcel.execute | no | no | no | yes | the session's tabs (at most 8: page id, generation, URL without credentials, query or fragment, and which is active), a new tab's navigation result, and one evidence receipt |
+| `browser_close` | `browser.session/close` | read | none | orcel.execute | yes | no | no | no | whether the session's worker ended and its profile was removed |
+| `browser_task_status` | `browser.session/status` | read | none | orcel.read | yes | no | yes | no | the session's state, budgets, at most 128 evidence receipts, measured latency and its Full Access lease status (read-only) |
 | `browser_profiles` | `browser.session/profiles` | read | none | local-only | yes | no | yes | no | at most 16 Orcel-managed profiles: name, creation time, the MCP session that created it (display only) and whether a session holds it; never a path, cookie or stored value |
 | `browser_profile_create` | `browser.session/profile_create` | write | SOFT | local-only | no | no | no | no | the new profile's name and creation time |
 | `browser_profile_delete` | `browser.session/profile_delete` | destructive | SOFT | local-only | no | yes | no | no | the deleted profile's name |

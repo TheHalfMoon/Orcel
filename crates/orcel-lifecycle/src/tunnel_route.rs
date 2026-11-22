@@ -8,10 +8,18 @@
 //! locally configured tunnel id. Nothing a remote peer sends can change them,
 //! and a lease for the tunnel is created only by `orcel tunnel allow`, under
 //! the same STRONG local presence as `orcel remote allow`.
+//!
+//! SG-000135 OB-09: a tunnel serves one tool-surface profile, chosen by the
+//! owner at `orcel tunnel setup --profile` on the PC: `core` (the default,
+//! unchanged) or `browser_full` (the remote-safe Orcel Browser tools). A
+//! `browser_full` tunnel has its own derived remote connection id and client
+//! profile, so a core lease never covers it and its own lease needs its own
+//! STRONG `orcel tunnel allow`; a tunnel never serves both profiles.
 
-use orcel_policy::remote_session::{REMOTE_PROFILE_CORE, REMOTE_SCOPES};
+use orcel_policy::remote_session::{
+    REMOTE_PROFILE_BROWSER_FULL, REMOTE_PROFILE_CORE, REMOTE_SCOPES,
+};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 
 /// Environment variable naming the MCP host's transport. `orcel-mcp-host`
 /// always sets it to [`TUNNEL_TRANSPORT`]; local launches never set it.
@@ -20,23 +28,32 @@ pub const TRANSPORT_ENV: &str = "ORCEL_MCP_TRANSPORT";
 pub const TUNNEL_TRANSPORT: &str = "tunnel";
 /// Environment variable carrying the tunnel route (see [`route`]).
 pub const ROUTE_ENV: &str = "ORCEL_TUNNEL_ROUTE_JSON";
-/// Provider kind of the tunnel: ChatGPT, mapped to `core`.
+/// Provider kind of the tunnel: ChatGPT, mapped to `core` (or, when the
+/// owner set the tunnel up for it, `browser_full`).
 pub const PROVIDER_KIND: &str = "openai";
 /// Client profile of the tunnel route.
 pub const CLIENT_PROFILE_ID: &str = "chatgpt-secure-mcp-tunnel";
 pub const CLIENT_PROFILE_REVISION: u64 = 1;
 /// The tunnel has no device key; its route epoch is fixed.
 pub const DEVICE_EPOCH: u64 = 1;
+/// SG-000135 OB-09: the client profile of a `browser_full` tunnel route.
+pub const BROWSER_FULL_CLIENT_PROFILE_ID: &str =
+    orcel_policy::remote_session::TUNNEL_BROWSER_FULL_CLIENT_PROFILE;
+/// SG-000135 OB-09: the profiles a tunnel may serve (one per tunnel).
+pub const TUNNEL_PROFILES: [&str; 2] = [REMOTE_PROFILE_CORE, REMOTE_PROFILE_BROWSER_FULL];
+/// SG-000135 OB-09: a `browser_full` tunnel's scope ceiling: reads and
+/// browser actions, never `orcel.write`.
+pub const BROWSER_FULL_SCOPES: [&str; 2] = orcel_policy::remote_session::BROWSER_FULL_SCOPES;
 
+/// Whether `profile` is one a tunnel may serve.
+pub fn is_tunnel_profile(profile: &str) -> bool {
+    TUNNEL_PROFILES.contains(&profile)
+}
+
+/// The route derivation orceld also checks (SG-000135 OB-09): one copy, in
+/// the policy crate.
 fn derived_id(prefix: &str, label: &str, tunnel_id: &str) -> String {
-    let mut hasher = Sha256::new();
-    for field in ["ORCEL_TUNNEL_ROUTE_V1", label, tunnel_id] {
-        hasher.update((field.len() as u64).to_be_bytes());
-        hasher.update(field.as_bytes());
-    }
-    let digest = hasher.finalize();
-    let hex: String = digest[..16].iter().map(|b| format!("{b:02x}")).collect();
-    format!("{prefix}{hex}")
+    orcel_policy::remote_session::tunnel_derived_id(prefix, label, tunnel_id)
 }
 
 /// The tunnel's remote route for `tunnel_id`, in the paired-connection shape
@@ -59,6 +76,41 @@ pub fn route(tunnel_id: &str) -> Value {
 /// The remote connection id `orcel tunnel allow` leases for `tunnel_id`.
 pub fn remote_connection_id(tunnel_id: &str) -> String {
     derived_id("rc-", "remote_connection", tunnel_id)
+}
+
+/// SG-000135 OB-09: the tunnel's route for `profile` (`None` for a profile
+/// a tunnel may not serve). `core` is exactly [`route`].
+pub fn route_for(tunnel_id: &str, profile: &str) -> Option<Value> {
+    match profile {
+        REMOTE_PROFILE_CORE => Some(route(tunnel_id)),
+        REMOTE_PROFILE_BROWSER_FULL => Some(json!({
+            "principal": derived_id("rp-", "principal", tunnel_id),
+            "remoteConnectionId": remote_connection_id_for(tunnel_id, profile)?,
+            "deviceId": derived_id("dev-", "device", tunnel_id),
+            "deviceEpoch": DEVICE_EPOCH,
+            "providerKind": PROVIDER_KIND,
+            "clientProfileId": BROWSER_FULL_CLIENT_PROFILE_ID,
+            "clientProfileRevision": CLIENT_PROFILE_REVISION,
+            "toolSurfaceProfile": REMOTE_PROFILE_BROWSER_FULL,
+            "scopeCeiling": BROWSER_FULL_SCOPES,
+        })),
+        _ => None,
+    }
+}
+
+/// SG-000135 OB-09: the remote connection id `orcel tunnel allow` leases
+/// for `tunnel_id` serving `profile`; `core` is exactly
+/// [`remote_connection_id`].
+pub fn remote_connection_id_for(tunnel_id: &str, profile: &str) -> Option<String> {
+    match profile {
+        REMOTE_PROFILE_CORE => Some(remote_connection_id(tunnel_id)),
+        REMOTE_PROFILE_BROWSER_FULL => Some(derived_id(
+            "rc-",
+            "remote_connection/browser_full",
+            tunnel_id,
+        )),
+        _ => None,
+    }
 }
 
 /// The derived device identity of the tunnel route.
@@ -139,6 +191,7 @@ mod tests {
         let route = route(TUNNEL);
         let (device, epoch) = device_identity(TUNNEL);
         let options = AllowOptions {
+            tunnel_id: None,
             remote_connection_id: remote_connection_id(TUNNEL),
             workspaces: vec!["default".into()],
             scopes: Some(vec!["orcel.read".into()]),
@@ -161,6 +214,7 @@ mod tests {
             workspace_ids: vec!["default".into()],
             read_mode: ReadMode::Session,
             duration_ms: 15 * 60 * 1000,
+            tunnel_id: args["tunnel_id"].as_str().map(str::to_owned),
         };
         let workstation = WorkstationBinding {
             session_id: 1,
@@ -226,5 +280,126 @@ mod tests {
         for field in ["principal", "remoteConnectionId", "deviceId"] {
             assert_ne!(route[field], other[field], "{field}");
         }
+    }
+
+    /// SG-000135 OB-09: a `browser_full` tunnel route is a valid remote
+    /// context under its own connection id and client profile, its lease
+    /// (from `orcel tunnel allow`) admits the remote-safe broker shapes only,
+    /// and the core route and lease are unchanged.
+    #[test]
+    fn ob09_a_browser_full_tunnel_route_is_separate_and_admits_only_broker_shapes() {
+        use crate::remote::{lease_arguments, AllowOptions};
+        use orcel_contracts::{RequestEnvelope, INTERNAL_PROTOCOL_VERSION};
+        use orcel_policy::remote_session::{
+            build_lease, check_remote_dispatch, GateEnvironment, LeaseRequest, ReadMode,
+            WorkstationBinding, WorkstationState,
+        };
+        assert_eq!(route_for(TUNNEL, "core"), Some(route(TUNNEL)));
+        assert_eq!(
+            remote_connection_id_for(TUNNEL, "core"),
+            Some(remote_connection_id(TUNNEL))
+        );
+        for unmapped in ["browser_structured", "desktop_structured", "", "Core"] {
+            assert_eq!(route_for(TUNNEL, unmapped), None);
+            assert!(!is_tunnel_profile(unmapped));
+        }
+        let browser = route_for(TUNNEL, "browser_full").unwrap();
+        validate_remote_context(&context(&browser)).unwrap();
+        let core = route(TUNNEL);
+        assert_eq!(browser["toolSurfaceProfile"], "browser_full");
+        assert_eq!(
+            browser["scopeCeiling"],
+            json!(["orcel.read", "orcel.execute"])
+        );
+        assert_ne!(browser["remoteConnectionId"], core["remoteConnectionId"]);
+        assert_ne!(browser["clientProfileId"], core["clientProfileId"]);
+        assert_eq!(browser["deviceId"], core["deviceId"]);
+        assert_eq!(
+            browser["remoteConnectionId"].as_str(),
+            remote_connection_id_for(TUNNEL, "browser_full").as_deref()
+        );
+        // `orcel tunnel allow` on a browser_full tunnel...
+        let (device, epoch) = device_identity(TUNNEL);
+        let options = AllowOptions {
+            tunnel_id: Some(TUNNEL.into()),
+            remote_connection_id: remote_connection_id_for(TUNNEL, "browser_full").unwrap(),
+            workspaces: vec!["default".into()],
+            scopes: None,
+            minutes: 15,
+            read_mode: "session".into(),
+        };
+        let args = lease_arguments(&options, &browser, &device, epoch).unwrap();
+        let text = |name: &str| args[name].as_str().unwrap().to_owned();
+        let request = LeaseRequest {
+            principal: text("principal"),
+            remote_connection_id: text("remote_connection_id"),
+            device_id: text("device_id"),
+            device_epoch: args["device_epoch"].as_u64().unwrap(),
+            provider_kind: text("provider_kind"),
+            client_profile_id: text("client_profile_id"),
+            client_profile_revision: args["client_profile_revision"].as_u64().unwrap(),
+            tool_surface_profile: text("tool_surface_profile"),
+            scope_ceiling: vec!["orcel.read".into(), "orcel.execute".into()],
+            workspace_ids: vec!["default".into()],
+            read_mode: ReadMode::Session,
+            duration_ms: 15 * 60 * 1000,
+            tunnel_id: args["tunnel_id"].as_str().map(str::to_owned),
+        };
+        assert_eq!(request.tool_surface_profile, "browser_full");
+        let trust = |_: &str| Some(1);
+        let env = GateEnvironment {
+            now_ms: 1_000,
+            policy_revision: "rev",
+            workspace_set_digest: "digest",
+            workstation: WorkstationState::Unlocked(WorkstationBinding {
+                session_id: 1,
+                logon_id: 7,
+            }),
+            trust_revision: &trust,
+        };
+        let lease = build_lease(&request, "lease-b".into(), &env, &["default".into()]).unwrap();
+        let envelope = |capability: &str, operation: &str| RequestEnvelope {
+            version: INTERNAL_PROTOCOL_VERSION,
+            request_id: "r".into(),
+            client_session_id: "s".into(),
+            workspace_id: "default".into(),
+            capability: capability.into(),
+            operation: operation.into(),
+            target: None,
+            arguments: json!({}),
+        };
+        let remote = context(&browser);
+        // ...admits a browser read and action...
+        for operation in ["snapshot", "click"] {
+            assert!(check_remote_dispatch(
+                std::slice::from_ref(&lease),
+                &envelope("browser.session", operation),
+                &remote,
+                &env
+            )
+            .is_ok());
+        }
+        // ...but no core shape and no persistent profile shape, and the core
+        // route's context never uses it.
+        for (capability, operation) in [
+            ("fs.read", "read"),
+            ("process.spawn", "spawn"),
+            ("browser.session", "profile_delete"),
+        ] {
+            assert!(check_remote_dispatch(
+                std::slice::from_ref(&lease),
+                &envelope(capability, operation),
+                &remote,
+                &env
+            )
+            .is_err());
+        }
+        assert!(check_remote_dispatch(
+            std::slice::from_ref(&lease),
+            &envelope("browser.session", "snapshot"),
+            &context(&core),
+            &env
+        )
+        .is_err());
     }
 }

@@ -112,7 +112,9 @@ pub fn tunnel_environment(
     );
     base.insert(
         tunnel_route::ROUTE_ENV.into(),
-        tunnel_route::route(&tunnel.tunnel_id).to_string(),
+        tunnel_route::route_for(&tunnel.tunnel_id, &tunnel.profile)
+            .ok_or_else(|| LifecycleError::state("tunnel profile must be core or browser_full"))?
+            .to_string(),
     );
     Ok(base)
 }
@@ -230,6 +232,7 @@ mod tests {
             tunnel: Some(crate::config::TunnelSettings {
                 client: PathBuf::from("/fake/tunnel-client"),
                 tunnel_id: "tunnel_0123456789abcdefghijklmnopqrstuv".into(),
+                profile: "core".into(),
             }),
             ..Config::default()
         }

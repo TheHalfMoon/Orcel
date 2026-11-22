@@ -206,8 +206,18 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
                 .value("--tunnel-id")?
                 .ok_or_else(|| LifecycleError::usage("--tunnel-id <tunnel_...> is required"))?;
             let key_file = args.value("--key-file")?.map(PathBuf::from);
+            // SG-000135 OB-09: the one profile this tunnel serves, chosen
+            // here by the owner on the PC (never by anything remote).
+            let profile = args
+                .value("--profile")?
+                .unwrap_or_else(|| orcel_policy::remote_session::REMOTE_PROFILE_CORE.to_owned());
             args.finish()?;
             config::validate_tunnel_id(&tunnel_id)?;
+            if !orcel_lifecycle::tunnel_route::is_tunnel_profile(&profile) {
+                return Err(LifecycleError::usage(
+                    "--profile must be core (the default) or browser_full",
+                ));
+            }
             if !client.is_absolute() || !client.is_file() {
                 return Err(LifecycleError::usage(
                     "--client must be the absolute path of the official tunnel-client executable",
@@ -230,6 +240,7 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
             config.tunnel = Some(config::TunnelSettings {
                 client: client.clone(),
                 tunnel_id: tunnel_id.clone(),
+                profile: profile.clone(),
             });
             // Key and configuration change together: any failure after the key
             // is written restores both the previous key and configuration.
@@ -288,11 +299,16 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
                 .unwrap_or(false);
             let human = match &config.tunnel {
                 Some(tunnel) => format!(
-                    "tunnel id: {}\nclient: {}\nruntime key: {} (value never displayed)\nremote connection: {} (profile core; `orcel tunnel allow` leases it)\n",
+                    "tunnel id: {}\nclient: {}\nruntime key: {} (value never displayed)\nremote connection: {} (profile {}; `orcel tunnel allow` leases it)\n",
                     tunnel.tunnel_id,
                     tunnel.client.display(),
                     if key_present { "present" } else { "missing" },
-                    orcel_lifecycle::tunnel_route::remote_connection_id(&tunnel.tunnel_id)
+                    orcel_lifecycle::tunnel_route::remote_connection_id_for(
+                        &tunnel.tunnel_id,
+                        &tunnel.profile
+                    )
+                    .unwrap_or_default(),
+                    tunnel.profile
                 ),
                 None => "The tunnel is not configured. Run `orcel tunnel setup`.\n".into(),
             };
@@ -306,16 +322,20 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
         // through the tunnel needs a finite, STRONG-approved lease, exactly
         // like a relay connection.
         "allow" => {
-            let tunnel_id = configured_tunnel_id(&layout)?;
-            let connection = orcel_lifecycle::tunnel_route::remote_connection_id(&tunnel_id);
+            let (tunnel_id, profile) = configured_tunnel(&layout)?;
+            let (connection, route) = tunnel_route_of(&tunnel_id, &profile)?;
             let (device_id, device_epoch) =
                 orcel_lifecycle::tunnel_route::device_identity(&tunnel_id);
-            let route = orcel_lifecycle::tunnel_route::route(&tunnel_id);
+            // SG-000135 OB-09: a browser_full tunnel's lease names the tunnel
+            // id, so orceld can check the route is the tunnel's own.
+            let proof = (profile == orcel_policy::remote_session::REMOTE_PROFILE_BROWSER_FULL)
+                .then_some(tunnel_id.as_str());
             allow_remote_session(
                 args,
                 &layout,
                 &connection,
                 &route,
+                proof,
                 &device_id,
                 device_epoch,
                 "orcel tunnel revoke",
@@ -323,8 +343,8 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
         }
         "revoke" => {
             args.finish()?;
-            let tunnel_id = configured_tunnel_id(&layout)?;
-            let connection = orcel_lifecycle::tunnel_route::remote_connection_id(&tunnel_id);
+            let (tunnel_id, profile) = configured_tunnel(&layout)?;
+            let (connection, _) = tunnel_route_of(&tunnel_id, &profile)?;
             let config = Config::load(&layout)?;
             config.check_workspaces_with_policy()?;
             let workspace = config.default_workspace().unwrap_or("default").to_string();
@@ -362,13 +382,27 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
     }
 }
 
-fn configured_tunnel_id(layout: &Layout) -> Result<String, LifecycleError> {
+/// The configured tunnel's id and the one profile it serves.
+fn configured_tunnel(layout: &Layout) -> Result<(String, String), LifecycleError> {
     Config::load(layout)?
         .tunnel
-        .map(|tunnel| tunnel.tunnel_id)
+        .map(|tunnel| (tunnel.tunnel_id, tunnel.profile))
         .ok_or_else(|| {
             LifecycleError::state("the tunnel is not configured; run `orcel tunnel setup`")
         })
+}
+
+/// SG-000135 OB-09: the remote connection id and route of the tunnel
+/// serving `profile`.
+fn tunnel_route_of(tunnel_id: &str, profile: &str) -> Result<(String, Value), LifecycleError> {
+    let connection = orcel_lifecycle::tunnel_route::remote_connection_id_for(tunnel_id, profile);
+    let route = orcel_lifecycle::tunnel_route::route_for(tunnel_id, profile);
+    match (connection, route) {
+        (Some(connection), Some(route)) => Ok((connection, route)),
+        _ => Err(LifecycleError::state(
+            "tunnel profile must be core or browser_full",
+        )),
+    }
 }
 
 fn wait_seconds(args: &mut Args, default: u64) -> Result<Duration, LifecycleError> {
@@ -1325,6 +1359,7 @@ fn allow_remote_session(
     layout: &Layout,
     connection: &str,
     paired: &Value,
+    tunnel_id: Option<&str>,
     device_id: &str,
     device_epoch: u64,
     revoke_command: &str,
@@ -1354,6 +1389,7 @@ fn allow_remote_session(
         scopes: scopes.map(|list| list.split(',').map(|s| s.trim().to_owned()).collect()),
         minutes,
         read_mode,
+        tunnel_id: tunnel_id.map(str::to_owned),
     };
     let arguments = remote::lease_arguments(&options, paired, device_id, device_epoch)?;
     let version = active_version(layout)?;
@@ -1398,6 +1434,7 @@ pub fn remote(args: &mut Args) -> Result<Output, LifecycleError> {
                 &layout,
                 &connection,
                 &paired,
+                None,
                 &device_id,
                 device_epoch,
                 "orcel remote revoke",
@@ -1641,7 +1678,9 @@ pub fn exec(args: &mut Args) -> Result<Output, LifecycleError> {
 pub fn remote_enroll(args: &mut Args, action: &str) -> Result<i32, LifecycleError> {
     let relay = args.value("--relay")?;
     let workspace = args.value("--workspace")?;
+    let profile = args.value("--profile")?;
     args.finish()?;
+    orcel_lifecycle::remote::check_relay_profile(profile.as_deref())?;
     let layout = Layout::for_current_user()?;
     let platform = host_platform();
     orcel_lifecycle::remote::run_enrollment(&layout, platform.as_ref(), action, relay, workspace)

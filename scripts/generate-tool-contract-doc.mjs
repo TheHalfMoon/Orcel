@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const contract = await import(pathToFileURL(join(repo, "apps", "orcel-mcp", "dist", "tool_contract.js")).href);
-const { TOOL_CONTRACT, SURFACE_PROFILES, REMOTE_PROVIDER_PROFILES, BROWSER_FULL_CONTRACT } = contract;
+const { TOOL_CONTRACT, SURFACE_PROFILES, REMOTE_PROVIDER_PROFILES, BROWSER_FULL_CONTRACT, REMOTE_BROWSER_FULL_TOOLS, REMOTE_BROWSER_FULL_PROVIDERS } = contract;
 
 const yes = (value) => (value ? "yes" : "no");
 const names = Object.keys(TOOL_CONTRACT).sort();
@@ -54,12 +54,19 @@ const lines = [
   "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
   ...names.map((name) => row(name, TOOL_CONTRACT[name])),
   "",
-  "## browser_full (SG-000135, local only)",
+  "## browser_full (SG-000135; remote-safe tools also remote, OB-09)",
   "",
-  "Served by stdio and loopback HTTP only when local configuration selects it (`ORCEL_TOOL_SURFACE_PROFILE=browser_full`);",
-  `never remote. It holds ${SURFACE_PROFILES.browser_full.length} tools: \`desktop_structured\` plus the Orcel Browser Session Broker tools below,`,
+  "Served by stdio and loopback HTTP only when local configuration selects it (`ORCEL_TOOL_SURFACE_PROFILE=browser_full`).",
+  `Locally it holds ${SURFACE_PROFILES.browser_full.length} tools: \`desktop_structured\` plus the Orcel Browser Session Broker tools below,`,
   "which orceld's broker maps onto the existing live host actions. Under this profile `browser_click`, `browser_fill`,",
   "`browser_select` and `browser_verify` are the broker tools listed here; `browser_structured` keeps its own forms.",
+  "",
+  `Remotely (SG-000135 OB-09, engineering-chosen 2026-11-22 under the founder's delegation), only a ChatGPT Secure MCP Tunnel`,
+  `the owner set up on the PC for \`browser_full\` serves the ${REMOTE_BROWSER_FULL_TOOLS.length} broker tools with remote scopes below (providers: ${REMOTE_BROWSER_FULL_PROVIDERS.join(", ")}),`,
+  "never a core tool; a tunnel serves one profile, and the relay serves `core` only. orceld still requires the SG-000055",
+  "STRONG remote-session lease for that profile, asks the owner on",
+  "the Windows dialog for every consequential action outside a Full Access lease the authority service issued to that",
+  "client, and keeps the persistent profile tools local-only.",
   "",
   "| Tool | Kernel shape | Effect | Approval | Remote | R | D | I | O | Output bound |",
   "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",

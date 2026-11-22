@@ -4,6 +4,7 @@ import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   createMcpFrameDispatcher,
   runDeviceUplink,
@@ -16,7 +17,10 @@ import type { DeviceKeyPair } from "@orcel/mcp/dist/device_identity.js";
 import { DEVICE_KEY_SECRET, type SecretStore } from "@orcel/mcp/dist/secret_store.js";
 import { loadDeviceRecord } from "@orcel/mcp/dist/uplink_state.js";
 import { CANONICAL_TOOL_NAMES } from "@orcel/mcp/dist/server.js";
-import { REMOTE_TOOL_NAMES, securitySchemesFor } from "@orcel/mcp/dist/tool_contract.js";
+import { BROWSER_FULL_TOOLS, LIVE_BROWSER_TOOLS, REMOTE_TOOL_NAMES, securitySchemesFor } from "@orcel/mcp/dist/tool_contract.js";
+import { authorizeToolByScopes } from "@orcel/mcp/dist/oauth_authorization.js";
+import { signDeviceChallenge, type DeviceChallenge } from "@orcel/mcp/dist/device_identity.js";
+import { ENROLLMENT_PATHS } from "@orcel/mcp/dist/remote_enrollment.js";
 import { parseRelayConfig } from "./config.js";
 import { FileRelayStore, RelayStateError, STATE_FILE } from "./file_store.js";
 import { DEFAULT_QUOTAS, QUOTA_CEILINGS, validateQuotas } from "./quotas.js";
@@ -325,6 +329,55 @@ test("a standards OAuth client links through device pairing and reaches the devi
     assert.equal((await mcp(r, linked.accessToken, { jsonrpc: "2.0", id: 3, method: "tools/list" }, session)).status, 401);
   } finally {
     await uplink?.stop();
+    await r.close();
+  }
+});
+
+test("SG-000135 OB-09: the relay serves the core profile only and never a browser tool", async () => {
+  // Engineering-chosen 2026-11-22 under the founder's delegation: remote
+  // Orcel Browser control is the ChatGPT Secure MCP Tunnel's only. No relay
+  // source names that profile, so no branch could be flipped silently...
+  const src = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
+  for (const name of readdirSync(src).filter((file) => file.endsWith(".ts") && !file.endsWith(".test.ts"))) {
+    const text = readFileSync(join(src, name), "utf8");
+    assert.equal(/browser_full|REMOTE_BROWSER_FULL/i.test(text), false, name);
+    for (const match of text.matchAll(/authorizeToolByScopes\(([^)]*)\)/g)) {
+      assert.match(match[1] ?? "", /, "core",/, `${name} checks tools against core only`);
+    }
+  }
+  // ...the relay's tool check refuses every browser tool...
+  const all = ["orcel.read", "orcel.write", "orcel.execute"];
+  for (const tool of [...BROWSER_FULL_TOOLS, ...LIVE_BROWSER_TOOLS]) {
+    assert.equal(authorizeToolByScopes(tool, "core", all, all).ok, false, tool);
+  }
+  // ...and a pairing offer that names a profile is refused.
+  const stateDir = mkdtempSync(join(tmpdir(), "orcel-relay-state-"));
+  const r = await startRelay(stateDir);
+  try {
+    const deviceDir = mkdtempSync(join(tmpdir(), "orcel-device-"));
+    const key = join(deviceDir, "device_key.json");
+    await enableRemote({ relayOrigin: r.origin, defaultWorkspace: "default", deviceKeyPath: key, uplinkPath: join(deviceDir, "uplink.json"), secrets: secretsFor(key), fetch: fetchImpl, nowMs: Date.now() });
+    const pair = devicePair(key);
+    const post = async (path: string, body: unknown) => {
+      const response = await fetch(r.origin + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      return { status: response.status, json: (await response.json()) as Record<string, unknown> };
+    };
+    const offer = async (extra: Record<string, unknown>) => {
+      const challenge = (await post(ENROLLMENT_PATHS.challenge, { deviceId: pair.deviceId })).json.challenge as DeviceChallenge;
+      return post(ENROLLMENT_PATHS.offer, {
+        response: signDeviceChallenge(pair.privateKeyJwkBase64, challenge),
+        codeHashHex: "a".repeat(64),
+        expiresAtMs: Date.now() + 60_000,
+        ...extra
+      });
+    };
+    for (const profile of ["browser_full", "core", "browser_structured"]) {
+      const refused = await offer({ toolSurfaceProfile: profile });
+      assert.equal(refused.status, 400, profile);
+      assert.equal(refused.json.error, "profile_unsupported", profile);
+    }
+    assert.equal((await offer({})).status, 201);
+  } finally {
     await r.close();
   }
 });

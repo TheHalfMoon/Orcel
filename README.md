@@ -143,6 +143,7 @@ Neither changes nor deletes the earlier folder. Once a decision is recorded, it 
 3. Configure the tunnel:
    `orcel tunnel setup --client C:\path\to\tunnel-client.exe --tunnel-id tunnel_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`
    You are prompted for the runtime key without echo (or pass `--key-file <path>`). The key is stored only in the protected local folder, passed to the tunnel client by file reference, and never printed or logged.
+   Development builds only (SG-000135 OB-09, not yet verified with ChatGPT): `--profile browser_full` sets this tunnel up for the remote Orcel Browser tools instead of the core profile. A tunnel serves one profile. A `browser_full` tunnel has its own remote connection, its own `orcel tunnel allow` lease and no core tools. Every consequential browser action still asks you on this PC unless you issued a Full Access lease with `orcel browser grant`.
 
 ## Connect ChatGPT
 

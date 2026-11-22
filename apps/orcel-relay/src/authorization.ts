@@ -494,6 +494,12 @@ export class AuthorizationService {
     if (identity === null) {
       return json(401, { error: "device_denied" });
     }
+    // SG-000135 OB-09 (engineering-chosen 2026-11-22 under the founder's
+    // delegation): the relay serves the core profile only, so an offer that
+    // names any tool-surface profile is refused.
+    if ("toolSurfaceProfile" in body) {
+      return json(400, { error: "profile_unsupported" });
+    }
     if (
       typeof body.codeHashHex !== "string" ||
       !/^[0-9a-f]{64}$/.test(body.codeHashHex) ||
