@@ -20,6 +20,12 @@
 //! effect on the hosted runner (the log came out 0644); the key stays as well.
 //! Like `UMask=0077` on Linux, it applies to everything orceld creates.
 //!
+//! launchd's own `StandardErrorPath` was tried instead of the shell (PR #840,
+//! one run on macOS 15 and 26): the socket stayed clean and the readiness
+//! line reached the file, but the file was again 0644 under `Umask` 63, and
+//! there is no hook to bound the log when launchd starts `orceld`. So the
+//! shell stays.
+//!
 //! The log is bounded: when it is over [`MAX_STDERR_LOG`] it is moved to
 //! `orceld-agent.log.1` (replacing an older one), both when the agent is
 //! written ([`rotate_log`], at install, update and rollback) and by the shell
