@@ -29,6 +29,7 @@ import {
   type DeviceKeyPair
 } from "./device_identity.js";
 import { isPairedConnection, isRelayOrigin, readBoundedJson, type FetchLike, type PairedConnection } from "./device_uplink.js";
+import { isRemoteProfileAllowed, isRemoteToolSurfaceProfile, type RemoteToolSurfaceProfile } from "./tool_contract.js";
 import { DEVICE_KEY_SECRET, type SecretStore } from "./secret_store.js";
 import { loadDeviceKey } from "./uplink_state.js";
 
@@ -57,6 +58,11 @@ export interface PairingRequest {
   readonly scopes: readonly string[];
   readonly principal: string;
   readonly remoteConnectionId: string;
+  /**
+   * SG-000135 OB-09: the remote profile this device's owner chose for the
+   * pairing (`core` when the relay names none).
+   */
+  readonly toolSurfaceProfile: RemoteToolSurfaceProfile;
 }
 
 function writeAtomic(path: string, text: string): void {
@@ -165,7 +171,8 @@ function isPairingRequest(value: unknown): value is PairingRequest {
     typeof record.redirectOrigin === "string" &&
     Array.isArray(record.scopes) &&
     typeof record.principal === "string" &&
-    typeof record.remoteConnectionId === "string"
+    typeof record.remoteConnectionId === "string" &&
+    isRemoteToolSurfaceProfile(record.toolSurfaceProfile)
   );
 }
 
@@ -184,7 +191,17 @@ export async function pairRemote(options: {
   readonly confirm: (request: PairingRequest) => Promise<boolean>;
   readonly sleep: (ms: number) => Promise<void>;
   readonly pollIntervalMs?: number;
+  /**
+   * SG-000135 OB-09: the one remote profile to pair for, chosen by the
+   * owner at `orcel remote pair --profile` after STRONG presence; `core`
+   * by default. A connection serves exactly one profile.
+   */
+  readonly toolSurfaceProfile?: RemoteToolSurfaceProfile;
 }): Promise<PairedConnection | null> {
+  const toolSurfaceProfile = options.toolSurfaceProfile ?? "core";
+  if (!isRemoteToolSurfaceProfile(toolSurfaceProfile)) {
+    throw new Error("PAIRING_DENIED: the pairing profile must be core or browser_full");
+  }
   const pair = await loadDeviceKey(options.deviceKeyPath, options.secrets);
   const uplink = readUplinkDocument(options.uplinkPath);
   if (uplink === null) {
@@ -200,7 +217,8 @@ export async function pairRemote(options: {
   const offer = await post(options.fetch, uplink.relayOrigin, ENROLLMENT_PATHS.offer, {
     response: await signedChallenge(options.fetch, uplink.relayOrigin, pair),
     codeHashHex: issued.record.codeHashHex,
-    expiresAtMs: issued.record.expiresAtMs
+    expiresAtMs: issued.record.expiresAtMs,
+    ...(toolSurfaceProfile === "core" ? {} : { toolSurfaceProfile })
   });
   const offerId = offer.json.offerId;
   if (offer.status !== 201 || typeof offerId !== "string") {
@@ -213,10 +231,15 @@ export async function pairRemote(options: {
       return null;
     }
     if (status.json.state === "confirm") {
-      const request = status.json.request;
+      const raw = status.json.request;
+      const request =
+        typeof raw === "object" && raw !== null && !("toolSurfaceProfile" in raw) ? { ...raw, toolSurfaceProfile: "core" } : raw;
       const challenge = status.json.challenge as DeviceChallenge | undefined;
       if (!isPairingRequest(request) || challenge === undefined || challenge.deviceId !== pair.deviceId) {
         throw new Error("PAIRING_DENIED: malformed pairing request from the relay");
+      }
+      if (request.toolSurfaceProfile !== toolSurfaceProfile) {
+        throw new Error("PAIRING_DENIED: the relay names another profile than the one chosen on this device");
       }
       const approved = await options.confirm(request);
       const decision = await post(options.fetch, uplink.relayOrigin, ENROLLMENT_PATHS.confirm, {
@@ -234,7 +257,7 @@ export async function pairRemote(options: {
         providerKind: String(connection?.providerKind ?? ""),
         clientProfileId: DEFAULT_CLIENT_PROFILE,
         clientProfileRevision: 1,
-        toolSurfaceProfile: "core",
+        toolSurfaceProfile,
         scopeCeiling: (Array.isArray(connection?.scopeCeiling) ? connection.scopeCeiling : []) as PairedConnection["scopeCeiling"]
       };
       if (
@@ -243,9 +266,15 @@ export async function pairRemote(options: {
         !isPairedConnection(paired) ||
         paired.principal !== request.principal ||
         paired.remoteConnectionId !== request.remoteConnectionId ||
-        paired.scopeCeiling.join(" ") !== request.scopes.join(" ")
+        paired.scopeCeiling.join(" ") !== request.scopes.join(" ") ||
+        (connection?.toolSurfaceProfile ?? "core") !== toolSurfaceProfile
       ) {
         throw new Error("PAIRING_DENIED: the relay did not complete the approved pairing");
+      }
+      // SG-000135 OB-09: a browser_full connection is recorded only for a
+      // provider mapped for it (ChatGPT); the uplink would refuse it anyway.
+      if (paired.toolSurfaceProfile === "browser_full" && !isRemoteProfileAllowed(paired.providerKind, "browser_full")) {
+        throw new Error("PAIRING_DENIED: this AI client's provider cannot be paired for the browser_full profile");
       }
       const current = readUplinkDocument(options.uplinkPath) ?? uplink;
       current.connections = [...current.connections.filter((c) => c.remoteConnectionId !== paired.remoteConnectionId), paired];

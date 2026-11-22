@@ -299,7 +299,21 @@ pub fn run_enrollment(
     action: &str,
     relay: Option<String>,
     workspace: Option<String>,
+    profile: Option<String>,
 ) -> Result<i32, LifecycleError> {
+    // SG-000135 OB-09: `orcel remote pair --profile browser_full` pairs a
+    // connection for the remote browser_full profile only; `core` (the
+    // default) is never named, so a core pairing is unchanged.
+    let profile =
+        match profile.as_deref() {
+            None | Some(orcel_policy::remote_session::REMOTE_PROFILE_CORE) => None,
+            Some(orcel_policy::remote_session::REMOTE_PROFILE_BROWSER_FULL) if action == "pair" => {
+                profile
+            }
+            Some(_) => return Err(LifecycleError::usage(
+                "--profile is core (the default) or browser_full, and only for orcel remote pair",
+            )),
+        };
     let state = Installer::new(layout.clone(), platform).verify()?;
     let version_dir = layout.version_dir(&state.active.version);
     let node = PathBuf::from(&state.record.node_path);
@@ -331,11 +345,15 @@ pub fn run_enrollment(
         "{}",
         crate::per_os::confirm_when_prompted(CONFIRM_REMOTE_ENROLL)
     );
+    let mut arguments = json!({ "action": action, "relay_origin": relay_origin });
+    if let (Some(profile), Some(map)) = (&profile, arguments.as_object_mut()) {
+        map.insert("profile".into(), json!(profile));
+    }
     let request = crate::ipc::request(
         &workspace,
         "remote.enrollment.authorize",
         "authorize",
-        json!({ "action": action, "relay_origin": relay_origin }),
+        arguments,
     );
     let response = crate::ipc::call(
         &orceld,
@@ -370,6 +388,9 @@ pub fn run_enrollment(
             .arg(&relay_origin)
             .arg("--workspace")
             .arg(&workspace);
+    }
+    if let Some(profile) = &profile {
+        command.arg("--profile").arg(profile);
     }
     match command.env_clear().envs(env).status() {
         Ok(status) => Ok(status.code().unwrap_or(1)),

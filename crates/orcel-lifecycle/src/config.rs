@@ -26,6 +26,24 @@ pub struct WorkspaceEntry {
 pub struct TunnelSettings {
     pub client: PathBuf,
     pub tunnel_id: String,
+    /// SG-000135 OB-09: the one tool-surface profile the tunnel serves,
+    /// chosen by the owner at `orcel tunnel setup --profile`: `core` (the
+    /// default, and omitted when saved) or `browser_full`.
+    #[serde(
+        default = "default_tunnel_profile",
+        skip_serializing_if = "is_default_tunnel_profile"
+    )]
+    pub profile: String,
+}
+
+fn default_tunnel_profile() -> String {
+    orcel_policy::remote_session::REMOTE_PROFILE_CORE.to_owned()
+}
+
+// serde's skip_serializing_if hands the field by reference.
+#[allow(clippy::ptr_arg)]
+fn is_default_tunnel_profile(profile: &String) -> bool {
+    profile == orcel_policy::remote_session::REMOTE_PROFILE_CORE
 }
 
 /// What approval prompts show of the content they approve: the person's saved choice.
@@ -128,6 +146,11 @@ impl Config {
         }
         if let Some(tunnel) = &self.tunnel {
             validate_tunnel_id(&tunnel.tunnel_id)?;
+            if !crate::tunnel_route::is_tunnel_profile(&tunnel.profile) {
+                return Err(LifecycleError::state(
+                    "tunnel profile must be core or browser_full",
+                ));
+            }
             if !tunnel.client.is_absolute() {
                 return Err(LifecycleError::state("tunnel client path is not absolute"));
             }
@@ -416,5 +439,45 @@ mod tests {
             display_path(Path::new(r"\\?\UNC\server\share")),
             PathBuf::from(r"\\server\share")
         );
+    }
+
+    /// SG-000135 OB-09: a tunnel saved before profiles existed loads as
+    /// `core`, `core` is not written out, `browser_full` round-trips, and any
+    /// other profile is refused.
+    #[test]
+    fn ob09_the_tunnel_profile_defaults_to_core_and_only_core_or_browser_full_load() {
+        let legacy: TunnelSettings = serde_json::from_str(
+            r#"{"client":"C:\\tunnel-client.exe","tunnel_id":"tunnel_0123456789abcdefghijklmnopqrstuv"}"#,
+        )
+        .unwrap();
+        assert_eq!(legacy.profile, "core");
+        let written = serde_json::to_value(&legacy).unwrap();
+        assert!(written.get("profile").is_none(), "{written}");
+        let browser = TunnelSettings {
+            profile: "browser_full".into(),
+            ..legacy.clone()
+        };
+        let text = serde_json::to_string(&browser).unwrap();
+        assert_eq!(
+            serde_json::from_str::<TunnelSettings>(&text).unwrap(),
+            browser
+        );
+        for (profile, ok) in [
+            ("core", true),
+            ("browser_full", true),
+            ("browser_structured", false),
+            ("desktop_structured", false),
+            ("", false),
+        ] {
+            let config = Config {
+                tunnel: Some(TunnelSettings {
+                    client: std::env::temp_dir().join("tunnel-client.exe"),
+                    profile: profile.into(),
+                    ..legacy.clone()
+                }),
+                ..Config::default()
+            };
+            assert_eq!(config.validate_shape().is_ok(), ok, "{profile}");
+        }
     }
 }

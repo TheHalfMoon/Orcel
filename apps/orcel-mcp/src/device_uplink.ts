@@ -46,6 +46,7 @@ import {
   type RelayFailureCode
 } from "./relay_contract.js";
 import { buildOrcelServer } from "./server.js";
+import { isRemoteToolSurfaceProfile, type RemoteToolSurfaceProfile } from "./tool_contract.js";
 
 /** Device channel endpoint paths below the relay origin. */
 export const UPLINK_PATHS = {
@@ -84,7 +85,11 @@ export interface PairedConnection {
   readonly providerKind: string;
   readonly clientProfileId: string;
   readonly clientProfileRevision: number;
-  readonly toolSurfaceProfile: "core";
+  /**
+   * SG-000135 OB-09: the one remote profile this connection serves, chosen
+   * by the owner on the PC at pairing: `core` or `browser_full`.
+   */
+  readonly toolSurfaceProfile: RemoteToolSurfaceProfile;
   readonly scopeCeiling: readonly OAuthScope[];
 }
 
@@ -262,7 +267,7 @@ export function isPairedConnection(value: unknown): value is PairedConnection {
     PROFILE_PATTERN.test(value.clientProfileId) &&
     isSafeInt(value.clientProfileRevision) &&
     value.clientProfileRevision >= 0 &&
-    value.toolSurfaceProfile === "core" &&
+    isRemoteToolSurfaceProfile(value.toolSurfaceProfile) &&
     Array.isArray(value.scopeCeiling) &&
     value.scopeCeiling.length > 0 &&
     value.scopeCeiling.every((s) => typeof s === "string" && isOAuthScope(s)) &&
@@ -432,7 +437,7 @@ export class DeviceUplinkCore {
         providerKind: connection.paired.providerKind,
         clientProfileId: connection.paired.clientProfileId,
         clientProfileRevision: connection.paired.clientProfileRevision,
-        toolSurfaceProfile: "core",
+        toolSurfaceProfile: connection.paired.toolSurfaceProfile,
         scopes: [...connection.scopes]
       }
     };
@@ -660,7 +665,7 @@ export class DeviceUplinkCore {
         return { failure: "REMOTE_RATE_LIMITED", frame, connection };
       }
       if (toolName !== null) {
-        const scopeCheck = authorizeToolByScopes(toolName, "core", scopes, paired.scopeCeiling);
+        const scopeCheck = authorizeToolByScopes(toolName, paired.toolSurfaceProfile, scopes, paired.scopeCeiling);
         if (!scopeCheck.ok) {
           this.commit(frame, connection, nowMs);
           connection.correlations.set(frame.correlationId, frame.expiresAt + 60_000);
@@ -879,7 +884,7 @@ export function createMcpFrameDispatcher(options: {
         const server = buildOrcelServer(kernel, options.defaultWorkspace, {
           transportKind: "relay",
           providerKind: binding.paired.providerKind,
-          toolSurfaceProfile: "core"
+          toolSurfaceProfile: binding.paired.toolSurfaceProfile
         });
         const transport = new FrameTransport();
         await server.connect(transport);

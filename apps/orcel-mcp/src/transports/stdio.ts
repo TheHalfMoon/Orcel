@@ -29,7 +29,8 @@ export interface StdioSessionConfig {
  * Select the stdio session from the launch environment. Without
  * `ORCEL_MCP_TRANSPORT` this is a local client (Claude Desktop, Codex, ...)
  * with its locally configured profile. The tunnel host always sets it to
- * `tunnel` (#395): the remote `core` profile and the tunnel's remote route,
+ * `tunnel` (#395): the tunnel's remote route and its one remote profile (`core`,
+ * or `browser_full` when the owner set the tunnel up for it, SG-000135 OB-09),
  * and `ORCEL_TOOL_SURFACE_PROFILE` is ignored. Any other value fails closed.
  */
 export function stdioSessionConfig(env: NodeJS.ProcessEnv = process.env): StdioSessionConfig {
@@ -44,7 +45,7 @@ export function stdioSessionConfig(env: NodeJS.ProcessEnv = process.env): StdioS
   }
   const route = parseTunnelRoute(env[TUNNEL_ROUTE_ENV]);
   return {
-    context: tunnelTransportContext(route.paired.providerKind),
+    context: tunnelTransportContext(route.paired.providerKind, route.paired.toolSurfaceProfile),
     remote: tunnelRemoteContext(route),
     profile: null,
     defaultWorkspace

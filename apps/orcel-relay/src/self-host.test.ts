@@ -16,7 +16,7 @@ import type { DeviceKeyPair } from "@orcel/mcp/dist/device_identity.js";
 import { DEVICE_KEY_SECRET, type SecretStore } from "@orcel/mcp/dist/secret_store.js";
 import { loadDeviceRecord } from "@orcel/mcp/dist/uplink_state.js";
 import { CANONICAL_TOOL_NAMES } from "@orcel/mcp/dist/server.js";
-import { REMOTE_TOOL_NAMES, securitySchemesFor } from "@orcel/mcp/dist/tool_contract.js";
+import { REMOTE_BROWSER_FULL_TOOLS, REMOTE_TOOL_NAMES, securitySchemesFor } from "@orcel/mcp/dist/tool_contract.js";
 import { parseRelayConfig } from "./config.js";
 import { FileRelayStore, RelayStateError, STATE_FILE } from "./file_store.js";
 import { DEFAULT_QUOTAS, QUOTA_CEILINGS, validateQuotas } from "./quotas.js";
@@ -103,6 +103,8 @@ interface LinkOptions {
   readonly clientName?: string;
   /** Reuse an existing device (a second provider pairing the same computer). */
   readonly devicePaths?: { readonly key: string; readonly uplink: string };
+  /** SG-000135 OB-09: the profile the owner pairs for (core by default). */
+  readonly toolSurfaceProfile?: "core" | "browser_full";
 }
 
 /**
@@ -179,6 +181,7 @@ async function link(r: Relay, approve = true, options: LinkOptions = {}): Promis
     now: Date.now,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, Math.min(ms, 50))),
     pollIntervalMs: 50,
+    ...(options.toolSurfaceProfile === undefined ? {} : { toolSurfaceProfile: options.toolSurfaceProfile }),
     display: (code) => {
       codeEntered = form(r.origin, "/oauth/authorize", { transaction, pairing_code: code }).then((reply) => assert.equal(reply.status, 200));
     },
@@ -187,6 +190,7 @@ async function link(r: Relay, approve = true, options: LinkOptions = {}): Promis
       assert.equal(request.clientName, clientName);
       assert.equal(request.redirectOrigin, new URL(redirect).origin);
       assert.deepEqual(request.scopes, ["orcel.read"]);
+      assert.equal(request.toolSurfaceProfile, options.toolSurfaceProfile ?? "core");
       return approve;
     }
   });
@@ -326,6 +330,67 @@ test("a standards OAuth client links through device pairing and reaches the devi
   } finally {
     await uplink?.stop();
     await r.close();
+  }
+});
+
+test("SG-000135 OB-09: a connection the owner pairs for browser_full serves only the remote browser tools, and a core pairing is unchanged", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "orcel-relay-state-"));
+  const r = await startRelay(stateDir);
+  let uplink: { stop: () => Promise<void>; calls: string[] } | null = null;
+  try {
+    const linked = await link(r, true, { toolSurfaceProfile: "browser_full" });
+    assert.ok(!("denied" in linked));
+    if ("denied" in linked) {
+      return;
+    }
+    // The device records the profile, and so does the relay's route.
+    assert.equal(linked.paired.toolSurfaceProfile, "browser_full");
+    assert.equal(r.store.connection(linked.paired.remoteConnectionId)?.toolSurfaceProfile, "browser_full");
+    uplink = startUplink(r, linked);
+    const deviceId = devicePair(linked.devicePaths.key).deviceId;
+    await waitFor(() => r.relay.hub.isOnline(deviceId), "device channel");
+    const init = await mcp(r, linked.accessToken, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } } });
+    assert.equal(init.status, 200, await init.clone().text());
+    const session = init.headers.get("mcp-session-id") ?? "";
+    await init.text();
+    assert.equal((await mcp(r, linked.accessToken, { jsonrpc: "2.0", method: "notifications/initialized" }, session)).status, 202);
+    const list = await mcp(r, linked.accessToken, { jsonrpc: "2.0", id: 2, method: "tools/list" }, session);
+    const listed = ((await list.json()) as { result: { tools: Array<{ name: string; _meta?: Record<string, unknown> }> } }).result.tools;
+    // The token holds orcel.read only: the list is the remote browser tools.
+    assert.deepEqual(listed.map((t) => t.name).sort(), [...REMOTE_BROWSER_FULL_TOOLS].sort());
+    for (const tool of listed) {
+      assert.deepEqual(tool._meta?.securitySchemes, securitySchemesFor(tool.name, "browser_full"), tool.name);
+    }
+    // The edge refuses a core tool on this route before any frame, and
+    // passes a browser read to the device.
+    const core = await mcp(r, linked.accessToken, { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "fs_read", arguments: { path: "README.md" } } }, session);
+    assert.equal(core.status, 403);
+    await core.text();
+    const read = await mcp(r, linked.accessToken, { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "browser_task_status", arguments: { session_id: "bs-0123456789abcdef-1-0001020304050607" } } }, session);
+    assert.equal(read.status, 200, await read.clone().text());
+    await read.text();
+    // An action needs orcel.execute, which this token does not hold.
+    const act = await mcp(r, linked.accessToken, { jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "browser_click", arguments: {} } }, session);
+    assert.equal(act.status, 403);
+    await act.text();
+    assert.deepEqual(uplink.calls, ["browser.session"]);
+  } finally {
+    await uplink?.stop();
+    await r.close();
+  }
+  // A core pairing names no profile and keeps the core route.
+  const coreDir = mkdtempSync(join(tmpdir(), "orcel-relay-state-"));
+  const c = await startRelay(coreDir);
+  try {
+    const linked = await link(c);
+    assert.ok(!("denied" in linked));
+    if ("denied" in linked) {
+      return;
+    }
+    assert.equal(linked.paired.toolSurfaceProfile, "core");
+    assert.equal(c.store.connection(linked.paired.remoteConnectionId)?.toolSurfaceProfile, "core");
+  } finally {
+    await c.close();
   }
 });
 

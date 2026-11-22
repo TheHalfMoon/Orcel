@@ -71,7 +71,7 @@ export function tunnelRemoteContext(
     providerKind: route.paired.providerKind,
     clientProfileId: route.paired.clientProfileId,
     clientProfileRevision: route.paired.clientProfileRevision,
-    toolSurfaceProfile: "core",
+    toolSurfaceProfile: route.paired.toolSurfaceProfile,
     scopes: [...route.paired.scopeCeiling]
   };
 }

@@ -49,6 +49,7 @@ import {
   type AuthorizationTransaction,
   type OAuthScope
 } from "@orcel/mcp/dist/oauth_authorization.js";
+import { isRemoteToolSurfaceProfile, type RemoteToolSurfaceProfile } from "@orcel/mcp/dist/tool_contract.js";
 import type { DeviceChannelHub } from "./device_channel.js";
 import type { FileRelayStore, StoredClient } from "./file_store.js";
 import type { QuotaDecision, QuotaGuard } from "./quotas.js";
@@ -163,6 +164,12 @@ interface Offer {
   principal: string | null;
   connection: string | null;
   confirmChallenge: DeviceChallenge | null;
+  /**
+   * SG-000135 OB-09: the remote profile the device's owner chose for this
+   * pairing on the PC, sent with the device-signed offer. Never taken from
+   * the OAuth client or the authorization request.
+   */
+  readonly toolSurfaceProfile: RemoteToolSurfaceProfile;
 }
 
 export interface AuthorizationConfig {
@@ -494,12 +501,14 @@ export class AuthorizationService {
     if (identity === null) {
       return json(401, { error: "device_denied" });
     }
+    const toolSurfaceProfile = body.toolSurfaceProfile ?? "core";
     if (
       typeof body.codeHashHex !== "string" ||
       !/^[0-9a-f]{64}$/.test(body.codeHashHex) ||
       typeof body.expiresAtMs !== "number" ||
       body.expiresAtMs <= now ||
-      body.expiresAtMs > now + PAIRING_OFFER_LIFETIME_MS
+      body.expiresAtMs > now + PAIRING_OFFER_LIFETIME_MS ||
+      !isRemoteToolSurfaceProfile(toolSurfaceProfile)
     ) {
       return json(400, { error: "malformed" });
     }
@@ -520,7 +529,8 @@ export class AuthorizationService {
       transactionId: null,
       principal: null,
       connection: null,
-      confirmChallenge: null
+      confirmChallenge: null,
+      toolSurfaceProfile
     };
     this.offers.set(offer.id, offer);
     return json(201, { offerId: offer.id, expiresAtMs: offer.expiresAtMs });
@@ -554,7 +564,8 @@ export class AuthorizationService {
         redirectOrigin: new URL(transaction.tx.redirectUri).origin,
         scopes: transaction.tx.scopes,
         principal: offer.principal,
-        remoteConnectionId: offer.connection
+        remoteConnectionId: offer.connection,
+        toolSurfaceProfile: offer.toolSurfaceProfile
       },
       challenge: offer.confirmChallenge
     });
@@ -593,7 +604,8 @@ export class AuthorizationService {
       deviceId: identity.deviceId,
       clientId: client.clientId,
       providerKind: client.providerKind,
-      scopeCeiling: transaction.tx.scopes
+      scopeCeiling: transaction.tx.scopes,
+      toolSurfaceProfile: offer.toolSurfaceProfile
     });
     const issued = issueAuthorizationCode(
       transaction.tx,
@@ -609,7 +621,8 @@ export class AuthorizationService {
         principal: offer.principal,
         remoteConnectionId: offer.connection,
         providerKind: client.providerKind,
-        scopeCeiling: transaction.tx.scopes
+        scopeCeiling: transaction.tx.scopes,
+        toolSurfaceProfile: offer.toolSurfaceProfile
       }
     });
   }

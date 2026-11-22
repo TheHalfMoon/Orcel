@@ -17,7 +17,8 @@ export interface RemoteDispatchContext {
   readonly providerKind: string;
   readonly clientProfileId: string;
   readonly clientProfileRevision: number;
-  readonly toolSurfaceProfile: "core";
+  /** SG-000135 OB-09: the remote profile the route was set up for. */
+  readonly toolSurfaceProfile: "core" | "browser_full";
   readonly scopes: readonly string[];
 }
 

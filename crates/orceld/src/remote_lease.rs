@@ -419,10 +419,17 @@ pub fn authorize_enrollment(
             "enrollment arguments must be an object",
         )
     })?;
-    if object.len() != 2 {
+    // SG-000135 OB-09: a pairing may also name the remote profile the
+    // owner chose on this PC (`browser_full`); `core` is the default and is
+    // never named, so a core pairing's prompt and digest are unchanged.
+    let profile = match object.get("profile") {
+        None => None,
+        Some(_) => Some(string_arg(&request.arguments, "profile")?),
+    };
+    if object.len() != 2 + usize::from(profile.is_some()) {
         return Err(ProviderError::new(
             FailureCode::InvalidRequest,
-            "enrollment accepts exactly action and relay_origin",
+            "enrollment accepts exactly action and relay_origin, and profile for a browser_full pairing",
         ));
     }
     let action = string_arg(&request.arguments, "action")?;
@@ -430,6 +437,16 @@ pub fn authorize_enrollment(
         return Err(ProviderError::new(
             FailureCode::InvalidRequest,
             "enrollment action must be enable or pair",
+        ));
+    }
+    if profile.is_some()
+        && (action != "pair"
+            || profile.as_deref()
+                != Some(orcel_policy::remote_session::REMOTE_PROFILE_BROWSER_FULL))
+    {
+        return Err(ProviderError::new(
+            FailureCode::InvalidRequest,
+            "only a pairing may name a profile, and only browser_full",
         ));
     }
     let relay_origin = string_arg(&request.arguments, "relay_origin")?;
@@ -453,6 +470,12 @@ pub fn authorize_enrollment(
         hasher.update((field.len() as u64).to_be_bytes());
         hasher.update(field.as_bytes());
     }
+    if let Some(profile) = &profile {
+        for field in ["profile", profile.as_str()] {
+            hasher.update((field.len() as u64).to_be_bytes());
+            hasher.update(field.as_bytes());
+        }
+    }
     let digest: String = hasher
         .finalize()
         .iter()
@@ -461,13 +484,16 @@ pub fn authorize_enrollment(
     let prompt = ApprovalPrompt::new_strong(
         request.workspace_id.clone(),
         POLICY_REVISION,
-        if action == "enable" {
-            "enable remote access for this device"
-        } else {
-            "pair a remote AI client with this device"
+        match (action.as_str(), profile.is_some()) {
+            ("enable", _) => "enable remote access for this device",
+            (_, false) => "pair a remote AI client with this device",
+            (_, true) => "pair a remote AI client to drive Orcel Browser sessions on this device",
         },
         relay_origin.clone(),
-        format!("action={action} relay={relay_origin}"),
+        match &profile {
+            None => format!("action={action} relay={relay_origin}"),
+            Some(profile) => format!("action={action} relay={relay_origin} profile={profile}"),
+        },
         digest.clone(),
     );
     let token = approval
@@ -480,7 +506,10 @@ pub fn authorize_enrollment(
             orcel_approval::now_ms(),
         )
         .map_err(|error| ProviderError::new(error.code, error.message))?;
-    Ok(json!({ "authorized": true, "action": action }))
+    Ok(match profile {
+        None => json!({ "authorized": true, "action": action }),
+        Some(profile) => json!({ "authorized": true, "action": action, "profile": profile }),
+    })
 }
 
 /// Emergency revoke invalidates every remote-session lease immediately.
@@ -940,6 +969,47 @@ mod tests {
         wrong.arguments =
             json!({ "action": "pair", "relay_origin": "https://relay.example", "extra": 1 });
         assert!(authorize_enrollment(&verified, &wrong).is_err());
+        let _ = std::fs::remove_dir_all(&fixture.dir);
+    }
+
+    /// SG-000135 OB-09: a browser_full pairing is the owner's STRONG local
+    /// step like a core one, its prompt names the profile, and only a
+    /// pairing may name a profile, and only browser_full.
+    #[test]
+    fn ob09_a_browser_full_pairing_needs_strong_presence_and_names_its_profile() {
+        let fixture = Fixture::new("enroll-browser");
+        let request = RequestEnvelope {
+            capability: "remote.enrollment.authorize".into(),
+            operation: "authorize".into(),
+            arguments: json!({
+                "action": "pair",
+                "relay_origin": "https://relay.example",
+                "profile": "browser_full"
+            }),
+            ..create_request()
+        };
+        let verified = strong_broker(&fixture, TestPresenceVerifier::verified());
+        let authorized = authorize_enrollment(&verified, &request).unwrap();
+        assert_eq!(authorized["authorized"], true);
+        assert_eq!(authorized["profile"], "browser_full");
+        let denied = strong_broker(&fixture, TestPresenceVerifier::denied());
+        assert!(authorize_enrollment(&denied, &request).is_err());
+        for arguments in [
+            json!({ "action": "enable", "relay_origin": "https://relay.example", "profile": "browser_full" }),
+            json!({ "action": "pair", "relay_origin": "https://relay.example", "profile": "core" }),
+            json!({ "action": "pair", "relay_origin": "https://relay.example", "profile": "browser_structured" }),
+            json!({ "action": "pair", "relay_origin": "https://relay.example", "profile": 1 }),
+            json!({ "action": "pair", "relay_origin": "https://relay.example", "profile": "browser_full", "extra": 1 }),
+        ] {
+            let wrong = RequestEnvelope {
+                arguments: arguments.clone(),
+                ..request.clone()
+            };
+            assert!(
+                authorize_enrollment(&verified, &wrong).is_err(),
+                "{arguments}"
+            );
+        }
         let _ = std::fs::remove_dir_all(&fixture.dir);
     }
 }

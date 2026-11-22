@@ -33,7 +33,7 @@ Configuration:
   orcel workspace list                    List workspaces and their trust state.
   orcel workspace trust <id>              Grant workspace trust (Windows Hello).
   orcel workspace untrust <id>            Revoke workspace trust (Windows Hello).
-  orcel tunnel setup --client <tunnel-client.exe> --tunnel-id <tunnel_...> [--key-file <path>]
+  orcel tunnel setup --client <tunnel-client.exe> --tunnel-id <tunnel_...> [--key-file <path>] [--profile core|browser_full]
       Configure the official OpenAI tunnel client. Without --key-file the runtime key
       is read from a hidden console prompt. The key is stored owner-only and passed to
       the tunnel client by file reference; it is never printed or logged.
@@ -120,7 +120,9 @@ Protected executables (process_spawn never runs shells or interpreters):
 Remote sessions (outbound-only; no inbound port is opened):
   orcel remote enable --relay <origin> [--workspace <id>]
       Create this device's key and register it with a relay (Windows Hello).
-  orcel remote pair                       Pair an AI client that asks for a pairing code
+  orcel remote pair [--profile core|browser_full]
+      Pair an AI client that asks for a pairing code; browser_full pairs the
+      connection for remote Orcel Browser tools only (never core tools)
       (Windows Hello, then confirm the exact client and scopes on this console).
   orcel remote connect                    Run the device uplink to the paired relay.
   orcel remote allow --connection <rc-id> [--workspaces <id,...>] [--scopes <s,...>]
