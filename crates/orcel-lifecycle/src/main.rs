@@ -514,14 +514,30 @@ fn default_release_dir() -> Result<PathBuf, LifecycleError> {
     }
 }
 
+/// The refusal of `--purge-data` without `--yes`. On macOS the install root
+/// is Orcel's whole state folder (`~/Library/Application Support/Orcel`), so
+/// it is named: audit log, approvals, trust and configuration all go. The
+/// Windows and Linux text is unchanged.
+fn purge_needs_yes(root: Option<&std::path::Path>) -> String {
+    match root.filter(|_| cfg!(target_os = "macos")) {
+        Some(root) => format!(
+            "--purge-data permanently deletes configuration, secrets, logs, and history: everything Orcel keeps in {} (the audit log, approvals, trust and configuration); add --yes to confirm",
+            root.display()
+        ),
+        None => "--purge-data permanently deletes configuration, secrets, logs, and history; add --yes to confirm".to_owned(),
+    }
+}
+
 fn uninstall(args: &mut Args) -> Result<Output, LifecycleError> {
     let purge_data = args.flag("--purge-data");
     let confirmed = args.flag("--yes");
     args.finish()?;
     if purge_data && !confirmed {
-        return Err(LifecycleError::usage(
-            "--purge-data permanently deletes configuration, secrets, logs, and history; add --yes to confirm",
-        ));
+        // Only macOS names the folder, so only macOS reads the layout here.
+        let root = cfg!(target_os = "macos")
+            .then(|| Layout::for_current_user().ok().map(|layout| layout.root))
+            .flatten();
+        return Err(LifecycleError::usage(purge_needs_yes(root.as_deref())));
     }
     let layout = Layout::for_current_user()?;
     let mut human = String::new();
@@ -650,6 +666,29 @@ mod tests {
         assert!(!holds_lifecycle_lock("status", &rest(&[])));
     }
     use std::fs;
+
+    #[test]
+    fn the_purge_confirmation_names_the_macos_folder_and_is_unchanged_elsewhere() {
+        let root = std::path::Path::new("/Users/ana/Library/Application Support/Orcel");
+        let text = super::purge_needs_yes(Some(root));
+        assert_eq!(
+            super::purge_needs_yes(None),
+            "--purge-data permanently deletes configuration, secrets, logs, and history; add --yes to confirm"
+        );
+        if cfg!(target_os = "macos") {
+            assert!(
+                text.contains("/Users/ana/Library/Application Support/Orcel"),
+                "{text}"
+            );
+            assert!(text.contains("audit log"), "{text}");
+            assert!(text.ends_with("add --yes to confirm"), "{text}");
+        } else {
+            assert_eq!(
+                text,
+                "--purge-data permanently deletes configuration, secrets, logs, and history; add --yes to confirm"
+            );
+        }
+    }
 
     #[test]
     fn only_another_copy_earlier_on_path_is_reported() {

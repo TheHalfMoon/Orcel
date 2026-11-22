@@ -477,3 +477,92 @@ fn the_launch_agent_starts_orceld_per_connection_and_uninstall_removes_it() {
     assert!(fs::symlink_metadata(&socket).is_err(), "the socket remains");
     println!("MAC-M1-07-EVIDENCE bootout loaded=false plist_left=false socket_left=false");
 }
+
+/// MAC-M1-08: the path emergency revoke takes on macOS once activated: the
+/// `orceld` of the verified install (from `Installer::verify`, never a
+/// sibling of `orcel`), with the configured workspaces. With nobody at the
+/// runner, and the donor's two bypass variables set, its STRONG check fails
+/// closed, nothing is revoked, and the refusal is in its audit log. This test
+/// starts that `orceld` itself, with this test's `HOME`, as `ipc::call` does.
+#[test]
+fn the_installed_orceld_refuses_emergency_revoke_headless() {
+    let Some(node) = node() else { return };
+    if std::env::var_os("ORCEL_MACOS_ORCELD").is_none() {
+        assert!(!required(), "ORCEL_MACOS_ORCELD must name the built orceld");
+        eprintln!("MAC-M1-08 skipped: needs the real orceld");
+        return;
+    }
+    let (home, root) = home_and_root("revoke");
+    let workspace = home.join("workspace");
+    fs::create_dir_all(&workspace).unwrap();
+    let config = orcel_lifecycle::config::Config {
+        workspaces: vec![orcel_lifecycle::config::WorkspaceEntry {
+            id: "ci".into(),
+            root: workspace,
+        }],
+        ..orcel_lifecycle::config::Config::default()
+    };
+    config.save(&Layout::new(&root)).unwrap();
+    let platform = MacosPlatform::without_agent();
+    let installer = Installer::new(Layout::new(&root), &platform);
+    installer
+        .install(&release("revoke"), &options(node))
+        .expect("install");
+    let state = installer.verify().expect("verify");
+    let orceld = root
+        .join("versions")
+        .join(&state.active.version)
+        .join("orceld");
+
+    let request = orcel_lifecycle::ipc::request(
+        "ci",
+        "trust.revoke_emergency",
+        "revoke",
+        serde_json::json!({}),
+    );
+    let mut line = request.to_string();
+    line.push('\n');
+    let started = std::time::Instant::now();
+    let mut child = std::process::Command::new(&orceld)
+        .env_clear()
+        .env("HOME", &home)
+        .env("PATH", "/usr/bin:/bin")
+        .env("ORCEL_WORKSPACES_JSON", config.workspaces_json())
+        .env("ORCEL_DEFAULT_WORKSPACE", "ci")
+        .env("CUA_ENV_SKIP_SENSITIVE_AUTH", "1")
+        .env("CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT", "1")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("start the installed orceld");
+    {
+        use std::io::Write;
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(line.as_bytes()).unwrap();
+    }
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let response: serde_json::Value =
+        serde_json::from_str(stdout.lines().next().unwrap_or_default())
+            .unwrap_or_else(|error| panic!("{error}: {stdout}"));
+    assert_eq!(response["ok"], false, "{response}");
+    let code = response["error"]["code"].as_str().unwrap_or("").to_owned();
+    assert!(code.starts_with("APPROVAL_"), "{response}");
+
+    let audit = fs::read_to_string(root.join("audit.jsonl")).expect("audit log");
+    let lines: Vec<&str> = audit
+        .lines()
+        .filter(|line| line.contains("trust.revoke_emergency"))
+        .collect();
+    assert!(!lines.is_empty(), "{audit}");
+    assert!(
+        !lines.iter().any(|line| line.contains("\"SUCCESS\"")),
+        "{audit}"
+    );
+    println!(
+        "MAC-M1-08-EVIDENCE installed_orceld code={code} revoked=false audited={} bypass_env_ignored=true seconds={}",
+        lines.len(),
+        started.elapsed().as_secs()
+    );
+}

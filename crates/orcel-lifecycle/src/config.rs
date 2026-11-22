@@ -108,6 +108,7 @@ impl Config {
 
     pub fn save(&self, layout: &Layout) -> Result<(), LifecycleError> {
         self.validate_shape()?;
+        layout.ensure_private_root()?;
         std::fs::create_dir_all(layout.state_dir())
             .map_err(|error| LifecycleError::io("create state directory", error))?;
         write_json_atomic(&layout.config_file(), self)
@@ -299,6 +300,7 @@ pub fn validate_runtime_key(key: &str) -> Result<(), LifecycleError> {
 /// Stores the runtime key in the protected secrets directory.
 pub fn store_runtime_key(layout: &Layout, key: &str) -> Result<(), LifecycleError> {
     validate_runtime_key(key)?;
+    layout.ensure_private_root()?;
     std::fs::create_dir_all(layout.secrets_dir())
         .map_err(|error| LifecycleError::io("create secrets directory", error))?;
     write_bytes_atomic(&layout.runtime_key_file(), key.as_bytes())

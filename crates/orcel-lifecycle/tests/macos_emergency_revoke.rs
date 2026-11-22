@@ -1,22 +1,25 @@
-//! MAC-M1-08 on the hosted macOS runner: `orcel emergency-revoke` through
-//! the real `orcel` CLI and the real `orceld` beside it (the pinned
-//! next-to-`orcel` binary, XP-17), with nobody at the runner to answer.
+//! MAC-M1-08 on the hosted macOS runner, before the macOS M1 activation.
 //!
-//! The CLI must name LocalAuthentication in its prompt; orceld's STRONG
-//! check (summary dialog then LocalAuthentication) must fail closed headless;
-//! nothing is revoked; and the refusal is in orceld's audit log. The donor's
-//! two bypass variables are set and must change nothing (S-24). The test
-//! uses its own `HOME`, so the runner user's state is never touched.
+//! `orcel emergency-revoke` on macOS runs only the `orceld` of the verified
+//! per-user install (activation checklist): never a binary found beside
+//! `orcel`. While `host_platform()` still refuses the install on macOS, the
+//! command must therefore refuse with the not-activated message, even though
+//! a real `orceld` sits beside `orcel` (the CI step builds it there): no
+//! prompt, no `orceld`, nothing audited. The STRONG path itself, through the
+//! installed `orceld`, is exercised in `macos_install.rs`
+//! (`the_installed_orceld_refuses_emergency_revoke_headless`).
 //!
-//! The founder's approve-and-cancel run on a real Mac is UNVERIFIED here.
-//! With `ORCEL_REQUIRE_MACOS_REVOKE=1` (CI), a missing `orceld` beside
-//! `orcel` fails instead of skipping.
+//! `Config::save` (the first write of `orcel workspace add`) creates the
+//! state folder 0700 on macOS, as orceld requires (activation checklist).
+//!
+//! The test uses its own `HOME`. With `ORCEL_REQUIRE_MACOS_REVOKE=1` (CI), a
+//! missing `orceld` beside `orcel` fails instead of skipping.
 #![cfg(target_os = "macos")]
 
 use orcel_lifecycle::config::{Config, WorkspaceEntry};
 use orcel_lifecycle::layout::Layout;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 fn unique(label: &str) -> PathBuf {
@@ -27,14 +30,14 @@ fn unique(label: &str) -> PathBuf {
 }
 
 #[test]
-fn emergency_revoke_fails_closed_headless_revokes_nothing_and_is_audited() {
+fn emergency_revoke_never_runs_a_sibling_orceld_before_activation() {
     let orcel = Path::new(env!("CARGO_BIN_EXE_orcel"));
-    let orceld = orcel.with_file_name("orceld");
-    if !orceld.is_file() {
+    let sibling = orcel.with_file_name("orceld");
+    if !sibling.is_file() {
         assert!(
             std::env::var_os("ORCEL_REQUIRE_MACOS_REVOKE").is_none(),
             "build orceld beside orcel first ({})",
-            orceld.display()
+            sibling.display()
         );
         eprintln!("MAC-M1-08 skipped: no orceld beside orcel");
         return;
@@ -55,71 +58,36 @@ fn emergency_revoke_fails_closed_headless_revokes_nothing_and_is_audited() {
     }
     .save(&Layout::new(&root))
     .unwrap();
-    // orceld holds its state root to XP-01's private-directory rule (0700)
-    // and repairs nothing, while `Config::save` creates the root with the
-    // umask. An installed Orcel gets 0700 from the installer (MAC-M1-03);
-    // here the root is made private as that install would leave it.
-    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+    let root_mode = fs::metadata(&root).unwrap().mode() & 0o777;
+    assert_eq!(
+        root_mode, 0o700,
+        "Config::save made the state folder private"
+    );
 
-    let started = std::time::Instant::now();
     let output = std::process::Command::new(orcel)
         .arg("emergency-revoke")
         .env_clear()
         .env("HOME", &home)
         .env("PATH", "/usr/bin:/bin")
-        .env("CUA_ENV_SKIP_SENSITIVE_AUTH", "1")
-        .env("CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT", "1")
         .output()
         .expect("run orcel emergency-revoke");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stdout}\n{stderr}");
     assert!(
-        !output.status.success(),
-        "emergency revoke succeeded headless:\n{stdout}\n{stderr}"
+        stderr.contains("not activated on macOS"),
+        "the not-activated refusal:\n{stderr}"
     );
     assert!(
-        stderr.contains(
-            "Confirm with Touch ID or your password (LocalAuthentication) when prompted. Every pending approval will be invalidated."
-        ),
-        "{stderr}"
+        !stderr.contains("Confirm with"),
+        "nothing was asked before the refusal:\n{stderr}"
     );
-    assert!(!stderr.contains("Windows Hello"), "{stderr}");
-    assert!(!stdout.contains("Emergency revoke recorded"), "{stdout}");
-
-    let audit = fs::read_to_string(root.join("audit.jsonl")).unwrap_or_else(|error| {
-        panic!("orceld wrote no audit log ({error}); orcel said:\n{stdout}\n{stderr}")
-    });
-    let lines: Vec<&str> = audit
-        .lines()
-        .filter(|line| line.contains("trust.revoke_emergency"))
-        .collect();
-    assert!(!lines.is_empty(), "no revoke attempt was audited:\n{audit}");
     assert!(
-        lines.iter().all(|line| !line.contains("\"SUCCESS\"")),
-        "a revoke was recorded as done:\n{audit}"
+        !root.join("audit.jsonl").exists(),
+        "no orceld ran, so nothing was audited"
     );
-    let outcome = lines
-        .iter()
-        .find_map(|line| {
-            [
-                "APPROVAL_UNAVAILABLE",
-                "APPROVAL_DENIED",
-                "FAILED",
-                "DENIED",
-            ]
-            .into_iter()
-            .find(|outcome| line.contains(&format!("\"{outcome}\"")))
-        })
-        .unwrap_or("unknown");
-    assert_ne!(outcome, "unknown", "{audit}");
-    let reason = stderr
-        .lines()
-        .rev()
-        .find(|line| !line.trim().is_empty())
-        .unwrap_or("");
     println!(
-        "MAC-M1-08-EVIDENCE emergency_revoke exit={} audited_outcome={outcome} revoked=false bypass_env_ignored=true seconds={} reason={reason:?}",
-        output.status.code().unwrap_or(-1),
-        started.elapsed().as_secs()
+        "MAC-M1-08-EVIDENCE preactivation sibling_orceld_present=true refused=true orceld_launched=false state_root_mode={root_mode:o} exit={}",
+        output.status.code().unwrap_or(-1)
     );
 }

@@ -252,6 +252,9 @@ pub fn transcript(layout: &crate::layout::Layout, line: &str) {
     // Never write through a link or reparse point: the logs directory and the
     // file must be plain entries beneath the install root.
     let path = layout.logs_dir().join("lifecycle.log");
+    if layout.ensure_private_root().is_err() {
+        return;
+    }
     for entry in [layout.logs_dir(), path.clone()] {
         if let Ok(metadata) = fs::symlink_metadata(&entry) {
             if metadata.file_type().is_symlink() || crate::manifest::is_reparse_point(&metadata) {
