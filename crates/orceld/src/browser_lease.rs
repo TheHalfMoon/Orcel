@@ -37,6 +37,16 @@
 //! session since OB-07), only implemented
 //! families can be leased, and a value that looks secret or holds a stored
 //! secret is never typed under a lease.
+//!
+//! SG-000135 OB-09 (founder-delegated, engineering-chosen (2026-11-22)): a
+//! remote `browser_full` caller's session (`FullAccess::for_remote_caller`)
+//! is covered only by a lease the installed SG-000132 authority service
+//! issued to that remote client (its `client_ref`, bound to the paired
+//! connection, the principal and the MCP session). A lease from any other
+//! issuer (the interim per-user full-control store) never covers a remote
+//! caller: it is refused `lease_invalid` (CAPABILITY_DENIED), nothing is
+//! sent, and later actions ask. High-impact and unclassified actions ask
+//! exactly as locally, on the owner's Windows dialog.
 
 use orcel_contracts::browser_impact::Impact;
 use orcel_contracts::{FailureCode, RequestEnvelope};
@@ -112,9 +122,23 @@ pub(crate) struct CoveredAction {
     pub page_id: String,
 }
 
+/// SG-000135 OB-09: who issues the leases a [`LeaseSource`] reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LeaseIssuer {
+    /// The installed SG-000132 authority service (its signature verified
+    /// with the public key the verified service reported).
+    AuthorityService,
+    /// The interim per-user full-control store. Never covers a remote
+    /// caller.
+    #[cfg_attr(not(test), allow(dead_code))]
+    InterimStore,
+}
+
 /// Where a session's lease comes from: the authority service in orceld, a
 /// scripted one in tests.
 pub(crate) trait LeaseSource {
+    /// SG-000135 OB-09: who issues the leases this source reports.
+    fn issuer(&self) -> LeaseIssuer;
     /// One read of the service. `Ok(None)`: no service lease can apply here
     /// (the service is not installed, or this orceld is not its trusted
     /// image). An error fails closed.
@@ -395,6 +419,9 @@ pub(crate) struct FullAccess {
     revocation_floor: u64,
     /// The latest time seen: a clock behind it went backwards.
     clock_floor: u64,
+    /// SG-000135 OB-09: the session belongs to a remote caller, so only a
+    /// lease the authority service issued to this client may cover it.
+    remote: bool,
 }
 
 fn lease_invalid(reason: &str) -> ProviderError {
@@ -428,7 +455,37 @@ impl FullAccess {
             uses: 0,
             revocation_floor: 0,
             clock_floor: 0,
+            remote: false,
         }
+    }
+
+    /// SG-000135 OB-09: this session belongs to a remote caller. Only a
+    /// lease the installed authority service issued to this client (its
+    /// `client_ref` and principal) may cover it; anything else is refused.
+    pub(crate) fn for_remote_caller(mut self) -> Self {
+        self.remote = true;
+        self
+    }
+
+    /// SG-000135 OB-09: why `lease` may not cover this remote caller's
+    /// session, if it may not. Local sessions are unchanged.
+    fn refuse_for_remote(&self, lease: &BrowserLease) -> Option<&'static str> {
+        if !self.remote {
+            return None;
+        }
+        if self.source.issuer() != LeaseIssuer::AuthorityService
+            || !lease
+                .lease_id
+                .starts_with(orcel_policy::browser_lease::SERVICE_LEASE_ID_PREFIX)
+        {
+            return Some(
+                "an interim-store lease never covers a remote caller; only a lease the installed Orcel authority service issued to this remote client does",
+            );
+        }
+        if lease.client_ref != self.client_ref || lease.principal_id != self.client_ref {
+            return Some("browser lease names another client");
+        }
+        None
     }
 
     /// The authority service and the secret store, with this process's
@@ -567,6 +624,10 @@ impl FullAccess {
             else {
                 return LeaseDecision::Ask;
             };
+            if let Some(reason) = self.refuse_for_remote(&lease) {
+                self.kill(&lease.lease_id);
+                return LeaseDecision::Refuse(lease_invalid(reason));
+            }
             if let Err(reason) = self.check(&lease, view.epoch, view.revocations, moment) {
                 // A lease for this session that does not hold now is never
                 // used; it is reported once.
@@ -667,6 +728,9 @@ impl FullAccess {
         };
         if current != cached.lease || view.epoch != cached.epoch {
             return refuse(self, "the browser lease or the authority epoch changed");
+        }
+        if let Some(reason) = self.refuse_for_remote(&current) {
+            return refuse(self, reason);
         }
         if let Err(reason) = self.check(&current, view.epoch, view.revocations, moment) {
             return refuse(self, &reason);

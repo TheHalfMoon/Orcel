@@ -320,6 +320,10 @@ fn public_verifier(_public: &[u8]) -> Result<Box<dyn SignatureVerifier>, Provide
 }
 
 impl LeaseSource for ServiceLeaseSource {
+    fn issuer(&self) -> crate::browser_lease::LeaseIssuer {
+        crate::browser_lease::LeaseIssuer::AuthorityService
+    }
+
     fn read(&self) -> Result<Option<AuthorityView>, ProviderError> {
         let Some(client) = self.client()? else {
             return Ok(None);

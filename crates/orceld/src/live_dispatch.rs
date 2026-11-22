@@ -82,14 +82,15 @@ pub fn dispatch_full(
     approval: &impl ApprovalBroker,
     request: &RequestEnvelope,
     action: &crate::browser_full::FullAction,
+    caller: &crate::browser_remote::Caller,
 ) -> Result<Value, ProviderError> {
     #[cfg(all(windows, feature = "live-browser-dev"))]
     {
-        full::dispatch(workspace, approval, request, action)
+        full::dispatch(workspace, approval, request, action, caller)
     }
     #[cfg(not(all(windows, feature = "live-browser-dev")))]
     {
-        let _ = (workspace, approval, request, action);
+        let _ = (workspace, approval, request, action, caller);
         Err(unavailable())
     }
 }
@@ -829,6 +830,7 @@ mod full {
         dirs: &SessionDirs,
         mode: SessionMode,
         profile: Option<&str>,
+        remote: bool,
     ) -> Result<LiveBrowser, ProviderError> {
         let launch = WorkerHostLaunch {
             node: None,
@@ -868,9 +870,14 @@ mod full {
         // SG-000135 OB-08: the session's Full Access lease cache, over the
         // SG-000132 authority service; it covers nothing until the owner's
         // `orcel browser grant` has the service issue a lease.
-        browser.set_full_access(crate::browser_lease::FullAccess::service_backed(
-            session_id, client, task,
-        ));
+        // SG-000135 OB-09: a remote caller's session takes only a lease the
+        // installed service issued to that remote client.
+        let access = crate::browser_lease::FullAccess::service_backed(session_id, client, task);
+        browser.set_full_access(if remote {
+            access.for_remote_caller()
+        } else {
+            access
+        });
         if let Some(name) = profile {
             browser.set_profile(name);
         }
@@ -896,8 +903,14 @@ mod full {
         approval: &impl ApprovalBroker,
         request: &RequestEnvelope,
         action: &FullAction,
+        caller: &crate::browser_remote::Caller,
     ) -> Result<Value, ProviderError> {
-        let client = request.client_session_id.as_str();
+        // SG-000135 OB-09: a remote caller acts as a broker client bound to
+        // its paired connection and principal, and never in a persistent
+        // profile (checked again here, after the profile gate).
+        crate::browser_remote::refuse_remote_profile(caller, action)?;
+        let client_key = caller.broker_client(&request.client_session_id);
+        let client = client_key.as_str();
         let probe = || crate::browser_broker::verified_epoch(approval);
         // Each arm checks the approval epoch inside the same broker borrow
         // as its action: an emergency revoke in this or any other orceld,
@@ -937,6 +950,7 @@ mod full {
                     SessionOptions {
                         mode,
                         profile: lease,
+                        caller: caller.clone(),
                     },
                     random,
                     orcel_approval::now_ms(),
@@ -953,6 +967,7 @@ mod full {
                             dirs,
                             mode,
                             profile_name.as_deref(),
+                            caller.is_remote(),
                         )
                     },
                 )?;
@@ -1022,7 +1037,7 @@ mod full {
                     live.worker.check_challenge_throttled();
                     let pages = live.worker.needs_you();
                     (
-                        crate::browser_broker::needs_you_json(live.mode, &pages),
+                        crate::browser_broker::needs_you_json(live.mode, &pages, &live.caller),
                         live.worker.page_state(),
                         live.worker.takeover_input_source(),
                         live.worker.peak_memory_bytes(),
@@ -1150,7 +1165,7 @@ mod full {
             if let Value::Object(map) = &mut done.reply {
                 map.insert(
                     "needs_you".into(),
-                    crate::browser_broker::needs_you_json(session.mode, &pages),
+                    crate::browser_broker::needs_you_json(session.mode, &pages, &session.caller),
                 );
             }
         }

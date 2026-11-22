@@ -156,6 +156,9 @@ pub(crate) struct SessionOptions {
     /// A persistent Orcel-managed profile, held for the session's life;
     /// `None` for the default ephemeral profile.
     pub profile: Option<crate::browser_profiles::ProfileLease>,
+    /// SG-000135 OB-09: who opened it (local, or a remote caller), fixed
+    /// for the session's life and named by every intent and receipt.
+    pub caller: crate::browser_remote::Caller,
 }
 
 /// What the broker needs from a session's worker.
@@ -391,6 +394,9 @@ pub(crate) struct Receipt {
     pub action: String,
     /// SG-000135 OB-04: `shadow` or `visible`.
     pub mode: String,
+    /// SG-000135 OB-09: the session's caller (local, or the remote
+    /// provider, device and paired connection).
+    pub caller: crate::browser_remote::Caller,
     pub page_id: Option<String>,
     pub generation_before: Option<u64>,
     pub generation_after: Option<u64>,
@@ -456,6 +462,7 @@ impl Receipt {
             "session_id": self.session_id,
             "action": self.action,
             "mode": self.mode,
+            "caller": self.caller.to_json(),
             "profile": self.profile,
             "page_id": self.page_id,
             "generation_before": self.generation_before,
@@ -575,6 +582,8 @@ pub(crate) struct BrokerSession<W> {
     pub created_ms: u64,
     /// SG-000135 OB-04: Shadow or Visible, fixed for the session's life.
     pub mode: SessionMode,
+    /// SG-000135 OB-09: local, or the remote caller that opened it.
+    pub caller: crate::browser_remote::Caller,
     /// SG-000135 OB-04: the persistent profile held, released when the
     /// session ends (after its worker is gone).
     profile: Option<crate::browser_profiles::ProfileLease>,
@@ -632,6 +641,7 @@ impl<W> BrokerSession<W> {
             seq,
             session_id: self.id.clone(),
             mode: self.mode.as_str().to_owned(),
+            caller: self.caller.clone(),
             profile: self.profile_name().map(str::to_owned),
             draft,
             at_ms,
@@ -681,6 +691,7 @@ impl<W> BrokerSession<W> {
             session_id: self.id.clone(),
             action: record.action,
             mode: self.mode.as_str().to_owned(),
+            caller: self.caller.clone(),
             page_id: record.page_id,
             generation_before: record.generation_before,
             generation_after: record.generation_after,
@@ -1238,6 +1249,7 @@ impl<W: SessionWorker> Broker<W> {
             dirs,
             created_ms: now_ms,
             mode: options.mode,
+            caller: options.caller,
             profile: options.profile,
             worker,
             page_id: None,
@@ -1264,6 +1276,7 @@ impl<W: SessionWorker> Broker<W> {
             "event": "session_start",
             "session_id": session.id,
             "mode": session.mode.as_str(),
+            "caller": session.caller.to_json(),
             "profile": session.profile_name(),
             "task_sha256": session
                 .task
@@ -1573,7 +1586,20 @@ fn needs_you_guidance(mode: SessionMode, kind: &str) -> &'static str {
 /// its challenge ends the mission there, and the person completes the check
 /// in a Visible session (with a persistent profile, a sign-in carries over
 /// to the next Shadow run). A Visible session's person uses its window.
-pub(crate) fn needs_you_json(mode: SessionMode, pages: &[NeedsYou]) -> Value {
+///
+/// SG-000135 OB-09: in a remote caller's session each entry also names the
+/// remote provider and device (from the authenticated remote context, as
+/// the approval prompt's Origin line does), and the guidance says that the
+/// remote client drives the page once the person has signed in, so the
+/// person knows whose session they complete. The reply carries nothing from
+/// the person's sign-in: only fixed words, the page id and the detector's
+/// closed signal names; later replies show page URLs through `agent_url`,
+/// which masks query and fragment values after a sign-in.
+pub(crate) fn needs_you_json(
+    mode: SessionMode,
+    pages: &[NeedsYou],
+    caller: &crate::browser_remote::Caller,
+) -> Value {
     let handoff = match mode {
         SessionMode::Visible => "visible_window",
         SessionMode::Shadow => "rerun_in_visible",
@@ -1582,7 +1608,7 @@ pub(crate) fn needs_you_json(mode: SessionMode, pages: &[NeedsYou]) -> Value {
         pages
             .iter()
             .map(|page| {
-                json!({
+                let mut entry = json!({
                     "page_id": page.page_id,
                     "kind": page.kind,
                     "signals": page.signals,
@@ -1590,10 +1616,45 @@ pub(crate) fn needs_you_json(mode: SessionMode, pages: &[NeedsYou]) -> Value {
                     "clearing": page.clearing,
                     "handoff": handoff,
                     "guidance": needs_you_guidance(mode, page.kind),
-                })
+                });
+                if let (crate::browser_remote::Caller::Remote(remote), Value::Object(map)) =
+                    (caller, &mut entry)
+                {
+                    map.insert(
+                        "remote_caller".into(),
+                        json!({"provider": remote.provider, "device": remote.device}),
+                    );
+                    map.insert(
+                        "guidance".into(),
+                        Value::String(remote_needs_you_guidance(mode, page.kind, remote)),
+                    );
+                }
+                entry
             })
             .collect(),
     )
+}
+
+/// SG-000135 OB-09: the handoff for a remote caller's session. It names
+/// the remote provider and device, says that the remote client then acts in
+/// the signed-in page, and never points at a persistent profile (a remote
+/// caller cannot use one).
+fn remote_needs_you_guidance(
+    mode: SessionMode,
+    kind: &str,
+    remote: &crate::browser_remote::RemoteCaller,
+) -> String {
+    let notice = format!(
+        "this session is driven by a remote client (provider {}, device {}), not by someone at this PC; once the person completes this page, that remote client acts in it, as the signed-in account if this is a sign-in, until the session ends; complete it only for a task started from that client; Orcel never reads a password typed here, and after a sign-in the remote client sees page URLs without their query or fragment values",
+        remote.provider, remote.device
+    );
+    let handoff = match (mode, kind == "sign_in") {
+        (SessionMode::Visible, true) => "the person at this PC signs in in this session's window, by typing or by choosing the browser's own saved password; Orcel never fills, reads or types a password; only a sign-in on this page's own admitted origin can go through, and not once a Full Access lease was used in this session; once it no longer needs you (about three seconds after the sign-in form is gone), observe the page again before acting",
+        (SessionMode::Visible, false) => "the person at this PC completes it in this session's window; once it no longer needs you (about three seconds after it is gone), observe the page again before acting",
+        (SessionMode::Shadow, true) => "a Shadow session has no window for the person, and a remote client cannot use a persistent Orcel-managed profile, so no sign-in carries over: close this session, create a Visible session, open the sign-in page itself, and the person at this PC signs in in its window with no Full Access lease used; then continue there",
+        (SessionMode::Shadow, false) => "a Shadow session has no window for the person: close this session, create a Visible session, and the person at this PC completes the check in its window; then continue there",
+    };
+    format!("{notice}; {handoff}")
 }
 
 fn unknown_session() -> ProviderError {
@@ -2964,19 +3025,34 @@ mod tests {
             signals: vec!["captcha_widget".into()],
             clearing: false,
         }];
-        let shadow = needs_you_json(SessionMode::Shadow, &pages);
+        let shadow = needs_you_json(
+            SessionMode::Shadow,
+            &pages,
+            &crate::browser_remote::Caller::Local,
+        );
         assert_eq!(shadow[0]["page_id"], "pg-0123");
         assert_eq!(shadow[0]["kind"], "captcha");
         assert_eq!(shadow[0]["signals"][0], "captcha_widget");
         assert_eq!(shadow[0]["handoff"], "rerun_in_visible");
         assert_eq!(shadow[0]["clearing"], false);
-        let visible = needs_you_json(SessionMode::Visible, &pages);
+        let visible = needs_you_json(
+            SessionMode::Visible,
+            &pages,
+            &crate::browser_remote::Caller::Local,
+        );
         assert_eq!(visible[0]["handoff"], "visible_window");
         for kind in ["captcha", "mfa", "sign_in", "passkey", "other"] {
             let text = needs_you_reason(kind);
             assert!(!text.is_empty() && !text.contains("http"), "{kind}");
         }
-        assert_eq!(needs_you_json(SessionMode::Shadow, &[]), json!([]));
+        assert_eq!(
+            needs_you_json(
+                SessionMode::Shadow,
+                &[],
+                &crate::browser_remote::Caller::Local
+            ),
+            json!([])
+        );
     }
 
     #[test]
@@ -2987,7 +3063,11 @@ mod tests {
             signals: vec!["password_field".into()],
             clearing: false,
         }];
-        let visible = needs_you_json(SessionMode::Visible, &pages);
+        let visible = needs_you_json(
+            SessionMode::Visible,
+            &pages,
+            &crate::browser_remote::Caller::Local,
+        );
         assert_eq!(visible[0]["kind"], "sign_in");
         assert_eq!(visible[0]["handoff"], "visible_window");
         let guidance = visible[0]["guidance"].as_str().unwrap();
@@ -2998,7 +3078,11 @@ mod tests {
             guidance.contains("never fills, reads or types"),
             "{guidance}"
         );
-        let shadow = needs_you_json(SessionMode::Shadow, &pages);
+        let shadow = needs_you_json(
+            SessionMode::Shadow,
+            &pages,
+            &crate::browser_remote::Caller::Local,
+        );
         assert_eq!(shadow[0]["handoff"], "rerun_in_visible");
         let guidance = shadow[0]["guidance"].as_str().unwrap();
         assert!(
@@ -3373,6 +3457,7 @@ mod tests {
                 SessionOptions {
                     mode: SessionMode::Shadow,
                     profile: Some(lease),
+                    ..Default::default()
                 },
                 "session=kept",
             )
@@ -3417,6 +3502,7 @@ mod tests {
                 SessionOptions {
                     mode: SessionMode::Shadow,
                     profile: Some(lease),
+                    ..Default::default()
                 },
                 "session=kept",
             )
@@ -3444,6 +3530,7 @@ mod tests {
                     SessionOptions {
                         mode: SessionMode::Shadow,
                         profile: Some(lease),
+                        ..Default::default()
                     },
                     name,
                 )
@@ -3489,6 +3576,7 @@ mod tests {
                 SessionOptions {
                     mode: SessionMode::Visible,
                     profile: None,
+                    ..Default::default()
                 },
                 "v",
             )
@@ -3526,6 +3614,7 @@ mod tests {
             SessionOptions {
                 mode: SessionMode::Shadow,
                 profile: Some(lease),
+                ..Default::default()
             },
             "x",
         );
@@ -3548,6 +3637,7 @@ mod tests {
                 SessionOptions {
                     mode: SessionMode::Shadow,
                     profile: Some(lease),
+                    ..Default::default()
                 },
                 "stuck",
             )
@@ -3590,6 +3680,7 @@ mod tests {
                 SessionOptions {
                     mode: SessionMode::Shadow,
                     profile: Some(lease),
+                    ..Default::default()
                 },
                 "x",
             )
@@ -3633,5 +3724,197 @@ mod tests {
         broker.end_all(EndReason::EmergencyStop);
         assert!(!broker.profile_approved("default", "client-a", "work"));
         Ok(())
+    }
+
+    /// SG-000135 OB-09: a remote caller's session names its remote origin
+    /// (provider, device and paired connection) in its start event, every
+    /// intent and every receipt, each covered by its digest, and the chain
+    /// still verifies; a local session names `local`.
+    #[test]
+    fn ob09_receipts_carry_the_remote_origin() -> Result<(), String> {
+        let mut scene = Scene::new("ob09-remote");
+        let (mut broker, chain_path, _store) = chained(&scene, INSTANCE, "remote")?;
+        let remote = orcel_contracts::RemoteContext {
+            principal: format!("rp-{}", "a".repeat(32)),
+            remote_connection_id: format!("rc-{}", "b".repeat(32)),
+            connection_id: "cn-1".into(),
+            device_id: format!("dev-{}", "c".repeat(32)),
+            device_epoch: 1,
+            provider_kind: "openai".into(),
+            client_profile_id: "chatgpt".into(),
+            client_profile_revision: 1,
+            tool_surface_profile: "browser_full".into(),
+            scopes: vec!["orcel.execute".into()],
+        };
+        let caller = crate::browser_remote::Caller::of(Some(&remote));
+        let client = caller.broker_client("s1");
+        let (shutdowns, usable) = (Rc::clone(&scene.shutdowns), Rc::clone(&scene.usable));
+        let random = scene.random();
+        let id = broker
+            .create_with(
+                &client,
+                Some("task"),
+                SessionOptions {
+                    caller: caller.clone(),
+                    ..Default::default()
+                },
+                random,
+                1,
+                move |_, dirs| {
+                    Ok(TestWorker {
+                        profile_marker: dirs.profiles.join("cookies.txt"),
+                        usable,
+                        shutdowns,
+                    })
+                },
+            )
+            .map(|session| session.id.clone())
+            .map_err(|e| e.message)?;
+        // Another client (the same MCP session id, locally) cannot reach it.
+        assert!(broker.session("s1", &id).is_err());
+        let session = broker.session(&client, &id).map_err(|e| e.message)?;
+        let receipt = act_once(
+            session,
+            draft("browser_click", Some("n1")),
+            record("browser_click", "done"),
+            10,
+        )?;
+        let expected = json!({
+            "kind": "remote",
+            "provider": "openai",
+            "device": remote.device_id,
+            "connection": remote.remote_connection_id,
+        });
+        let json = receipt.to_json();
+        assert_eq!(json["caller"], expected);
+        let digest = crate::browser_receipts::receipt_digest_of(&json);
+        assert_eq!(digest.as_deref(), Some(receipt.receipt_sha256.as_str()));
+        // The intent and the session start on the chain name it too.
+        let mut seen = 0;
+        for event in events(&chain_path)? {
+            let payload = &event.detail;
+            if payload["event"] == "session_start" {
+                assert_eq!(payload["caller"], expected);
+                seen += 1;
+            }
+            if let Some(intent) = payload.get("intent") {
+                assert_eq!(intent["caller"], expected);
+                seen += 1;
+            }
+            if let Some(receipt) = payload.get("receipt") {
+                assert_eq!(receipt["caller"], expected);
+                seen += 1;
+            }
+        }
+        assert_eq!(seen, 3);
+        let report = crate::browser_receipts::verify_receipts(&chain_path, None, None, None)?;
+        assert!(!report.broken && !report.unrecorded, "{}", report.value);
+        // A local session names `local`.
+        let local = scene
+            .create(&mut broker, "client-a", "1")
+            .map_err(|e| e.message)?;
+        let session = broker.session("client-a", &local).map_err(|e| e.message)?;
+        let receipt = act_once(
+            session,
+            draft("browser_open", None),
+            record("browser_open", "done"),
+            20,
+        )?;
+        assert_eq!(receipt.to_json()["caller"], json!({"kind": "local"}));
+        Ok(())
+    }
+
+    /// SG-000135 OB-09: in a remote caller's session the Needs-you handoff
+    /// names the remote provider and device and says the remote client then
+    /// drives the page, never points at a persistent profile, and carries
+    /// nothing from the person's sign-in (fixed words, the page id and the
+    /// closed signal names only; URLs after a sign-in mask their values).
+    #[test]
+    fn ob09_a_remote_sessions_handoff_names_the_remote_client_and_carries_nothing_from_the_sign_in()
+    {
+        let remote = orcel_contracts::RemoteContext {
+            principal: format!("rp-{}", "a".repeat(32)),
+            remote_connection_id: format!("rc-{}", "b".repeat(32)),
+            connection_id: "cn-1".into(),
+            device_id: format!("dev-{}", "c".repeat(32)),
+            device_epoch: 1,
+            provider_kind: "openai".into(),
+            client_profile_id: "chatgpt".into(),
+            client_profile_revision: 1,
+            tool_surface_profile: "browser_full".into(),
+            scopes: vec!["orcel.execute".into()],
+        };
+        let caller = crate::browser_remote::Caller::of(Some(&remote));
+        for kind in ["sign_in", "mfa", "passkey", "captcha", "other"] {
+            let pages = [NeedsYou {
+                page_id: "pg-0123".into(),
+                kind,
+                signals: vec!["password_field".into()],
+                clearing: false,
+            }];
+            for mode in [SessionMode::Visible, SessionMode::Shadow] {
+                let entry = &needs_you_json(mode, &pages, &caller)[0];
+                assert_eq!(
+                    entry["remote_caller"],
+                    json!({"provider": "openai", "device": remote.device_id})
+                );
+                let guidance = entry["guidance"].as_str().unwrap_or_default();
+                assert!(guidance.contains("remote client (provider openai, device dev-"));
+                assert!(
+                    guidance.contains("that remote client acts in it"),
+                    "{guidance}"
+                );
+                assert!(guidance.contains("person at this PC"), "{guidance}");
+                // A remote caller cannot use a persistent profile.
+                assert!(!guidance.contains("persistent Orcel-managed profile keeps"));
+                assert!(!guidance.contains("on that profile"), "{guidance}");
+                // Only fixed fields: no value, URL or page text.
+                let mut keys: Vec<&str> = entry
+                    .as_object()
+                    .map(|map| map.keys().map(String::as_str).collect())
+                    .unwrap_or_default();
+                keys.sort_unstable();
+                assert_eq!(
+                    keys,
+                    [
+                        "clearing",
+                        "guidance",
+                        "handoff",
+                        "kind",
+                        "page_id",
+                        "reason",
+                        "remote_caller",
+                        "signals"
+                    ]
+                );
+                assert!(!entry.to_string().contains("http"));
+            }
+        }
+        // A local session's handoff is unchanged.
+        let pages = [NeedsYou {
+            page_id: "pg-0123".into(),
+            kind: "sign_in",
+            signals: vec!["password_field".into()],
+            clearing: false,
+        }];
+        let local = &needs_you_json(
+            SessionMode::Shadow,
+            &pages,
+            &crate::browser_remote::Caller::Local,
+        )[0];
+        assert!(local.get("remote_caller").is_none());
+        assert_eq!(
+            local["guidance"],
+            needs_you_guidance(SessionMode::Shadow, "sign_in")
+        );
+        // After the person's sign-in, a URL the remote client reads masks
+        // its query and fragment values.
+        let shown = crate::agent_url::agent_url(
+            "https://fixture.test/home?session=abc123&user=ada#token=xyz",
+            true,
+        );
+        for secret in ["abc123", "ada", "xyz"] {
+            assert!(!shown.contains(secret), "{shown}");
+        }
     }
 }
