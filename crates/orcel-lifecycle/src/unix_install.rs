@@ -26,8 +26,10 @@
 //! ([`crate::manifest::verify_payload`]), which also refuses a hard-linked
 //! payload file on Unix.
 //!
-//! [`MacosPlatform`] exists on macOS only, and `host_platform()` does not
-//! return it yet: the `orcel` lifecycle commands on macOS wait for the
+//! [`MacosPlatform`] exists on macOS only. It also writes, loads, unloads
+//! and removes the per-user launchd agent that starts `orceld` on demand
+//! (MAC-M1-07, [`crate::launchd`]) whenever the active version changes and
+//! on uninstall. `host_platform()` does not return it yet: the `orcel` lifecycle commands on macOS wait for the
 //! founder's activation of the macOS M1 grain (approval 1 in
 //! `MACOS_M0_READINESS.md`). Until then it is reached from tests on the
 //! hosted macOS runner only.
@@ -145,21 +147,220 @@ pub fn parse_macos_major(output: &str) -> Result<u32, LifecycleError> {
 }
 
 #[cfg(target_os = "macos")]
-pub use macos::MacosPlatform;
+pub use macos::{AgentTarget, MacosPlatform};
 
 #[cfg(target_os = "macos")]
 mod macos {
     use super::{parse_macos_major, MIN_MACOS_MAJOR};
+    use crate::launchd::{self, AgentSpec};
+    use crate::layout::Layout;
     use crate::platform::Platform;
     use crate::version::Version;
     use crate::LifecycleError;
-    use std::path::Path;
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Output, Stdio};
 
-    /// The macOS host operations of the per-user install (MAC-M1-03).
+    /// `launchctl` by absolute path, never from `PATH`.
+    const LAUNCHCTL: &str = "/bin/launchctl";
+
+    /// Where the per-user launchd agent goes (MAC-M1-07).
+    #[derive(Debug, Clone, Default)]
+    pub enum AgentTarget {
+        /// `~/Library/LaunchAgents/ai.orcel.orceld.plist`, its socket in
+        /// the per-user runtime directory, loaded in `gui/<uid>`.
+        #[default]
+        CurrentUser,
+        /// Its own folder, label, socket and extra environment (the hosted
+        /// runner tests, so they never touch the runner user's agents).
+        Custom {
+            plist_dir: PathBuf,
+            label: String,
+            socket: PathBuf,
+            extra_environment: BTreeMap<String, String>,
+        },
+        /// No agent: the install tests that do not exercise launchd.
+        None,
+    }
+
+    /// A resolved agent: its plist folder, label, socket and extra
+    /// environment.
+    type ResolvedAgent = (PathBuf, String, PathBuf, BTreeMap<String, String>);
+
+    /// The macOS host operations of the per-user install (MAC-M1-03) and
+    /// its launchd agent (MAC-M1-07).
     #[derive(Debug, Default)]
-    pub struct MacosPlatform;
+    pub struct MacosPlatform {
+        pub agent: AgentTarget,
+    }
+
+    impl MacosPlatform {
+        /// The host operations without a launchd agent.
+        pub fn without_agent() -> Self {
+            Self {
+                agent: AgentTarget::None,
+            }
+        }
+
+        /// The agent's folder, label, socket and extra environment, or
+        /// `None` when this platform has no agent.
+        fn agent(&self) -> Result<Option<ResolvedAgent>, LifecycleError> {
+            match &self.agent {
+                AgentTarget::None => Ok(None),
+                AgentTarget::Custom {
+                    plist_dir,
+                    label,
+                    socket,
+                    extra_environment,
+                } => Ok(Some((
+                    plist_dir.clone(),
+                    label.clone(),
+                    socket.clone(),
+                    extra_environment.clone(),
+                ))),
+                AgentTarget::CurrentUser => {
+                    let home = std::env::var_os("HOME")
+                        .map(PathBuf::from)
+                        .filter(|home| home.is_absolute())
+                        .ok_or_else(|| {
+                            LifecycleError::prerequisite(
+                                "HOME is not an absolute path; the launchd agent has no folder",
+                            )
+                        })?;
+                    let runtime =
+                        orcel_platform::paths::macos_per_user_runtime_dir().ok_or_else(|| {
+                            LifecycleError::prerequisite(
+                                "macOS gave no per-user runtime directory for the orceld socket",
+                            )
+                        })?;
+                    Ok(Some((
+                        launchd::launch_agents_dir(&home),
+                        launchd::LABEL.to_owned(),
+                        launchd::socket_path(&runtime),
+                        BTreeMap::new(),
+                    )))
+                }
+            }
+        }
+    }
+
+    fn launchctl(args: &[&str]) -> Result<Output, LifecycleError> {
+        Command::new(LAUNCHCTL)
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|error| LifecycleError::platform(format!("run launchctl: {error}")))
+    }
+
+    /// `gui/<uid>`, the logged-in user's domain.
+    fn domain() -> Result<String, LifecycleError> {
+        Ok(format!("gui/{}", super::effective_uid()?))
+    }
+
+    fn loaded(label: &str) -> Result<bool, LifecycleError> {
+        Ok(launchctl(&["print", &format!("{}/{label}", domain()?)])?
+            .status
+            .success())
+    }
+
+    fn bootout(label: &str) -> Result<(), LifecycleError> {
+        if !loaded(label)? {
+            return Ok(());
+        }
+        let output = launchctl(&["bootout", &format!("{}/{label}", domain()?)])?;
+        if !output.status.success() && loaded(label)? {
+            return Err(LifecycleError::platform(format!(
+                "launchctl could not unload {label}: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Removes a leftover socket of this user; anything else there is an
+    /// error, never removed.
+    fn remove_socket(socket: &Path) -> Result<bool, LifecycleError> {
+        use std::os::unix::fs::{FileTypeExt, MetadataExt};
+        let Ok(metadata) = std::fs::symlink_metadata(socket) else {
+            return Ok(false);
+        };
+        if !metadata.file_type().is_socket() || metadata.uid() != super::effective_uid()? {
+            return Err(LifecycleError::state(format!(
+                "{} is not this user's orceld socket and was left in place",
+                socket.display()
+            )));
+        }
+        std::fs::remove_file(socket)
+            .map_err(|error| LifecycleError::io(format!("remove {}", socket.display()), error))?;
+        Ok(true)
+    }
 
     impl Platform for MacosPlatform {
+        /// Writes the agent for the `orceld` of the active version, with the
+        /// configured workspaces, and loads it in place of an earlier one.
+        fn refresh_service(&self, layout: &Layout, orceld: &Path) -> Result<(), LifecycleError> {
+            let Some((plist_dir, label, socket, extra)) = self.agent()? else {
+                return Ok(());
+            };
+            let config = crate::config::Config::load(layout)?;
+            let mut environment = launchd::agent_environment(&config);
+            environment.extend(extra);
+            let spec = AgentSpec {
+                label: label.clone(),
+                program: orceld.to_path_buf(),
+                stderr_log: layout.logs_dir().join(launchd::STDERR_LOG),
+                socket: socket.clone(),
+                environment,
+            };
+            let text = launchd::plist(&spec)?;
+            let socket_dir = socket.parent().ok_or_else(|| {
+                LifecycleError::state("the orceld socket path has no parent folder")
+            })?;
+            orcel_platform::paths::ensure_private_dir(socket_dir).map_err(|error| {
+                LifecycleError::state(format!("the orceld socket folder: {error}"))
+            })?;
+            std::fs::create_dir_all(&plist_dir).map_err(|error| {
+                LifecycleError::io(format!("create {}", plist_dir.display()), error)
+            })?;
+            let plist_path = plist_dir.join(spec.plist_file_name());
+            bootout(&label)?;
+            remove_socket(&socket)?;
+            orcel_platform::files::write_private_atomic(&plist_path, text.as_bytes()).map_err(
+                |error| LifecycleError::io(format!("write {}", plist_path.display()), error),
+            )?;
+            let plist_text = plist_path.to_str().ok_or_else(|| {
+                LifecycleError::state("the launchd agent's folder is not valid UTF-8")
+            })?;
+            let output = launchctl(&["bootstrap", &domain()?, plist_text])?;
+            if !output.status.success() {
+                return Err(LifecycleError::platform(format!(
+                    "launchctl could not load {label}: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                )));
+            }
+            Ok(())
+        }
+
+        /// Unloads the agent, then removes its plist and socket.
+        fn remove_service(&self) -> Result<Vec<PathBuf>, LifecycleError> {
+            let Some((plist_dir, label, socket, _)) = self.agent()? else {
+                return Ok(Vec::new());
+            };
+            bootout(&label)?;
+            let mut removed = Vec::new();
+            let plist_path = plist_dir.join(format!("{label}.plist"));
+            if std::fs::symlink_metadata(&plist_path).is_ok() {
+                std::fs::remove_file(&plist_path).map_err(|error| {
+                    LifecycleError::io(format!("remove {}", plist_path.display()), error)
+                })?;
+                removed.push(plist_path);
+            }
+            if remove_socket(&socket)? {
+                removed.push(socket);
+            }
+            Ok(removed)
+        }
+
         fn windows_build(&self) -> Result<u32, LifecycleError> {
             Err(LifecycleError::prerequisite("this is macOS, not Windows"))
         }
@@ -328,7 +529,7 @@ mod tests {
     #[test]
     fn this_runner_is_a_supported_macos_and_not_root() {
         use crate::platform::Platform;
-        let platform = MacosPlatform;
+        let platform = MacosPlatform::without_agent();
         platform.check_os_version().unwrap();
         assert!(!platform.is_avoidably_elevated().unwrap());
         platform.check_lifecycle_supported().unwrap();

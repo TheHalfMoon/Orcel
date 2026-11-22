@@ -54,6 +54,20 @@ pub trait Platform {
     fn check_lifecycle_supported(&self) -> Result<(), LifecycleError> {
         self.windows_build().map(|_| ())
     }
+    /// Points the per-user service that starts `orceld` on demand at
+    /// `orceld`, the active version's, and loads it. The default is none
+    /// (Windows); macOS writes its launchd agent (MAC-M1-07).
+    fn refresh_service(
+        &self,
+        _layout: &crate::layout::Layout,
+        _orceld: &Path,
+    ) -> Result<(), LifecycleError> {
+        Ok(())
+    }
+    /// Unloads and removes that service; returns the files it removed.
+    fn remove_service(&self) -> Result<Vec<std::path::PathBuf>, LifecycleError> {
+        Ok(Vec::new())
+    }
 }
 
 /// Parses `node --version` output such as `v24.19.0`.
