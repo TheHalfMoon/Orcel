@@ -51,7 +51,7 @@ pub fn resolve_stdio_launch(
                 .join("orcel-mcp")
                 .join("dist")
                 .join("index.js"),
-            orceld: version_dir.join("orceld.exe"),
+            orceld: version_dir.join(crate::per_os::orceld_file_name()),
         },
         config,
     ))
@@ -275,7 +275,7 @@ pub fn resolve_serve_launch(
                 .join("dist")
                 .join("entrypoints")
                 .join("loopback_http.js"),
-            orceld: version_dir.join("orceld.exe"),
+            orceld: version_dir.join(crate::per_os::orceld_file_name()),
             port,
             token: token.to_string(),
         },
@@ -375,7 +375,14 @@ mod tests {
                 .join("dist")
                 .join("index.js")
         );
-        assert_eq!(launch.orceld, version_dir.join("orceld.exe"));
+        assert_eq!(
+            launch.orceld,
+            version_dir.join(if cfg!(windows) {
+                "orceld.exe"
+            } else {
+                "orceld"
+            })
+        );
         assert_eq!(config.default_workspace(), Some("default"));
         let exe = version_dir.join("orcel-mcp-host.exe");
         let (host_launch, _) = crate::mcp_host::resolve(&exe, &platform).unwrap();
@@ -430,7 +437,11 @@ mod tests {
         );
         assert_eq!(
             launch.orceld,
-            layout.version_dir("0.2.0").join("orceld.exe")
+            layout.version_dir("0.2.0").join(if cfg!(windows) {
+                "orceld.exe"
+            } else {
+                "orceld"
+            })
         );
         assert_eq!(launch.port, Some(8080));
         assert_eq!(launch.token, token);

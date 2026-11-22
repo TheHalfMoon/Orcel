@@ -23,6 +23,11 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// What follows "Confirm with <presence method> when prompted." before
+/// remote enrollment (MAC-M1-02).
+const CONFIRM_REMOTE_ENROLL: &str =
+    "Remote enrollment is a STRONG approval and cannot be granted remotely or by an agent.";
+
 pub const UPLINK_SCHEMA: &str = "orcel-uplink/1";
 pub const MAX_LEASE_MINUTES: u64 = 15;
 /// XP-19 fixed secret name of the device private key in `orceld`.
@@ -215,7 +220,7 @@ pub fn resolve_uplink_launch(
                 .join("dist")
                 .join("entrypoints")
                 .join("relay_device.js"),
-            orceld: version_dir.join("orceld.exe"),
+            orceld: version_dir.join(crate::per_os::orceld_file_name()),
             uplink_config,
             device_key,
             revocations: device_revocations_path(layout),
@@ -321,8 +326,11 @@ pub fn run_enrollment(
     let workspace = workspace
         .or_else(|| config.default_workspace().map(str::to_owned))
         .unwrap_or_else(|| "default".into());
-    let orceld = version_dir.join("orceld.exe");
-    eprintln!("Confirm with Windows Hello when prompted. Remote enrollment is a STRONG approval and cannot be granted remotely or by an agent.");
+    let orceld = version_dir.join(crate::per_os::orceld_file_name());
+    eprintln!(
+        "{}",
+        crate::per_os::confirm_when_prompted(CONFIRM_REMOTE_ENROLL)
+    );
     let request = crate::ipc::request(
         &workspace,
         "remote.enrollment.authorize",
@@ -373,6 +381,15 @@ pub fn run_enrollment(
 mod tests {
     use super::*;
     use crate::test_support::temp_dir;
+
+    /// MAC-M1-02: the Windows enrollment prompt is the exact earlier line.
+    #[test]
+    fn the_windows_enrollment_prompt_is_unchanged() {
+        assert_eq!(
+            crate::per_os::Os::Windows.confirm_when_prompted(CONFIRM_REMOTE_ENROLL),
+            "Confirm with Windows Hello when prompted. Remote enrollment is a STRONG approval and cannot be granted remotely or by an agent."
+        );
+    }
 
     #[test]
     fn the_device_key_name_is_the_registered_store() {

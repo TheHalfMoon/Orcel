@@ -6,10 +6,23 @@ use orcel_lifecycle::doctor::{self, CheckStatus};
 use orcel_lifecycle::install::Installer;
 use orcel_lifecycle::layout::Layout;
 use orcel_lifecycle::lifecycle::{self, RunState, StopOutcome};
-use orcel_lifecycle::{host_platform, ipc, LifecycleError};
+use orcel_lifecycle::{host_platform, ipc, per_os, LifecycleError};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::time::Duration;
+
+/// What follows "Confirm with <presence method> when prompted." before each
+/// STRONG request ([`per_os::confirm_when_prompted`]); the Windows lines are
+/// pinned byte for byte by the tests below (MAC-M1-02).
+const CONFIRM_WORKSPACE_TRUST: &str =
+    "This is a STRONG approval and cannot be granted by an agent.";
+const CONFIRM_EMERGENCY_REVOKE: &str = "Every pending approval will be invalidated.";
+const CONFIRM_FULL_CONTROL: &str =
+    "Full User desktop control is bound to this exact live Orcel runtime session and expires automatically.";
+const CONFIRM_REMOTE_LEASE: &str =
+    "A remote session lease is a STRONG approval and cannot be granted remotely or by an agent.";
+const CONFIRM_EXECUTABLE_REGISTER: &str =
+    "Registering an executable is a STRONG approval and cannot be granted by an agent.";
 
 const RESTART_HINT: &str =
     "Restart Orcel (`orcel stop` then `orcel start`) for running sessions to pick up the change.\n";
@@ -30,7 +43,9 @@ fn local_orceld(layout: &Layout) -> Result<PathBuf, LifecycleError> {
     #[cfg(windows)]
     {
         let version = active_version(layout)?;
-        Ok(layout.version_dir(&version).join("orceld.exe"))
+        Ok(layout
+            .version_dir(&version)
+            .join(per_os::orceld_file_name()))
     }
     #[cfg(unix)]
     {
@@ -92,7 +107,7 @@ pub fn workspace(args: &mut Args) -> Result<Output, LifecycleError> {
             let mut human = String::new();
             for entry in &config.workspaces {
                 let trust = version.as_ref().and_then(|version| {
-                    let orceld = layout.version_dir(version).join("orceld.exe");
+                    let orceld = layout.version_dir(version).join(per_os::orceld_file_name());
                     let request = ipc::request(&entry.id, "workspace.trust.get", "get", json!({}));
                     ipc::call(&orceld, &config, &request, Duration::from_secs(20))
                         .ok()
@@ -138,13 +153,15 @@ pub fn workspace(args: &mut Args) -> Result<Output, LifecycleError> {
                 )));
             }
             let version = active_version(&layout)?;
-            let orceld = layout.version_dir(&version).join("orceld.exe");
+            let orceld = layout
+                .version_dir(&version)
+                .join(per_os::orceld_file_name());
             let (capability, operation) = if action == "trust" {
                 ("workspace.trust.grant", "grant")
             } else {
                 ("workspace.trust.revoke", "revoke")
             };
-            eprintln!("Confirm with Windows Hello when prompted. This is a STRONG approval and cannot be granted by an agent.");
+            eprintln!("{}", per_os::confirm_when_prompted(CONFIRM_WORKSPACE_TRUST));
             let configured = config
                 .workspaces
                 .iter()
@@ -319,7 +336,9 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
                 json!({ "remote_connection_id": connection }),
             );
             let response = ipc::call(
-                &layout.version_dir(&version).join("orceld.exe"),
+                &layout
+                    .version_dir(&version)
+                    .join(per_os::orceld_file_name()),
                 &config,
                 &request,
                 Duration::from_secs(30),
@@ -799,7 +818,9 @@ pub fn approvals(args: &mut Args) -> Result<Output, LifecycleError> {
         json!({"limit": limit}),
     );
     let response = ipc::call(
-        &layout.version_dir(&version).join("orceld.exe"),
+        &layout
+            .version_dir(&version)
+            .join(per_os::orceld_file_name()),
         &config,
         &request,
         Duration::from_secs(20),
@@ -913,11 +934,14 @@ pub fn emergency_revoke(args: &mut Args) -> Result<Output, LifecycleError> {
     let version = active_version(&layout)?;
     let workspace = config.default_workspace().unwrap_or("default").to_string();
     eprintln!(
-        "Confirm with Windows Hello when prompted. Every pending approval will be invalidated."
+        "{}",
+        per_os::confirm_when_prompted(CONFIRM_EMERGENCY_REVOKE)
     );
     let request = ipc::request(&workspace, "trust.revoke_emergency", "revoke", json!({}));
     let response = ipc::call(
-        &layout.version_dir(&version).join("orceld.exe"),
+        &layout
+            .version_dir(&version)
+            .join(per_os::orceld_file_name()),
         &config,
         &request,
         Duration::from_secs(180),
@@ -985,9 +1009,7 @@ pub fn full_control(args: &mut Args) -> Result<Output, LifecycleError> {
             let config = Config::load(&layout)?;
             config.check_workspaces_with_policy()?;
             let workspace = config.default_workspace().unwrap_or("default").to_string();
-            eprintln!(
-                "Confirm with Windows Hello when prompted. Full User desktop control is bound to this exact live Orcel runtime session and expires automatically."
-            );
+            eprintln!("{}", per_os::confirm_when_prompted(CONFIRM_FULL_CONTROL));
             eprintln!(
                 "Note: this grant uses the DEPRECATED per-user authority store; install the Orcel authority service (SG132_INSTALL_RUNBOOK.md) so grants come from it."
             );
@@ -1159,7 +1181,9 @@ pub fn search(args: &mut Args) -> Result<Output, LifecycleError> {
     config.check_workspaces_with_policy()?;
     let workspace = config.default_workspace().unwrap_or("default").to_string();
     let version = active_version(&layout)?;
-    let orceld = layout.version_dir(&version).join("orceld.exe");
+    let orceld = layout
+        .version_dir(&version)
+        .join(per_os::orceld_file_name());
     let provider_key = |args: &mut Args| -> Result<String, LifecycleError> {
         let provider = args.positional("search provider (brave, tavily, exa, serper)")?;
         if !SEARCH_KEY_PROVIDERS.contains(&provider.as_str()) {
@@ -1333,10 +1357,12 @@ fn allow_remote_session(
     };
     let arguments = remote::lease_arguments(&options, paired, device_id, device_epoch)?;
     let version = active_version(layout)?;
-    eprintln!("Confirm with Windows Hello when prompted. A remote session lease is a STRONG approval and cannot be granted remotely or by an agent.");
+    eprintln!("{}", per_os::confirm_when_prompted(CONFIRM_REMOTE_LEASE));
     let request = ipc::request(&workspaces[0], "remote.lease.create", "create", arguments);
     let response = ipc::call(
-        &layout.version_dir(&version).join("orceld.exe"),
+        &layout
+            .version_dir(&version)
+            .join(per_os::orceld_file_name()),
         &config,
         &request,
         Duration::from_secs(180),
@@ -1391,7 +1417,9 @@ pub fn remote(args: &mut Args) -> Result<Output, LifecycleError> {
                 json!({ "remote_connection_id": connection }),
             );
             let response = ipc::call(
-                &layout.version_dir(&version).join("orceld.exe"),
+                &layout
+                    .version_dir(&version)
+                    .join(per_os::orceld_file_name()),
                 &config,
                 &request,
                 Duration::from_secs(30),
@@ -1417,7 +1445,9 @@ pub fn remote(args: &mut Args) -> Result<Output, LifecycleError> {
             let version = active_version(&layout)?;
             let request = ipc::request(&workspace, "remote.lease.status", "get", json!({}));
             let response = ipc::call(
-                &layout.version_dir(&version).join("orceld.exe"),
+                &layout
+                    .version_dir(&version)
+                    .join(per_os::orceld_file_name()),
                 &config,
                 &request,
                 Duration::from_secs(30),
@@ -1522,7 +1552,10 @@ pub fn exec(args: &mut Args) -> Result<Output, LifecycleError> {
                     .map_err(|_| LifecycleError::usage("--max-args must be from 0 to 64"))?,
                 None => 16,
             };
-            eprintln!("Confirm with Windows Hello when prompted. Registering an executable is a STRONG approval and cannot be granted by an agent.");
+            eprintln!(
+                "{}",
+                per_os::confirm_when_prompted(CONFIRM_EXECUTABLE_REGISTER)
+            );
             (
                 "executable.registry.add",
                 "add",
@@ -1558,7 +1591,9 @@ pub fn exec(args: &mut Args) -> Result<Output, LifecycleError> {
     let version = active_version(&layout)?;
     let request = ipc::request(&workspace, capability, operation, arguments);
     let response = ipc::call(
-        &layout.version_dir(&version).join("orceld.exe"),
+        &layout
+            .version_dir(&version)
+            .join(per_os::orceld_file_name()),
         &config,
         &request,
         timeout,
@@ -1640,6 +1675,52 @@ pub fn self_check(args: &mut Args) -> Result<Output, LifecycleError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// MAC-M1-02: on Windows every STRONG prompt is the exact line the CLI
+    /// printed before the per-OS wording existed.
+    #[test]
+    fn windows_strong_prompts_are_unchanged() {
+        use orcel_lifecycle::per_os::Os;
+        let expected = [
+            (CONFIRM_WORKSPACE_TRUST, "Confirm with Windows Hello when prompted. This is a STRONG approval and cannot be granted by an agent."),
+            (CONFIRM_EMERGENCY_REVOKE, "Confirm with Windows Hello when prompted. Every pending approval will be invalidated."),
+            (CONFIRM_FULL_CONTROL, "Confirm with Windows Hello when prompted. Full User desktop control is bound to this exact live Orcel runtime session and expires automatically."),
+            (CONFIRM_REMOTE_LEASE, "Confirm with Windows Hello when prompted. A remote session lease is a STRONG approval and cannot be granted remotely or by an agent."),
+            (CONFIRM_EXECUTABLE_REGISTER, "Confirm with Windows Hello when prompted. Registering an executable is a STRONG approval and cannot be granted by an agent."),
+        ];
+        for (then, line) in expected {
+            assert_eq!(Os::Windows.confirm_when_prompted(then), line);
+            if cfg!(windows) {
+                assert_eq!(per_os::confirm_when_prompted(then), line);
+            }
+        }
+    }
+
+    /// MAC-M1-02: macOS and Linux prompts name their own presence check and
+    /// never Windows Hello.
+    #[test]
+    fn macos_and_linux_strong_prompts_name_their_own_presence() {
+        use orcel_lifecycle::per_os::Os;
+        assert_eq!(
+            Os::MacOs.confirm_when_prompted(CONFIRM_EMERGENCY_REVOKE),
+            "Confirm with Touch ID or your password (LocalAuthentication) when prompted. Every pending approval will be invalidated."
+        );
+        assert_eq!(
+            Os::Linux.confirm_when_prompted(CONFIRM_EMERGENCY_REVOKE),
+            "Confirm with your password (polkit) when prompted. Every pending approval will be invalidated."
+        );
+        for then in [
+            CONFIRM_WORKSPACE_TRUST,
+            CONFIRM_EMERGENCY_REVOKE,
+            CONFIRM_FULL_CONTROL,
+            CONFIRM_REMOTE_LEASE,
+            CONFIRM_EXECUTABLE_REGISTER,
+        ] {
+            for os in [Os::MacOs, Os::Linux] {
+                assert!(!os.confirm_when_prompted(then).contains("Windows"));
+            }
+        }
+    }
 
     #[test]
     fn the_history_names_each_origin_on_one_line() {

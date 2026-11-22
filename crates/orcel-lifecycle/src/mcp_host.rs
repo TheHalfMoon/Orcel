@@ -81,7 +81,7 @@ pub fn resolve(
             .join("orcel-mcp")
             .join("dist")
             .join("index.js"),
-        orceld: version_dir.join("orceld.exe"),
+        orceld: version_dir.join(crate::per_os::orceld_file_name()),
     };
     Ok((launch, config))
 }
@@ -192,7 +192,11 @@ mod tests {
         let (launch, config) = resolve(&exe, &platform).unwrap();
         assert_eq!(
             launch.orceld,
-            layout.version_dir("0.2.0").join("orceld.exe")
+            layout.version_dir("0.2.0").join(if cfg!(windows) {
+                "orceld.exe"
+            } else {
+                "orceld"
+            })
         );
         assert_eq!(config.default_workspace(), Some("default"));
     }
