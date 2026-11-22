@@ -183,6 +183,10 @@ mod macos {
         None,
     }
 
+    /// A resolved agent: its plist folder, label, socket and extra
+    /// environment.
+    type ResolvedAgent = (PathBuf, String, PathBuf, BTreeMap<String, String>);
+
     /// The macOS host operations of the per-user install (MAC-M1-03) and
     /// its launchd agent (MAC-M1-07).
     #[derive(Debug, Default)]
@@ -200,10 +204,7 @@ mod macos {
 
         /// The agent's folder, label, socket and extra environment, or
         /// `None` when this platform has no agent.
-        fn agent(
-            &self,
-        ) -> Result<Option<(PathBuf, String, PathBuf, BTreeMap<String, String>)>, LifecycleError>
-        {
+        fn agent(&self) -> Result<Option<ResolvedAgent>, LifecycleError> {
             match &self.agent {
                 AgentTarget::None => Ok(None),
                 AgentTarget::Custom {
