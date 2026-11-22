@@ -308,6 +308,15 @@ pub(crate) mod test_support {
         }
         fn protect_tree(&self, root: &Path) -> Result<(), LifecycleError> {
             self.protected.borrow_mut().push(root.to_path_buf());
+            // As the real platforms leave it: owner-only, so the macOS
+            // private-root check (`Layout::ensure_private_root`) accepts a
+            // root this double "protected".
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(root, fs::Permissions::from_mode(0o700))
+                    .map_err(|error| LifecycleError::io("protect the test root", error))?;
+            }
             Ok(())
         }
         fn verify_tree_acl(&self, _root: &Path) -> Result<(), LifecycleError> {
