@@ -12,11 +12,13 @@
 //!
 //! In that mode launchd connects standard error to the socket too, where
 //! orceld's log lines would break the JSON-lines stream (seen on the hosted
-//! runner). So the agent runs `/bin/sh -c 'exec 2>>"$1"; exec "$0"'` with the
-//! `orceld` path and a log file under the install's `logs` folder: standard
-//! error goes to that file (0600 under the agent's umask), and the shell then
-//! becomes `orceld`, as `StandardError=journal` keeps it off the socket on
-//! Linux.
+//! runner). So the agent runs `/bin/sh -c 'umask 077; exec 2>>"$1"; exec "$0"'`
+//! with the `orceld` path and a log file under the install's `logs` folder:
+//! standard error goes to that file, created 0600, and the shell then becomes
+//! `orceld`, as `StandardError=journal` keeps it off the socket on Linux. The
+//! script sets the umask itself because the plist's `Umask` key did not take
+//! effect on the hosted runner (the log came out 0644); the key stays as well.
+//! Like `UMask=0077` on Linux, it applies to everything orceld creates.
 //!
 //! The plist is generated here, from pure inputs, so its content is tested on
 //! every OS. Writing, loading and unloading it is macOS only
@@ -36,9 +38,9 @@ pub const SOCKET_FILE: &str = "orceld.sock";
 /// `sun_path` holds 104 bytes on macOS, the terminating NUL included.
 const MAX_SOCKET_PATH: usize = 103;
 /// The shell, by absolute path, and its script: standard error to the log
-/// file (`$1`), then become `orceld` (`$0`).
+/// file (`$1`) with an owner-only umask, then become `orceld` (`$0`).
 const SHELL: &str = "/bin/sh";
-const SHELL_SCRIPT: &str = r#"exec 2>>"$1"; exec "$0""#;
+const SHELL_SCRIPT: &str = r#"umask 077; exec 2>>"$1"; exec "$0""#;
 /// The agent's standard error log inside the install's `logs` folder.
 pub const STDERR_LOG: &str = "orceld-agent.log";
 
@@ -244,7 +246,7 @@ mod tests {
         for needle in [
             "<key>Label</key>\n  <string>ai.orcel.orceld</string>",
             // Standard error to the log file, never the socket; then orceld.
-            "<array>\n    <string>/bin/sh</string>\n    <string>-c</string>\n    <string>exec 2&gt;&gt;&quot;$1&quot;; exec &quot;$0&quot;</string>\n    <string>/Users/ana/Library/Application Support/Orcel/versions/0.2.0/orceld</string>\n    <string>/Users/ana/Library/Application Support/Orcel/logs/orceld-agent.log</string>\n  </array>",
+            "<array>\n    <string>/bin/sh</string>\n    <string>-c</string>\n    <string>umask 077; exec 2&gt;&gt;&quot;$1&quot;; exec &quot;$0&quot;</string>\n    <string>/Users/ana/Library/Application Support/Orcel/versions/0.2.0/orceld</string>\n    <string>/Users/ana/Library/Application Support/Orcel/logs/orceld-agent.log</string>\n  </array>",
             "<key>inetdCompatibility</key>\n  <dict>\n    <key>Wait</key>\n    <false/>",
             "<key>SockFamily</key>\n      <string>Unix</string>",
             "<key>SockPathName</key>\n      <string>/var/folders/ab/xyz/T/orcel/orceld.sock</string>",
