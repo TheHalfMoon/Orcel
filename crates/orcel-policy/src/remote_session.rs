@@ -91,8 +91,22 @@ fn check_browser_full_tunnel_route(request: &LeaseRequest) -> Result<(), PolicyE
     {
         return Err(refused());
     }
+    // Browser reads and actions only: never orcel.write or anything else.
+    if !request
+        .scope_ceiling
+        .iter()
+        .all(|scope| BROWSER_FULL_SCOPES.contains(&scope.as_str()))
+    {
+        return Err(invalid(
+            "a browser_full remote-session lease names only orcel.read and orcel.execute",
+        ));
+    }
     Ok(())
 }
+
+/// SG-000135 OB-09: the only scopes a browser_full remote-session lease may
+/// name (the broker shapes need nothing else).
+pub const BROWSER_FULL_SCOPES: [&str; 2] = ["orcel.read", "orcel.execute"];
 /// Remote OAuth scope vocabulary (SG-000054).
 pub const REMOTE_SCOPES: [&str; 3] = ["orcel.read", "orcel.write", "orcel.execute"];
 
@@ -1662,5 +1676,51 @@ pub(crate) mod tests {
         let (principal, _, device) = tunnel_browser_full_route(TUNNEL);
         assert_eq!(principal, "rp-182110eb5d85d5ccd3f34df5dba41e1a");
         assert_eq!(device, "dev-0872269746857073deab118978d116a0");
+    }
+
+    /// SG-000135 OB-09 review: a browser_full lease names only browser reads
+    /// and actions; orcel.write (or any other scope) is refused, while
+    /// narrowing to one of the two is allowed. Core ceilings are unchanged.
+    #[test]
+    fn ob09_a_browser_full_lease_never_names_orcel_write() {
+        let configured = ["default".to_owned()];
+        for scopes in [
+            vec!["orcel.read", "orcel.write"],
+            vec!["orcel.read", "orcel.execute", "orcel.write"],
+            vec!["orcel.write"],
+        ] {
+            let error = build_lease(
+                &browser_request(&scopes),
+                "l".into(),
+                &env(NOW),
+                &configured,
+            )
+            .unwrap_err();
+            assert_eq!(error.code, FailureCode::InvalidRequest, "{scopes:?}");
+            assert!(error.message.contains("only orcel.read and orcel.execute"));
+        }
+        for scopes in [
+            vec!["orcel.read"],
+            vec!["orcel.execute"],
+            vec!["orcel.read", "orcel.execute"],
+        ] {
+            assert!(
+                build_lease(
+                    &browser_request(&scopes),
+                    "l".into(),
+                    &env(NOW),
+                    &configured
+                )
+                .is_ok(),
+                "{scopes:?}"
+            );
+        }
+        let mut core = lease_request();
+        core.scope_ceiling = vec![
+            "orcel.read".into(),
+            "orcel.write".into(),
+            "orcel.execute".into(),
+        ];
+        assert!(build_lease(&core, "l".into(), &env(NOW), &configured).is_ok());
     }
 }

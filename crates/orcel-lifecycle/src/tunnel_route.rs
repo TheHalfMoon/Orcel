@@ -43,7 +43,7 @@ pub const BROWSER_FULL_CLIENT_PROFILE_ID: &str =
 pub const TUNNEL_PROFILES: [&str; 2] = [REMOTE_PROFILE_CORE, REMOTE_PROFILE_BROWSER_FULL];
 /// SG-000135 OB-09: a `browser_full` tunnel's scope ceiling: reads and
 /// browser actions, never `orcel.write`.
-pub const BROWSER_FULL_SCOPES: [&str; 2] = ["orcel.read", "orcel.execute"];
+pub const BROWSER_FULL_SCOPES: [&str; 2] = orcel_policy::remote_session::BROWSER_FULL_SCOPES;
 
 /// Whether `profile` is one a tunnel may serve.
 pub fn is_tunnel_profile(profile: &str) -> bool {
