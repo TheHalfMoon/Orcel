@@ -435,6 +435,16 @@ fn the_launch_agent_starts_orceld_per_connection_and_uninstall_removes_it() {
         assert_eq!(response["result"]["name"], "orceld", "{response}");
         assert_eq!(response["result"]["os"], "macos", "{response}");
     }
+    // orceld's standard error (its readiness line) went to the log file, not
+    // the connection: launchd's inetd mode puts stderr on the socket too.
+    let log = root.join("logs").join("orceld-agent.log");
+    let logged = fs::read_to_string(&log).expect("the agent's stderr log");
+    assert_eq!(
+        logged.matches("orceld ready:").count(),
+        2,
+        "one readiness line per connection, in the log:\n{logged}"
+    );
+    assert_eq!(mode(&log), 0o600);
     // One orceld per connection: none outlives its client.
     std::thread::sleep(std::time::Duration::from_secs(2));
     let running = std::process::Command::new("/usr/bin/pgrep")
@@ -447,7 +457,7 @@ fn the_launch_agent_starts_orceld_per_connection_and_uninstall_removes_it() {
         String::from_utf8_lossy(&running.stdout)
     );
     println!(
-        "MAC-M1-07-EVIDENCE agent loaded=true domain=gui label={label} socket_mode=600 socket_dir_mode=700 plist_mode=600 answered=2 lingering=0"
+        "MAC-M1-07-EVIDENCE agent loaded=true domain=gui label={label} socket_mode=600 socket_dir_mode=700 plist_mode=600 answered=2 stderr_to_log=2 lingering=0"
     );
 
     let report = installer

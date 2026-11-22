@@ -10,6 +10,14 @@
 //! no network listener, and the socket grants no new authority: only the
 //! same user can connect, and that user could start `orceld` directly.
 //!
+//! In that mode launchd connects standard error to the socket too, where
+//! orceld's log lines would break the JSON-lines stream (seen on the hosted
+//! runner). So the agent runs `/bin/sh -c 'exec 2>>"$1"; exec "$0"'` with the
+//! `orceld` path and a log file under the install's `logs` folder: standard
+//! error goes to that file (0600 under the agent's umask), and the shell then
+//! becomes `orceld`, as `StandardError=journal` keeps it off the socket on
+//! Linux.
+//!
 //! The plist is generated here, from pure inputs, so its content is tested on
 //! every OS. Writing, loading and unloading it is macOS only
 //! ([`crate::unix_install`]), and nothing calls that on a person's Mac until
@@ -27,14 +35,22 @@ pub const LABEL: &str = "ai.orcel.orceld";
 pub const SOCKET_FILE: &str = "orceld.sock";
 /// `sun_path` holds 104 bytes on macOS, the terminating NUL included.
 const MAX_SOCKET_PATH: usize = 103;
+/// The shell, by absolute path, and its script: standard error to the log
+/// file (`$1`), then become `orceld` (`$0`).
+const SHELL: &str = "/bin/sh";
+const SHELL_SCRIPT: &str = r#"exec 2>>"$1"; exec "$0""#;
+/// The agent's standard error log inside the install's `logs` folder.
+pub const STDERR_LOG: &str = "orceld-agent.log";
 
-/// What one agent is: its label, the `orceld` it starts, its socket, and
-/// the environment `orceld` gets (the workspaces among it).
+/// What one agent is: its label, the `orceld` it starts, its socket, the
+/// file its standard error goes to, and the environment `orceld` gets (the
+/// workspaces among it).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentSpec {
     pub label: String,
     pub program: PathBuf,
     pub socket: PathBuf,
+    pub stderr_log: PathBuf,
     pub environment: BTreeMap<String, String>,
 }
 
@@ -125,6 +141,7 @@ pub fn plist(spec: &AgentSpec) -> Result<String, LifecycleError> {
     }
     let program = text("program", &spec.program)?;
     let socket = text("socket", &spec.socket)?;
+    let stderr_log = text("log file", &spec.stderr_log)?;
     if socket.len() > MAX_SOCKET_PATH {
         return Err(LifecycleError::state(format!(
             "the launchd agent's socket path is longer than {MAX_SOCKET_PATH} bytes: {socket}"
@@ -156,7 +173,11 @@ pub fn plist(spec: &AgentSpec) -> Result<String, LifecycleError> {
   <string>{label}</string>
   <key>ProgramArguments</key>
   <array>
+    <string>{shell}</string>
+    <string>-c</string>
+    <string>{script}</string>
     <string>{program}</string>
+    <string>{stderr_log}</string>
   </array>
   <key>inetdCompatibility</key>
   <dict>
@@ -188,7 +209,10 @@ pub fn plist(spec: &AgentSpec) -> Result<String, LifecycleError> {
 </plist>
 "#,
         label = escape(&spec.label),
+        shell = SHELL,
+        script = escape(SHELL_SCRIPT),
         program = escape(&program),
+        stderr_log = escape(&stderr_log),
         socket = escape(&socket),
     ))
 }
@@ -204,6 +228,9 @@ mod tests {
                 "/Users/ana/Library/Application Support/Orcel/versions/0.2.0/orceld",
             ),
             socket: PathBuf::from("/var/folders/ab/xyz/T/orcel/orceld.sock"),
+            stderr_log: PathBuf::from(
+                "/Users/ana/Library/Application Support/Orcel/logs/orceld-agent.log",
+            ),
             environment: BTreeMap::from([(
                 "ORCEL_WORKSPACES_JSON".to_owned(),
                 r#"[{"id":"a&b","root":"/Users/ana/<p>"}]"#.to_owned(),
@@ -216,7 +243,8 @@ mod tests {
         let text = plist(&spec()).unwrap();
         for needle in [
             "<key>Label</key>\n  <string>ai.orcel.orceld</string>",
-            "<string>/Users/ana/Library/Application Support/Orcel/versions/0.2.0/orceld</string>",
+            // Standard error to the log file, never the socket; then orceld.
+            "<array>\n    <string>/bin/sh</string>\n    <string>-c</string>\n    <string>exec 2&gt;&gt;&quot;$1&quot;; exec &quot;$0&quot;</string>\n    <string>/Users/ana/Library/Application Support/Orcel/versions/0.2.0/orceld</string>\n    <string>/Users/ana/Library/Application Support/Orcel/logs/orceld-agent.log</string>\n  </array>",
             "<key>inetdCompatibility</key>\n  <dict>\n    <key>Wait</key>\n    <false/>",
             "<key>SockFamily</key>\n      <string>Unix</string>",
             "<key>SockPathName</key>\n      <string>/var/folders/ab/xyz/T/orcel/orceld.sock</string>",
@@ -253,6 +281,9 @@ mod tests {
         let mut relative = spec();
         relative.program = PathBuf::from("orceld");
         assert!(plist(&relative).is_err());
+        let mut log = spec();
+        log.stderr_log = PathBuf::from("logs/orceld-agent.log");
+        assert!(plist(&log).is_err());
         let mut long = spec();
         long.socket = PathBuf::from(format!("/{}/orceld.sock", "x".repeat(100)));
         assert!(plist(&long).is_err());

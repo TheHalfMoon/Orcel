@@ -308,6 +308,7 @@ mod macos {
             let spec = AgentSpec {
                 label: label.clone(),
                 program: orceld.to_path_buf(),
+                stderr_log: layout.logs_dir().join(launchd::STDERR_LOG),
                 socket: socket.clone(),
                 environment,
             };
