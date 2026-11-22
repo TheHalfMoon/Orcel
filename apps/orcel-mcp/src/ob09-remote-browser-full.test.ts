@@ -1,11 +1,12 @@
 /**
  * SG-000135 OB-09 part 2: the remote `browser_full` profile through the
- * existing remote paths (the ChatGPT Secure MCP Tunnel and the relay).
+ * ChatGPT Secure MCP Tunnel only (engineering-chosen 2026-11-22 under the
+ * founder's delegation; the relay serves `core` only).
  *
  * - The remote tool list is exactly the part-1 remote-safe broker tools,
  *   each with its `orcel.read` or `orcel.execute` scope, and agrees with
  *   orceld's gate and scope table.
- * - A tunnel or paired connection serves one profile; `core` is unchanged.
+ * - A tunnel serves one profile; `core` is unchanged.
  * - Remote requests carry the remote context with profile `browser_full`.
  * - A remote caller's `client_session_id` is the server-assigned MCP session
  *   id (a server-side randomUUID per remote kernel), never caller-chosen.
@@ -120,26 +121,25 @@ test("ob09: core is unchanged and the two remote profiles never overlap", () => 
   assert.equal(authorizeToolByScopes("browser_click", "browser_full", ["orcel.read"], ["orcel.read", "orcel.execute"]).ok, false);
   assert.equal(authorizeToolByScopes("browser_click", "browser_full", ["orcel.execute"], ["orcel.execute"]).ok, true);
   assert.equal(authorizeToolByScopes("browser_profile_delete", "browser_full", all, all).ok, false);
-  // Only the providers mapped for it; unknown providers and profiles deny.
+  // ChatGPT's tunnel only; unknown providers and profiles deny.
   assert.equal(isRemoteProfileAllowed("openai", "browser_full"), true);
-  assert.equal(isRemoteProfileAllowed("generic", "browser_full"), true);
-  for (const provider of ["anthropic", "mistral", "codex", "unknown", "__proto__"]) {
+  for (const provider of ["generic", "anthropic", "mistral", "codex", "unknown", "__proto__"]) {
     assert.equal(isRemoteProfileAllowed(provider, "browser_full"), false, provider);
   }
   for (const profile of ["browser_structured", "desktop_structured", "", "Browser_Full"]) {
     assert.equal(isRemoteProfileAllowed("openai", profile), false, profile);
     assert.throws(() => allowedToolsFor({ transportKind: "tunnel", providerKind: "openai", toolSurfaceProfile: profile as "core" }));
   }
-  // A paired connection names exactly one known profile.
+  // A relay paired connection is core only; a tunnel route names one known
+  // profile.
   const paired = { ...BROWSER_ROUTE } as Record<string, unknown>;
   delete paired.deviceId;
   delete paired.deviceEpoch;
-  assert.equal(isPairedConnection(paired), true);
-  for (const profile of ["core", "browser_full"]) {
-    assert.equal(isPairedConnection({ ...paired, toolSurfaceProfile: profile }), true, profile);
-  }
+  assert.equal(isPairedConnection({ ...paired, toolSurfaceProfile: "core" }), true);
+  assert.equal(isPairedConnection(paired), false, "a relay connection never holds browser_full");
+  assert.equal(parseTunnelRoute(JSON.stringify(BROWSER_ROUTE)).paired.toolSurfaceProfile, "browser_full");
   for (const profile of ["browser_structured", "core browser_full", ["core", "browser_full"], null]) {
-    assert.equal(isPairedConnection({ ...paired, toolSurfaceProfile: profile }), false, String(profile));
+    assert.throws(() => parseTunnelRoute(JSON.stringify({ ...BROWSER_ROUTE, toolSurfaceProfile: profile })), /malformed/, String(profile));
   }
 });
 
@@ -278,15 +278,32 @@ test("ob09: a browser_full tunnel serves only the remote browser tools and every
   }
 });
 
-test("ob09: the relay path serves the paired profile; a browser_full connection never serves core and carries profile browser_full", async () => {
-  const route = parseTunnelRoute(JSON.stringify(BROWSER_ROUTE));
-  const remotes: RemoteDispatchContext[] = [];
+test("ob09: the relay never serves browser_full: its server, its uplink check and its pairing record stay core", async () => {
+  // The relay transport refuses the profile for every provider...
+  for (const provider of ["openai", "generic", "anthropic", "codex", "mistral"]) {
+    assert.throws(
+      () => allowedToolsFor({ transportKind: "relay", providerKind: provider, toolSurfaceProfile: "browser_full" }),
+      /TOOL_SURFACE_DENIED/,
+      provider
+    );
+    // ...and a relay core route never serves a broker tool.
+    const served = allowedToolsFor({ transportKind: "relay", providerKind: provider, toolSurfaceProfile: "core" });
+    for (const tool of REMOTE_BROWSER_FULL_TOOLS) {
+      assert.equal(served.has(tool) && TOOL_CONTRACT[tool]?.remote !== "local_only", false, `${tool} ${provider}`);
+    }
+  }
+  // The device uplink, the enrollment and the dispatcher name only core.
+  for (const file of ["device_uplink.ts", "remote_enrollment.ts"]) {
+    const text = readFileSync(join(repo, "apps", "orcel-mcp", "src", file), "utf8");
+    assert.equal(/browser_full/.test(text), false, file);
+  }
+  // A relay session dispatches with the core server: a browser tool is unknown there.
   const wire: KernelRequest[] = [];
+  const route = parseTunnelRoute(JSON.stringify({ ...BROWSER_ROUTE, toolSurfaceProfile: "core", scopeCeiling: ["orcel.read", "orcel.write", "orcel.execute"] }));
   const relay = createMcpFrameDispatcher({
     defaultWorkspace: "default",
-    kernelFactory: (remote) => {
-      remotes.push(remote);
-      return {
+    kernelFactory: (remote) =>
+      ({
         sessionId: "relay-server-side",
         remote,
         profile: null,
@@ -300,24 +317,24 @@ test("ob09: the relay path serves the paired profile; a browser_full connection 
         close: () => {},
         pending: new Map(),
         child: {} as never
-      } as unknown as KernelClient;
-    }
+      }) as unknown as KernelClient
   });
+  const paired = { ...route.paired, toolSurfaceProfile: "core" as const };
   const binding: ConnectionBinding = {
-    paired: route.paired,
+    paired,
     connectionId: "conn-ob09",
-    scopes: route.paired.scopeCeiling,
+    scopes: paired.scopeCeiling,
     remote: {
-      principal: route.paired.principal,
-      remoteConnectionId: route.paired.remoteConnectionId,
+      principal: paired.principal,
+      remoteConnectionId: paired.remoteConnectionId,
       connectionId: "conn-ob09",
       deviceId: route.deviceId,
       deviceEpoch: route.deviceEpoch,
-      providerKind: route.paired.providerKind,
-      clientProfileId: route.paired.clientProfileId,
-      clientProfileRevision: route.paired.clientProfileRevision,
-      toolSurfaceProfile: route.paired.toolSurfaceProfile,
-      scopes: [...route.paired.scopeCeiling]
+      providerKind: paired.providerKind,
+      clientProfileId: paired.clientProfileId,
+      clientProfileRevision: paired.clientProfileRevision,
+      toolSurfaceProfile: "core",
+      scopes: [...paired.scopeCeiling]
     }
   };
   const send = async (message: Record<string, unknown>) =>
@@ -326,11 +343,10 @@ test("ob09: the relay path serves the paired profile; a browser_full connection 
     await send({ jsonrpc: "2.0", id: 1, method: "initialize", params: INIT });
     await relay.dispatch(binding, JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }));
     const listed = (await send({ jsonrpc: "2.0", id: 2, method: "tools/list" })) as { result?: { tools?: Array<{ name: string }> } };
-    assert.deepEqual((listed.result?.tools ?? []).map((t) => t.name).sort(), [...REMOTE_BROWSER_FULL_TOOLS].sort());
-    await send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "process_spawn", arguments: { executable: "x" } } });
-    await send({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "browser_snapshot", arguments: { session_id: "bs-0123456789abcdef-1-0001020304050607" } } });
-    assert.deepEqual(wire.map((r) => `${r.capability}/${r.operation}`), ["browser.session/snapshot"]);
-    assert.equal(remotes[0]?.toolSurfaceProfile, "browser_full");
+    assert.deepEqual((listed.result?.tools ?? []).map((t) => t.name).sort(), [...REMOTE_TOOL_NAMES].sort());
+    const refused = await send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "browser_snapshot", arguments: { session_id: "bs-0123456789abcdef-1-0001020304050607" } } });
+    assert.match(JSON.stringify(refused), /not found|unknown tool/i);
+    assert.deepEqual(wire, [], "no browser shape reaches orceld through the relay");
   } finally {
     relay.closeConnection("conn-ob09");
   }

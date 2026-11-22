@@ -291,6 +291,20 @@ pub fn validate_relay_origin(origin: &str) -> Result<(), LifecycleError> {
     }
 }
 
+/// SG-000135 OB-09 (engineering-chosen 2026-11-22 under the founder's
+/// delegation): the relay serves the `core` profile only. Remote Orcel
+/// Browser control (`browser_full`) is available only through the ChatGPT
+/// Secure MCP Tunnel, so `orcel remote enable|pair --profile` accepts
+/// nothing but `core`.
+pub fn check_relay_profile(profile: Option<&str>) -> Result<(), LifecycleError> {
+    match profile {
+        None | Some(orcel_policy::remote_session::REMOTE_PROFILE_CORE) => Ok(()),
+        Some(_) => Err(LifecycleError::usage(
+            "relay connections serve the core profile only; remote Orcel Browser control (browser_full) is available only through the ChatGPT Secure MCP Tunnel: run `orcel tunnel setup --profile browser_full`",
+        )),
+    }
+}
+
 /// `orcel remote enable|pair`: STRONG presence through `orceld`, then the
 /// interactive enrollment entrypoint with inherited console I/O.
 pub fn run_enrollment(
@@ -299,21 +313,7 @@ pub fn run_enrollment(
     action: &str,
     relay: Option<String>,
     workspace: Option<String>,
-    profile: Option<String>,
 ) -> Result<i32, LifecycleError> {
-    // SG-000135 OB-09: `orcel remote pair --profile browser_full` pairs a
-    // connection for the remote browser_full profile only; `core` (the
-    // default) is never named, so a core pairing is unchanged.
-    let profile =
-        match profile.as_deref() {
-            None | Some(orcel_policy::remote_session::REMOTE_PROFILE_CORE) => None,
-            Some(orcel_policy::remote_session::REMOTE_PROFILE_BROWSER_FULL) if action == "pair" => {
-                profile
-            }
-            Some(_) => return Err(LifecycleError::usage(
-                "--profile is core (the default) or browser_full, and only for orcel remote pair",
-            )),
-        };
     let state = Installer::new(layout.clone(), platform).verify()?;
     let version_dir = layout.version_dir(&state.active.version);
     let node = PathBuf::from(&state.record.node_path);
@@ -345,15 +345,11 @@ pub fn run_enrollment(
         "{}",
         crate::per_os::confirm_when_prompted(CONFIRM_REMOTE_ENROLL)
     );
-    let mut arguments = json!({ "action": action, "relay_origin": relay_origin });
-    if let (Some(profile), Some(map)) = (&profile, arguments.as_object_mut()) {
-        map.insert("profile".into(), json!(profile));
-    }
     let request = crate::ipc::request(
         &workspace,
         "remote.enrollment.authorize",
         "authorize",
-        arguments,
+        json!({ "action": action, "relay_origin": relay_origin }),
     );
     let response = crate::ipc::call(
         &orceld,
@@ -389,9 +385,6 @@ pub fn run_enrollment(
             .arg("--workspace")
             .arg(&workspace);
     }
-    if let Some(profile) = &profile {
-        command.arg("--profile").arg(profile);
-    }
     match command.env_clear().envs(env).status() {
         Ok(status) => Ok(status.code().unwrap_or(1)),
         Err(error) => Err(LifecycleError::state(format!("start Node.js: {error}"))),
@@ -402,6 +395,26 @@ pub fn run_enrollment(
 mod tests {
     use super::*;
     use crate::test_support::temp_dir;
+
+    /// SG-000135 OB-09: relay pairing stays core; browser_full is refused with
+    /// a message that points at the tunnel.
+    #[test]
+    fn ob09_relay_pairing_refuses_browser_full_and_points_at_the_tunnel() {
+        assert!(check_relay_profile(None).is_ok());
+        assert!(check_relay_profile(Some("core")).is_ok());
+        for profile in [
+            "browser_full",
+            "browser_structured",
+            "desktop_structured",
+            "",
+        ] {
+            let error = check_relay_profile(Some(profile)).unwrap_err();
+            assert!(error.message.contains("core profile only"), "{profile}");
+            assert!(error
+                .message
+                .contains("orcel tunnel setup --profile browser_full"));
+        }
+    }
 
     /// MAC-M1-02: the Windows enrollment prompt is the exact earlier line.
     #[test]

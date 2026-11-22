@@ -25,8 +25,8 @@ export type ToolSurfaceProfile = "core" | "desktop_structured" | "browser_struct
 
 /**
  * SG-000135 OB-09: the tool-surface profiles a remote path may serve. A
- * paired connection or tunnel serves exactly one of them, chosen by the
- * owner on the PC; `core` stays the default.
+ * tunnel serves exactly one of them, chosen by the owner on the PC; `core`
+ * stays the default, and the relay serves `core` only.
  */
 export type RemoteToolSurfaceProfile = "core" | "browser_full";
 export const REMOTE_TOOL_SURFACE_PROFILES: readonly RemoteToolSurfaceProfile[] = Object.freeze(["core", "browser_full"] as const);
@@ -472,8 +472,8 @@ export const LIVE_BROWSER_TOOLS: readonly string[] = Object.freeze([
 /**
  * SG-000135 OB-02: the `browser_full` profile's own contract. SG-000135
  * OB-09: locally it is served when local configuration selects
- * `browser_full`; remotely, a connection or tunnel the owner set up for the
- * `browser_full` profile serves the twelve remote-safe tools (those with
+ * `browser_full`; remotely, only a ChatGPT Secure MCP Tunnel the owner set
+ * up for the `browser_full` profile serves the twelve remote-safe tools (those with
  * remote scopes here: reads `orcel.read`, actions `orcel.execute`, equal to
  * `required_browser_full_scopes` in `crates/orcel-policy/src/remote_session.rs`);
  * the persistent profile tools stay local-only. Each tool
@@ -590,7 +590,8 @@ export const REMOTE_BROWSER_FULL_TOOLS: readonly string[] = Object.freeze(
 /**
  * SG-000135 OB-09: exact remote profile membership. `core` is unchanged
  * (`REMOTE_TOOL_NAMES`); `browser_full` is the remote-safe broker tools
- * only, with no core tool, so a connection serves one or the other.
+ * only, with no core tool, served only by a ChatGPT Secure MCP Tunnel the
+ * owner set up for it (one profile per tunnel).
  */
 export const REMOTE_SURFACE_PROFILES: Readonly<Record<RemoteToolSurfaceProfile, readonly string[]>> = {
   core: REMOTE_TOOL_NAMES,
@@ -762,14 +763,13 @@ export function remoteProfileForProvider(providerKind: string): ToolSurfaceProfi
 }
 
 /**
- * SG-000135 OB-09: the provider kinds a connection or tunnel may be set up
- * for under the remote `browser_full` profile: `openai` (the ChatGPT Secure
- * MCP Tunnel) and `generic` (every OAuth client the relay registers is
- * `generic`, ChatGPT's custom connector included). Either way the owner
- * chooses `browser_full` on the PC, under STRONG presence, for the exact
- * client and route shown; the other provider kinds keep `core` alone.
+ * SG-000135 OB-09 (engineering-chosen 2026-11-22 under the founder's
+ * delegation): the provider kinds that may be served the remote
+ * `browser_full` profile: `openai` only, through the ChatGPT Secure MCP
+ * Tunnel set up for it on the PC. The relay never serves it
+ * (`allowedToolsFor`), and every other provider keeps `core` alone.
  */
-export const REMOTE_BROWSER_FULL_PROVIDERS: readonly string[] = Object.freeze(["openai", "generic"]);
+export const REMOTE_BROWSER_FULL_PROVIDERS: readonly string[] = Object.freeze(["openai"]);
 
 /**
  * SG-000135 OB-09: whether a remote path from `providerKind` may serve

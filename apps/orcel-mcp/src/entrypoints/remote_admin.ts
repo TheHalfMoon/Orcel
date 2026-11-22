@@ -3,11 +3,7 @@
  * `orcel remote enable` and `orcel remote pair` after STRONG presence.
  *
  *   remote_admin.js enable --relay <origin> [--workspace <id>]
- *   remote_admin.js pair [--profile browser_full]
- *
- * SG-000135 OB-09: `--profile browser_full` (passed by `orcel remote pair
- * --profile browser_full` after the STRONG approval that names it) pairs a
- * connection for the remote browser_full profile only.
+ *   remote_admin.js pair
  *
  * Reads ORCEL_DEVICE_KEY_PATH and ORCEL_UPLINK_CONFIG, and keeps the
  * private key in the `orceld` secret store (ORCEL_DAEMON, XP-19). Never
@@ -58,10 +54,6 @@ async function main(args: readonly string[]): Promise<void> {
     return;
   }
   if (args[0] === "pair") {
-    const profile = option(args, "--profile") ?? "core";
-    if (profile !== "core" && profile !== "browser_full") {
-      throw new Error("PAIRING_REQUIRED: --profile is core or browser_full");
-    }
     const console = createInterface({ input: process.stdin, output: process.stdout });
     try {
       const paired = await withKernelSecretStore(process.env.ORCEL_DEFAULT_WORKSPACE ?? "default", (secrets) => pairRemote({
@@ -70,7 +62,6 @@ async function main(args: readonly string[]): Promise<void> {
         secrets,
         fetch: fetchImpl,
         now: Date.now,
-        toolSurfaceProfile: profile,
         sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
         display: (code, expiresAtMs) => {
           const minutes = Math.max(1, Math.round((expiresAtMs - Date.now()) / 60_000));
@@ -78,10 +69,7 @@ async function main(args: readonly string[]): Promise<void> {
         },
         confirm: async (request) => {
           process.stdout.write(
-            `\nApprove this remote connection?\n  client:   ${request.clientName} (${request.clientId})\n  returns:  ${request.redirectOrigin}\n  scopes:   ${request.scopes.join(" ")}\n  route:    ${request.remoteConnectionId}\n  profile:  ${request.toolSurfaceProfile}\n` +
-              (request.toolSurfaceProfile === "browser_full"
-                ? "This client will drive Orcel Browser sessions on this computer (browser tools only, no files or programs). Each consequential action still asks you here, and nothing works until you also run `orcel remote allow`.\n"
-                : "") +
+            `\nApprove this remote connection?\n  client:   ${request.clientName} (${request.clientId})\n  returns:  ${request.redirectOrigin}\n  scopes:   ${request.scopes.join(" ")}\n  route:    ${request.remoteConnectionId}\n` +
               "This links the client to this computer. It grants no workspace trust and no access until you also run `orcel remote allow`.\n"
           );
           const answer = await console.question("Type yes to approve: ");

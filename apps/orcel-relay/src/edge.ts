@@ -31,7 +31,7 @@ import {
 } from "@orcel/mcp/dist/relay_contract.js";
 import type { DeviceChannelHub } from "./device_channel.js";
 import type { QuotaGuard } from "./quotas.js";
-import { routeProfile, type RelayConnectionRecord, type RelayStore } from "./store.js";
+import type { RelayConnectionRecord, RelayStore } from "./store.js";
 
 export const MAX_SESSIONS_PER_ROUTE = RELAY_BOUNDS.maxConnectionsPerDevice;
 export const MAX_SESSIONS_TOTAL = 1024;
@@ -324,9 +324,7 @@ export class McpEdge {
     if (method === "tools/call") {
       const params = message.params;
       const name = isPlainObject(params) && typeof params.name === "string" ? params.name : "";
-      // SG-000135 OB-09: the route's own paired profile, from the stored
-      // pairing, never from the request.
-      const check = authorizeToolByScopes(name, routeProfile(route), session.scopes, route.scopeCeiling);
+      const check = authorizeToolByScopes(name, "core", session.scopes, route.scopeCeiling);
       if (!check.ok) {
         if (check.failure === "REMOTE_SCOPE_DENIED") {
           return this.challenge(403, "insufficient_scope");

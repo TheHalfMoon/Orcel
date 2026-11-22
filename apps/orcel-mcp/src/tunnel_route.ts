@@ -8,10 +8,17 @@
  * and every `orceld` request carries an SG-000055 remote context, so
  * `orceld` requires an active local remote-session lease and the remote
  * scope map. In tunnel mode no environment variable selects a local profile.
+ *
+ * SG-000135 OB-09 (engineering-chosen 2026-11-22 under the founder's
+ * delegation): the tunnel is the only remote path that may serve the remote
+ * `browser_full` profile, when the owner set the tunnel up for it on the PC
+ * (`orcel tunnel setup --profile browser_full`). The relay's paired
+ * connections stay `core` only (`PairedConnection`).
  */
 import { randomBytes } from "node:crypto";
 import { isPairedConnection, type PairedConnection } from "./device_uplink.js";
 import type { RemoteDispatchContext } from "./kernel.js";
+import { isRemoteToolSurfaceProfile, type RemoteToolSurfaceProfile } from "./tool_contract.js";
 
 export const TRANSPORT_ENV = "ORCEL_MCP_TRANSPORT";
 export const TUNNEL_TRANSPORT = "tunnel";
@@ -19,8 +26,13 @@ export const TUNNEL_ROUTE_ENV = "ORCEL_TUNNEL_ROUTE_JSON";
 
 const DEVICE_PATTERN = /^dev-[0-9a-f]{32}$/;
 
+/** A tunnel route's connection fields: a paired connection's, with its profile. */
+export type TunnelConnection = Omit<PairedConnection, "toolSurfaceProfile"> & {
+  readonly toolSurfaceProfile: RemoteToolSurfaceProfile;
+};
+
 export interface TunnelRoute {
-  readonly paired: PairedConnection;
+  readonly paired: TunnelConnection;
   readonly deviceId: string;
   readonly deviceEpoch: number;
 }
@@ -40,17 +52,19 @@ export function parseTunnelRoute(text: string | undefined): TunnelRoute {
     throw new Error("TRANSPORT_UNAVAILABLE: the tunnel route must be an object");
   }
   const { deviceId, deviceEpoch, ...paired } = parsed as Record<string, unknown>;
+  const profile = paired.toolSurfaceProfile;
   if (
     typeof deviceId !== "string" ||
     !DEVICE_PATTERN.test(deviceId) ||
     typeof deviceEpoch !== "number" ||
     !Number.isSafeInteger(deviceEpoch) ||
     deviceEpoch < 1 ||
-    !isPairedConnection(paired)
+    !isRemoteToolSurfaceProfile(profile) ||
+    !isPairedConnection({ ...paired, toolSurfaceProfile: "core" })
   ) {
     throw new Error("TRANSPORT_UNAVAILABLE: the tunnel route is malformed");
   }
-  return { paired, deviceId, deviceEpoch };
+  return { paired: { ...(paired as unknown as TunnelConnection), toolSurfaceProfile: profile }, deviceId, deviceEpoch };
 }
 
 /**

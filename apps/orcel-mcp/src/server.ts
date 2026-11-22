@@ -97,13 +97,17 @@ export function tunnelTransportContext(
  * Resolve the tools a transport context may register. A remote transport
  * (the relay or the tunnel) may serve only the profile mapped for its
  * provider kind, which is `core` for every known provider; unknown provider
- * kinds and unmapped profiles fail closed. SG-000135 OB-09: a ChatGPT
- * connection or tunnel set up for `browser_full` serves the remote-safe
- * broker tools only, never a core tool.
+ * kinds and unmapped profiles fail closed. SG-000135 OB-09 (engineering-
+ * chosen 2026-11-22 under the founder's delegation): only a ChatGPT Secure
+ * MCP Tunnel set up for `browser_full` serves it, and then the remote-safe
+ * broker tools only, never a core tool; the relay serves `core` only.
  */
 export function allowedToolsFor(context: TransportContext): ReadonlySet<string> {
   if (isRemoteTransport(context.transportKind)) {
-    if (!isRemoteProfileAllowed(context.providerKind, context.toolSurfaceProfile)) {
+    if (
+      (context.transportKind !== "tunnel" && context.toolSurfaceProfile !== "core") ||
+      !isRemoteProfileAllowed(context.providerKind, context.toolSurfaceProfile)
+    ) {
       throw new Error("TOOL_SURFACE_DENIED: the remote provider kind or tool surface profile is not mapped");
     }
     return remoteProfileTools(context.toolSurfaceProfile);

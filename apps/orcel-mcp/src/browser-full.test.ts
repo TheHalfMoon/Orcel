@@ -189,8 +189,10 @@ test("only local configuration selects the local browser_full profile; a remote 
     assert.equal(tunnelTransportContext(provider).toolSurfaceProfile, "core");
     for (const transportKind of ["tunnel", "relay"] as const) {
       const context = { transportKind, providerKind: provider, toolSurfaceProfile: "browser_full" } as const;
-      if (provider === "openai" || provider === "generic") {
-        // A tunnel or relay route set up for browser_full: the remote-safe broker tools only.
+      if (provider === "openai" && transportKind === "tunnel") {
+        // Engineering-chosen 2026-11-22 under the founder's delegation: only
+        // a ChatGPT tunnel set up for browser_full, and then the remote-safe
+        // broker tools only. The relay never serves it.
         assert.deepEqual([...allowedToolsFor(context)].sort(), [...REMOTE_BROWSER_FULL_TOOLS].sort());
       } else {
         assert.throws(() => allowedToolsFor(context), /TOOL_SURFACE_DENIED/, provider);
@@ -402,7 +404,7 @@ test("the contract document lists the browser_full profile and its broker tools"
   const yes = (value: boolean): string => (value ? "yes" : "no");
   assert.ok(doc.includes("## browser_full (SG-000135; remote-safe tools also remote, OB-09)"));
   assert.ok(doc.includes(`Locally it holds ${String(profileTools("browser_full").size)} tools`));
-  assert.ok(doc.includes(`serves only the`) && doc.includes(`${String(REMOTE_BROWSER_FULL_TOOLS.length)} broker tools with remote scopes`));
+  assert.ok(doc.includes("the relay serves `core` only") && doc.includes(`${String(REMOTE_BROWSER_FULL_TOOLS.length)} broker tools with remote scopes`));
   for (const [name, e] of Object.entries(BROWSER_FULL_CONTRACT)) {
     const a = e.annotations;
     const remote = e.remote === "local_only" ? "local-only" : e.remote.join(" ");

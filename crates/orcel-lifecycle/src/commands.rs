@@ -1672,16 +1672,10 @@ pub fn remote_enroll(args: &mut Args, action: &str) -> Result<i32, LifecycleErro
     let workspace = args.value("--workspace")?;
     let profile = args.value("--profile")?;
     args.finish()?;
+    orcel_lifecycle::remote::check_relay_profile(profile.as_deref())?;
     let layout = Layout::for_current_user()?;
     let platform = host_platform();
-    orcel_lifecycle::remote::run_enrollment(
-        &layout,
-        platform.as_ref(),
-        action,
-        relay,
-        workspace,
-        profile,
-    )
+    orcel_lifecycle::remote::run_enrollment(&layout, platform.as_ref(), action, relay, workspace)
 }
 
 /// `orcel remote connect`: run the outbound-only device uplink.

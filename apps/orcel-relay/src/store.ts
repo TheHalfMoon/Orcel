@@ -8,7 +8,6 @@
  */
 import type { DeviceIdentity, RevocationRecord } from "@orcel/mcp/dist/device_identity.js";
 import type { OAuthScope, TokenVerificationKey } from "@orcel/mcp/dist/oauth_authorization.js";
-import type { RemoteToolSurfaceProfile } from "@orcel/mcp/dist/tool_contract.js";
 
 export interface RelayDeviceRecord {
   readonly identity: DeviceIdentity;
@@ -23,18 +22,7 @@ export interface RelayConnectionRecord {
   readonly clientId: string;
   readonly providerKind: string;
   readonly scopeCeiling: readonly OAuthScope[];
-  /**
-   * SG-000135 OB-09: the one remote profile the device's owner paired this
-   * connection for, from the device-signed pairing offer. A record written
-   * before profiles existed has none and is `core` (`routeProfile`).
-   */
-  readonly toolSurfaceProfile?: RemoteToolSurfaceProfile;
   readonly revoked: boolean;
-}
-
-/** SG-000135 OB-09: a paired route's remote profile (`core` by default). */
-export function routeProfile(record: RelayConnectionRecord): RemoteToolSurfaceProfile {
-  return record.toolSurfaceProfile ?? "core";
 }
 
 export interface RelayStore {
