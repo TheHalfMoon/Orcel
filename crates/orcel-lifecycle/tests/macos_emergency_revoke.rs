@@ -55,6 +55,11 @@ fn emergency_revoke_fails_closed_headless_revokes_nothing_and_is_audited() {
     }
     .save(&Layout::new(&root))
     .unwrap();
+    // orceld holds its state root to XP-01's private-directory rule (0700)
+    // and repairs nothing, while `Config::save` creates the root with the
+    // umask. An installed Orcel gets 0700 from the installer (MAC-M1-03);
+    // here the root is made private as that install would leave it.
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
 
     let started = std::time::Instant::now();
     let output = std::process::Command::new(orcel)
@@ -81,7 +86,9 @@ fn emergency_revoke_fails_closed_headless_revokes_nothing_and_is_audited() {
     assert!(!stderr.contains("Windows Hello"), "{stderr}");
     assert!(!stdout.contains("Emergency revoke recorded"), "{stdout}");
 
-    let audit = fs::read_to_string(root.join("audit.jsonl")).expect("orceld wrote its audit log");
+    let audit = fs::read_to_string(root.join("audit.jsonl")).unwrap_or_else(|error| {
+        panic!("orceld wrote no audit log ({error}); orcel said:\n{stdout}\n{stderr}")
+    });
     let lines: Vec<&str> = audit
         .lines()
         .filter(|line| line.contains("trust.revoke_emergency"))
