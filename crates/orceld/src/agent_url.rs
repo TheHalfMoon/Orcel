@@ -251,6 +251,24 @@ pub(crate) fn agent_url(url: &str, after_sign_in: bool) -> String {
     out
 }
 
+/// SG-000135 SH-2: whether every query and fragment value of `url` is
+/// short and not token-like, so a mode switch may reopen it as it is. A
+/// value the agent may read can still be a token (`q=eyJ...`); such a URL is
+/// carried without its query and fragment.
+pub(crate) fn no_token_values(url: &str) -> bool {
+    let Some(parts) = split(url) else {
+        return false;
+    };
+    [parts.query, parts.fragment]
+        .into_iter()
+        .flatten()
+        .flat_map(|text| text.split(['&', ';']))
+        .all(|item| {
+            let value = item.split_once('=').map_or(item, |(_, value)| value);
+            !token_like(value)
+        })
+}
+
 /// A tab's URL as a tab report shows it: scheme, host and path, without
 /// userinfo, query or fragment (OB-03). Ported from `sanitize_url` in
 /// vercel-labs/agent-browser cli/src/native/tab_binding.rs (see

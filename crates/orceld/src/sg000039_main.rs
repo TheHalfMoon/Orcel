@@ -42,6 +42,11 @@ mod browser_full;
 // live-browser-dev build drives a session that uses the cache.
 #[cfg_attr(not(all(windows, feature = "live-browser-dev")), allow(dead_code))]
 mod browser_lease;
+// SG-000135 SH-2: moving a browser_full task between Shadow and Visible
+// (the checks, what is carried and the plan digest). Only the Windows
+// live-browser-dev build drives a switch.
+#[cfg_attr(not(all(windows, feature = "live-browser-dev")), allow(dead_code))]
+mod browser_mode_switch;
 // SG-000135 OB-04: persistent Orcel-managed browser profiles under orceld's
 // protected browser state (named, one live session each, owner-approved
 // create and delete).

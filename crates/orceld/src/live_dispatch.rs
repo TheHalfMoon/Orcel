@@ -637,6 +637,7 @@ mod full {
         SessionMode, SessionOptions, SessionWorker,
     };
     use crate::browser_full::{FullAction, TabOp};
+    use crate::browser_mode_switch::{SwitchPlan, SwitchState, SwitchTab};
     use crate::browser_profiles::ProfileStore;
     use crate::browser_receipts::{EvidenceKind, EvidenceStore, IntentDraft};
     use crate::live_browser::{form_outcome, LiveBrowser, LiveState, TabView};
@@ -652,6 +653,28 @@ mod full {
         }
         fn shutdown(self) -> bool {
             LiveBrowser::shutdown(self)
+        }
+        fn switch_state(&mut self) -> SwitchState {
+            // The same read-only checks browser_task_status makes: the
+            // takeover gate's session hold, and the challenge detector on
+            // the active page (at most once a second).
+            let held = self.check_not_held().is_err();
+            self.check_challenge_throttled();
+            let waiting = !self.needs_you().is_empty();
+            SwitchState {
+                tabs: self
+                    .tab_views()
+                    .into_iter()
+                    .map(|view| SwitchTab {
+                        page_id: view.page_id,
+                        committed: view.url,
+                        active: view.active,
+                    })
+                    .collect(),
+                sign_in_seen: self.sign_in_seen(),
+                held,
+                waiting,
+            }
         }
     }
 
@@ -821,6 +844,232 @@ mod full {
             .map_err(|error| ProviderError::new(error.code, error.message))
     }
 
+    /// SG-000135 SH-2: the owner's fresh SOFT approval for moving a task
+    /// into a visible window, bound to the client and the whole switch plan
+    /// (the old session, its last receipt, the profile, the task and each
+    /// carried page's URL digest).
+    fn approve_switch_visible(
+        workspace: &Workspace,
+        approval: &impl ApprovalBroker,
+        client: &str,
+        plan: &SwitchPlan,
+    ) -> Result<(), ProviderError> {
+        let digest = digest(&format!(
+            "orcel-sh2-switch-visible/1\n{}\n{client}\n{}",
+            workspace.id, plan.from.plan_sha256
+        ));
+        let pages = plan.tabs.len();
+        let profile = match &plan.profile {
+            Some(name) => format!(" It keeps the Orcel browser profile named {name}, which may be signed in to sites."),
+            None => String::new(),
+        };
+        let prompt = orcel_approval::ApprovalPrompt::new(
+            workspace.id.clone(),
+            orcel_policy::POLICY_REVISION,
+            "move an Orcel browser session to a visible window",
+            format!("orcel-browser-session:{}", plan.from.session_id),
+            format!(
+                "Move this agent's browser task (MCP session {client}) from its Shadow session {} into a browser window on your desktop, titled Orcel agent session. The Shadow session ends. Orcel then reopens its {pages} recorded page(s) in the window, each asking you first; it repeats no click, fill, form submission or download.{profile} The browser may bring the window to the front, taking keyboard focus, when it opens and when it opens a page; you can minimise it. You will see it and may use it. Pages in it get no clipboard permission and cannot open file dialogs, but a page can still copy text to your clipboard after an approved click (the legacy copy command).",
+                plan.from.session_id
+            ),
+            digest,
+        );
+        approval
+            .request(&prompt)
+            .map(|_| ())
+            .map_err(|error| ProviderError::new(error.code, error.message))
+    }
+
+    /// SG-000135 SH-2: move the task of `client`'s session `from` to a new
+    /// session in `mode` (see `browser_mode_switch.rs`). Every check runs,
+    /// and every approval is asked, before the old session ends; a refusal
+    /// there changes nothing. The new session then reopens the carried pages
+    /// as ordinary approved, receipted GET navigations, stopping at the
+    /// first that is refused.
+    fn switch(
+        workspace: &Workspace,
+        approval: &impl ApprovalBroker,
+        request: &RequestEnvelope,
+        client: &str,
+        caller: &crate::browser_remote::Caller,
+        from: &str,
+        mode: SessionMode,
+    ) -> Result<Value, ProviderError> {
+        let probe = || crate::browser_broker::verified_epoch(approval);
+        with_broker(|broker| {
+            broker.check_epoch(probe())?;
+            let plan = broker.plan_switch(client, from, mode, caller)?;
+            if let Some(name) = &plan.profile {
+                if !broker.profile_approved(&workspace.id, client, name) {
+                    approve_profile_use(workspace, approval, client, name)?;
+                    broker.note_profile_approved(&workspace.id, client, name);
+                }
+            }
+            if mode == SessionMode::Visible {
+                approve_switch_visible(workspace, approval, client, &plan)?;
+            }
+            // A revoke while a prompt waited ends every session here.
+            broker.check_epoch(probe())?;
+            let ended = broker.end_for_switch(client, &plan)?;
+            // From here the old session is gone: a refusal says so.
+            let old = plan.from.session_id.clone();
+            let lost = |error: ProviderError| {
+                ProviderError::new(
+                    error.code,
+                    format!(
+                        "{} (the mode switch ended browser session {old}; no new session was opened and nothing was carried; create a new session)",
+                        error.message
+                    ),
+                )
+            };
+            let lease = match &plan.profile {
+                Some(name) => Some(
+                    profile_store()
+                        .and_then(|store| store.acquire(name))
+                        .map_err(lost)?,
+                ),
+                None => None,
+            };
+            let random = random8().map_err(lost)?;
+            let instance = broker.instance().to_owned();
+            let task = plan.task.clone();
+            let profile_name = plan.profile.clone();
+            let session = broker
+                .create_with(
+                    client,
+                    task.as_deref(),
+                    SessionOptions {
+                        mode,
+                        profile: lease,
+                        caller: caller.clone(),
+                        continued_from: Some(plan.from.clone()),
+                    },
+                    random,
+                    orcel_approval::now_ms(),
+                    |id, dirs| {
+                        start(
+                            id,
+                            client,
+                            task.as_deref(),
+                            dirs,
+                            mode,
+                            profile_name.as_deref(),
+                            caller.is_remote(),
+                        )
+                    },
+                )
+                .map_err(lost)?;
+            let session_id = session.id.clone();
+            let mut reply = json!({
+                "session_id": session.id,
+                "task": session.task,
+                "orcel_session_id": instance,
+                "client_ref": orcel_policy::browser_lease::client_ref(client),
+            });
+            if let (Value::Object(map), Value::Object(facts)) = (&mut reply, session.mode_json()) {
+                map.extend(facts);
+            }
+            // Reopen the carried pages, background tabs first and the active
+            // one last: the first in the session's page, each later one in a
+            // new tab. Each is the ordinary navigation (its own intent,
+            // approval and receipt); the first refusal stops the rest.
+            let mut carried = Vec::new();
+            let mut stopped: Option<String> = None;
+            for (index, tab) in plan.tabs.iter().enumerate() {
+                // The agent reads the carried URL as it read it in the old
+                // session: an exact carry had nothing redacted, a path-only
+                // carry has no query or fragment.
+                let entry = |page_id: Value, receipt_seq: Value, restored: bool| {
+                    json!({
+                        "from_page_id": tab.from_page_id,
+                        "page_id": page_id,
+                        "carried": tab.kind.as_str(),
+                        "url": crate::agent_url::agent_url(&tab.target, false),
+                        "active": tab.active,
+                        "restored": restored,
+                        "receipt_seq": receipt_seq,
+                    })
+                };
+                if stopped.is_some() {
+                    carried.push(entry(Value::Null, Value::Null, false));
+                    continue;
+                }
+                let action = if index == 0 {
+                    FullAction::Open {
+                        session: session_id.clone(),
+                        url: tab.target.clone(),
+                    }
+                } else {
+                    FullAction::Tabs {
+                        session: session_id.clone(),
+                        op: TabOp::New {
+                            url: Some(tab.target.clone()),
+                        },
+                    }
+                };
+                let outcome =
+                    crate::browser_broker::checked_baseline(broker, probe()).and_then(|baseline| {
+                        let session = broker.session(client, &session_id)?;
+                        session.begin_action()?;
+                        let current = || probe() == Some(baseline);
+                        run_recorded(
+                            workspace, approval, request, session, &action, baseline, &current,
+                        )
+                    });
+                match outcome {
+                    Ok(done) => {
+                        let page = done
+                            .get("page_id")
+                            .or_else(|| done.get("active_page_id"))
+                            .cloned()
+                            .unwrap_or(Value::Null);
+                        let seq = done
+                            .get("receipt")
+                            .and_then(|receipt| receipt.get("seq"))
+                            .cloned()
+                            .unwrap_or(Value::Null);
+                        carried.push(entry(page, seq, true));
+                    }
+                    Err(error) => {
+                        stopped = Some(format!(
+                            "{}: {}",
+                            serde_json::to_value(&error.code)
+                                .ok()
+                                .and_then(|code| code.as_str().map(str::to_owned))
+                                .unwrap_or_default(),
+                            error.message
+                        ));
+                        carried.push(entry(Value::Null, Value::Null, false));
+                    }
+                }
+            }
+            let page_id = broker
+                .peek(client, &session_id)
+                .ok()
+                .and_then(|session| session.page_id.clone());
+            if let Value::Object(map) = &mut reply {
+                map.insert("page_id".into(), json!(page_id));
+                map.insert(
+                    "continued_from".into(),
+                    json!({
+                        "session_id": plan.from.session_id,
+                        "mode": plan.from.mode.as_str(),
+                        "last_receipt_sha256": plan.from.last_receipt_sha256,
+                        "ended": ended.to_json(),
+                    }),
+                );
+                map.insert("carried".into(), json!(carried));
+                map.insert("tabs_not_carried".into(), json!(plan.from.dropped));
+                map.insert("restore_stopped".into(), json!(stopped));
+                map.insert("repeated_actions".into(), json!(REPEATED_NONE));
+            }
+            Ok(reply)
+        })
+    }
+
+    /// What a mode switch says it repeated.
+    const REPEATED_NONE: &str = "none: only GET navigations to the recorded pages, each approved and receipted in the new session; no click, fill, select, form submission, Enter or download was repeated, and unsubmitted field values were not carried";
+
     /// Launch a session's worker on its own directories, in `mode`, and in
     /// the persistent profile `dirs` names, if any.
     fn start(
@@ -918,9 +1167,15 @@ mod full {
         // refuses the action.
         match action {
             FullAction::Create {
+                continue_from: Some(from),
+                mode,
+                ..
+            } => switch(workspace, approval, request, client, caller, from, *mode),
+            FullAction::Create {
                 task,
                 mode,
                 profile,
+                continue_from: None,
             } => with_broker(|broker| {
                 broker.check_epoch(probe())?;
                 let random = random8()?;
@@ -951,6 +1206,7 @@ mod full {
                         mode,
                         profile: lease,
                         caller: caller.clone(),
+                        continued_from: None,
                     },
                     random,
                     orcel_approval::now_ms(),

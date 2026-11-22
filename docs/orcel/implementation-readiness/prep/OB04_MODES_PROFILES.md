@@ -153,7 +153,7 @@ Run after the security judge's fixes, 2026-11-18 (Edge 157, scripted consent):
 ## 8. Not proven here
 
 - **SH-1 as written.** The founder's 10-minute run, with a person typing and moving the mouse while a Shadow session fills a two-page form, has not run. The scripted run compares the desktop across a mission of about 20 seconds and marks the comparison inconclusive if the person gave input.
-- **SH-2.** Toggling Shadow mid-mission, moving the task to an isolated session without repeating a submit, needs OB-05's receipts to carry the task across sessions. Not implemented. The mode is fixed for a session's life.
+- **SH-2.** A session's mode stays fixed for its life. Toggling Shadow mid-mission is implemented on `browser/sh2-mode-switch` as a move to a new session in the other mode (`browser_session_create {continue_from, mode}`), recorded in [`SH2_MODE_SWITCH.md`](SH2_MODE_SWITCH.md). It is not merged, and the founder run is pending.
 - **FA-F with a person browsing.** The concurrent-session isolation is checked (two sessions, two profiles, no cookie crossing). The person's own browsing in another browser during two missions is the founder run.
 - **FA-E and FX-6 close in OB-08.** This branch provides the Shadow half and the two modes only. There is no lease, so every routine action still asks.
 - **Window z-order.** Windows decides where a new top-level window is placed. The run records whether the Visible window ended up above the foreground window, and Orcel never activates it. No `SW_SHOWNOACTIVATE`-style placement control exists through Playwright's launch, so "never above" cannot be promised beyond what the run shows.

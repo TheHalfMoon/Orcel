@@ -493,9 +493,11 @@ export const BROWSER_FULL_CONTRACT: Readonly<Record<string, ToolContractEntry>> 
   browser_session_create: {
     // SG-000135 OB-04: SOFT when it opens a Visible window or uses a
     // persistent profile for the first time in this MCP session; a Shadow
-    // session on an ephemeral profile asks nothing.
+    // session on an ephemeral profile asks nothing. SH-2: a mode switch
+    // (continue_from) asks before a Visible window, and each reopened page
+    // asks as browser_open does.
     capability: "browser.session", operation: "create", effect: "write", approval: "SOFT", remote: EXECUTE,
-    outputBound: "one broker session id, its task label, the orceld instance id, its mode (shadow or visible, and whether it claims no interference) and its profile (ephemeral, or the persistent profile's name)",
+    outputBound: "one broker session id, its task label, the orceld instance id, its mode (shadow or visible, and whether it claims no interference) and its profile (ephemeral, or the persistent profile's name); for a mode switch also the session it continues, its end report and each carried page (sanitized URL, new page id, receipt seq)",
     annotations: change("Create isolated browser session", { destructive: false, idempotent: false })
   },
   browser_open: {

@@ -170,6 +170,7 @@ mod tests {
             task: None,
             mode: SessionMode::Shadow,
             profile: Some("work".into()),
+            continue_from: None,
         };
         assert!(refuse_remote_profile(&local, &create).is_ok());
         assert!(refuse_remote_profile(&local, &FullAction::Profiles).is_ok());
@@ -221,11 +222,13 @@ mod tests {
             task: None,
             mode: SessionMode::Shadow,
             profile: Some("work".into()),
+            continue_from: None,
         };
         let ephemeral = FullAction::Create {
             task: Some("Book a table".into()),
             mode: SessionMode::Visible,
             profile: None,
+            continue_from: None,
         };
         for refused in [
             named,

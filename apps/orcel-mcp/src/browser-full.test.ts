@@ -350,6 +350,10 @@ test("each broker tool forwards exactly its broker shape and only its own fields
   sent.length = 0;
   await handlers.get("browser_session_create")?.({ workspace_id: "default" });
   assert.deepEqual(sent[0]?.arguments, {});
+  // SH-2: a mode switch forwards the session it continues and the mode.
+  sent.length = 0;
+  await handlers.get("browser_session_create")?.({ workspace_id: "default", continue_from: SESSION, mode: "visible" });
+  assert.deepEqual(sent[0]?.arguments, { continue_from: SESSION, mode: "visible" });
 });
 
 test("the broker schemas are strict and take a broker session id", () => {
@@ -397,6 +401,15 @@ test("OB-04: mode is shadow or visible and a profile is a checked name, never a 
     assert.equal(named.safeParse(value).success, false, JSON.stringify(value));
   }
   assert.equal(browserProfilesSchema("default").safeParse({ name: "work" }).success, false);
+});
+
+test("SH-2: continue_from is a broker session id, never a page id or a path", () => {
+  const create = browserSessionCreateSchema("default");
+  assert.equal(create.safeParse({ continue_from: SESSION, mode: "visible" }).success, true);
+  assert.equal(create.safeParse({ continue_from: SESSION, mode: "shadow" }).success, true);
+  for (const value of [{ continue_from: PAGE, mode: "visible" }, { continue_from: "bs-1", mode: "visible" }, { continue_from: "C:\\x", mode: "visible" }, { continue_from: 7, mode: "visible" }, { continue_from: SESSION, mode: "headed" }]) {
+    assert.equal(create.safeParse(value).success, false, JSON.stringify(value));
+  }
 });
 
 test("the contract document lists the browser_full profile and its broker tools", () => {

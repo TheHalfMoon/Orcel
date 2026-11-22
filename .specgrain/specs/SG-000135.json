@@ -295,6 +295,7 @@
     {
       "id": "OB-04",
       "title": "Shadow and Visible execution modes, including the headed argv set, the profile mode with persistent Orcel-managed profiles, and the existing browser_structured shapes routed through the broker unchanged",
+      "status": "SH-2 IN REVIEW on browser/sh2-mode-switch (engineering-chosen, conservative): browser_session_create {continue_from, mode} moves a task to a new session in the other mode on the same profile and task label; every check and approval runs before the old session ends (mode_switch); refused with nothing changed for an uncertain action (OUTCOME_UNKNOWN), a person in the window (HUMAN_TAKEOVER) or a waiting page moving into Shadow (HUMAN_VERIFICATION_REQUIRED); only GET navigations to recorded committed URLs are made, each approved and receipted, exact only when nothing was redacted and no sign-in was seen, else scheme, host and path; no click, fill, submit or download is repeated; moving to Visible asks a fresh SOFT approval bound to the plan digest; a Full Access lease names one session and is not carried; the new session_start names the old session and its last receipt and the verifier checks the link; remote callers switch under the remote Visible create rules. Founder run pending. See docs/orcel/implementation-readiness/prep/SH2_MODE_SWITCH.md.",
       "depends_on": [
         "OB-03"
       ],
