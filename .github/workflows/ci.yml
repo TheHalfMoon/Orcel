@@ -27,7 +27,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # MAC-M1-01: macos-15 is the minimum supported macOS, beside the
+        # moving macos-latest; same steps, no required-check name changes.
+        os: [ubuntu-latest, windows-latest, macos-latest, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -40,6 +42,21 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
+      # MAC-M1-01: macOS builds target macOS 15.0. The variable goes into
+      # GITHUB_ENV from this macOS-only step, so the Windows and Linux legs
+      # see no new variable and later macOS steps all build the same way.
+      - name: macOS deployment target 15.0 and runner evidence
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "MACOSX_DEPLOYMENT_TARGET=15.0" >> "$GITHUB_ENV"
+          os=$(sw_vers -productVersion)
+          echo "MACOS-EVIDENCE job=rust runner=${{ matrix.os }} os=$os build=$(sw_vers -buildVersion) arch=$(uname -m) deployment_target=15.0"
+          if [ "${{ matrix.os }}" = macos-15 ] && [ "${os%%.*}" != 15 ]; then
+            echo "::error::the macos-15 leg runs macOS $os" >&2
+            exit 1
+          fi
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy
@@ -53,6 +70,24 @@ jobs:
           # orceld this step builds; a missing binary fails them, never skips.
           ORCEL_REQUIRE_LIVE_ORCELD: "1"
         run: cargo test --workspace
+      # MAC-M1-01: fails unless orceld was built for macOS with minos 15.0.
+      - name: macOS deployment target is applied (orceld LC_BUILD_VERSION)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build -p orceld
+          bin=target/debug/orceld
+          test -f "$bin"
+          show=$(xcrun vtool -show-build "$bin")
+          echo "$show"
+          platform=$(awk '$1 == "platform" { print $2; exit }' <<<"$show")
+          minos=$(awk '$1 == "minos" { print $2; exit }' <<<"$show")
+          echo "MACOS-EVIDENCE job=rust runner=${{ matrix.os }} binary=$bin platform=$platform minos=$minos"
+          if [ "$platform" != MACOS ] || [ "$minos" != 15.0 ]; then
+            echo "::error::$bin has platform=$platform minos=$minos; MACOSX_DEPLOYMENT_TARGET=15.0 was not applied" >&2
+            exit 1
+          fi
       # The Windows approval dialog closes itself when nobody answers. This shows a real
       # dialog, so it runs on the CI runner only; the step fails unless the test ran and passed.
       - name: Approval dialog timeout (Windows, real dialog)
@@ -367,6 +402,17 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      # MAC-M1-01: macOS builds target macOS 15.0. The variable goes into
+      # GITHUB_ENV from this macOS-only step, so the Windows and Linux legs
+      # see no new variable and later macOS steps all build the same way.
+      - name: macOS deployment target 15.0 and runner evidence
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "MACOSX_DEPLOYMENT_TARGET=15.0" >> "$GITHUB_ENV"
+          os=$(sw_vers -productVersion)
+          echo "MACOS-EVIDENCE job=native-host runner=${{ matrix.os }} os=$os build=$(sw_vers -buildVersion) arch=$(uname -m) deployment_target=15.0"
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         # The packages Cua's own Linux CI installs for platform-linux's default
@@ -750,6 +796,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
         with:
           components: rustfmt, clippy
+      # MAC-M1-01: macOS builds target macOS 15.0. The variable goes into
+      # GITHUB_ENV from this macOS-only step, so the Windows and Linux legs
+      # see no new variable and later macOS steps all build the same way.
+      - name: macOS deployment target 15.0 and runner evidence
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "MACOSX_DEPLOYMENT_TARGET=15.0" >> "$GITHUB_ENV"
+          os=$(sw_vers -productVersion)
+          echo "MACOS-EVIDENCE job=contain runner=${{ matrix.os }} os=$os build=$(sw_vers -buildVersion) arch=$(uname -m) deployment_target=15.0"
       - name: Kernel facilities (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -1978,11 +2035,39 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      # MAC-M1-01: macOS builds target macOS 15.0. The variable goes into
+      # GITHUB_ENV from this macOS-only step, so the Windows and Linux legs
+      # see no new variable and later macOS steps all build the same way.
+      - name: macOS deployment target 15.0 and runner evidence
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "MACOSX_DEPLOYMENT_TARGET=15.0" >> "$GITHUB_ENV"
+          os=$(sw_vers -productVersion)
+          echo "MACOS-EVIDENCE job=macos-dev-package runner=macos-latest os=$os build=$(sw_vers -buildVersion) arch=$(uname -m) deployment_target=15.0"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24.19.0"
       - name: Build orceld (release, locked)
         run: cargo build --release --locked -p orceld
+      # MAC-M1-01: fails unless release orceld was built for macOS with minos 15.0.
+      - name: macOS deployment target is applied (release orceld LC_BUILD_VERSION)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin=target/release/orceld
+          test -f "$bin"
+          show=$(xcrun vtool -show-build "$bin")
+          echo "$show"
+          platform=$(awk '$1 == "platform" { print $2; exit }' <<<"$show")
+          minos=$(awk '$1 == "minos" { print $2; exit }' <<<"$show")
+          echo "MACOS-EVIDENCE job=macos-dev-package runner=macos-latest binary=$bin platform=$platform minos=$minos"
+          if [ "$platform" != MACOS ] || [ "$minos" != 15.0 ]; then
+            echo "::error::$bin has platform=$platform minos=$minos; MACOSX_DEPLOYMENT_TARGET=15.0 was not applied" >&2
+            exit 1
+          fi
       - name: Build the orcel-contain helper (release, locked, its own workspace)
         run: cargo build --release --locked --manifest-path apps/orcel-contain/Cargo.toml --bin orcel-contain
       - name: Build the MCP edge

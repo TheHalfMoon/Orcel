@@ -354,7 +354,9 @@ pub fn run_with_approval_history(
 
     checks.push(match (&config, &active_version, workspaces_ok) {
         (Ok(config), Some(version), true) => {
-            let orceld = layout.version_dir(version).join("orceld.exe");
+            let orceld = layout
+                .version_dir(version)
+                .join(crate::per_os::orceld_file_name());
             let workspace = config.default_workspace().unwrap_or("default").to_string();
             let request =
                 crate::ipc::request(&workspace, "system.status", "get", serde_json::json!({}));
