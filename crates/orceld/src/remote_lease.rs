@@ -156,7 +156,14 @@ fn parse_lease_request(arguments: &Value) -> Result<LeaseRequest, ProviderError>
             "remote lease arguments must be an object",
         )
     })?;
-    if object.len() != LEASE_CREATE_FIELDS.len()
+    // SG-000135 OB-09: `orcel tunnel allow` for a browser_full tunnel also
+    // sends the configured tunnel id (`remote_session::build_lease` checks
+    // the route is exactly what it derives).
+    let tunnel_id = match object.get("tunnel_id") {
+        None => None,
+        Some(_) => Some(string_arg(arguments, "tunnel_id")?),
+    };
+    if object.len() != LEASE_CREATE_FIELDS.len() + usize::from(tunnel_id.is_some())
         || !LEASE_CREATE_FIELDS
             .iter()
             .all(|field| object.contains_key(*field))
@@ -186,6 +193,7 @@ fn parse_lease_request(arguments: &Value) -> Result<LeaseRequest, ProviderError>
         workspace_ids: string_list_arg(arguments, "workspaces")?,
         read_mode,
         duration_ms: duration_seconds.saturating_mul(1000),
+        tunnel_id,
     })
 }
 

@@ -326,11 +326,16 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
             let (connection, route) = tunnel_route_of(&tunnel_id, &profile)?;
             let (device_id, device_epoch) =
                 orcel_lifecycle::tunnel_route::device_identity(&tunnel_id);
+            // SG-000135 OB-09: a browser_full tunnel's lease names the tunnel
+            // id, so orceld can check the route is the tunnel's own.
+            let proof = (profile == orcel_policy::remote_session::REMOTE_PROFILE_BROWSER_FULL)
+                .then_some(tunnel_id.as_str());
             allow_remote_session(
                 args,
                 &layout,
                 &connection,
                 &route,
+                proof,
                 &device_id,
                 device_epoch,
                 "orcel tunnel revoke",
@@ -1354,6 +1359,7 @@ fn allow_remote_session(
     layout: &Layout,
     connection: &str,
     paired: &Value,
+    tunnel_id: Option<&str>,
     device_id: &str,
     device_epoch: u64,
     revoke_command: &str,
@@ -1383,6 +1389,7 @@ fn allow_remote_session(
         scopes: scopes.map(|list| list.split(',').map(|s| s.trim().to_owned()).collect()),
         minutes,
         read_mode,
+        tunnel_id: tunnel_id.map(str::to_owned),
     };
     let arguments = remote::lease_arguments(&options, paired, device_id, device_epoch)?;
     let version = active_version(layout)?;
@@ -1427,6 +1434,7 @@ pub fn remote(args: &mut Args) -> Result<Output, LifecycleError> {
                 &layout,
                 &connection,
                 &paired,
+                None,
                 &device_id,
                 device_epoch,
                 "orcel remote revoke",

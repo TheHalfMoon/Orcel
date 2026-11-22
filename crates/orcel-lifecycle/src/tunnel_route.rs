@@ -20,7 +20,6 @@ use orcel_policy::remote_session::{
     REMOTE_PROFILE_BROWSER_FULL, REMOTE_PROFILE_CORE, REMOTE_SCOPES,
 };
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 
 /// Environment variable naming the MCP host's transport. `orcel-mcp-host`
 /// always sets it to [`TUNNEL_TRANSPORT`]; local launches never set it.
@@ -38,7 +37,8 @@ pub const CLIENT_PROFILE_REVISION: u64 = 1;
 /// The tunnel has no device key; its route epoch is fixed.
 pub const DEVICE_EPOCH: u64 = 1;
 /// SG-000135 OB-09: the client profile of a `browser_full` tunnel route.
-pub const BROWSER_FULL_CLIENT_PROFILE_ID: &str = "chatgpt-secure-mcp-tunnel-browser-full";
+pub const BROWSER_FULL_CLIENT_PROFILE_ID: &str =
+    orcel_policy::remote_session::TUNNEL_BROWSER_FULL_CLIENT_PROFILE;
 /// SG-000135 OB-09: the profiles a tunnel may serve (one per tunnel).
 pub const TUNNEL_PROFILES: [&str; 2] = [REMOTE_PROFILE_CORE, REMOTE_PROFILE_BROWSER_FULL];
 /// SG-000135 OB-09: a `browser_full` tunnel's scope ceiling: reads and
@@ -50,15 +50,10 @@ pub fn is_tunnel_profile(profile: &str) -> bool {
     TUNNEL_PROFILES.contains(&profile)
 }
 
+/// The route derivation orceld also checks (SG-000135 OB-09): one copy, in
+/// the policy crate.
 fn derived_id(prefix: &str, label: &str, tunnel_id: &str) -> String {
-    let mut hasher = Sha256::new();
-    for field in ["ORCEL_TUNNEL_ROUTE_V1", label, tunnel_id] {
-        hasher.update((field.len() as u64).to_be_bytes());
-        hasher.update(field.as_bytes());
-    }
-    let digest = hasher.finalize();
-    let hex: String = digest[..16].iter().map(|b| format!("{b:02x}")).collect();
-    format!("{prefix}{hex}")
+    orcel_policy::remote_session::tunnel_derived_id(prefix, label, tunnel_id)
 }
 
 /// The tunnel's remote route for `tunnel_id`, in the paired-connection shape
@@ -196,6 +191,7 @@ mod tests {
         let route = route(TUNNEL);
         let (device, epoch) = device_identity(TUNNEL);
         let options = AllowOptions {
+            tunnel_id: None,
             remote_connection_id: remote_connection_id(TUNNEL),
             workspaces: vec!["default".into()],
             scopes: Some(vec!["orcel.read".into()]),
@@ -218,6 +214,7 @@ mod tests {
             workspace_ids: vec!["default".into()],
             read_mode: ReadMode::Session,
             duration_ms: 15 * 60 * 1000,
+            tunnel_id: args["tunnel_id"].as_str().map(str::to_owned),
         };
         let workstation = WorkstationBinding {
             session_id: 1,
@@ -324,6 +321,7 @@ mod tests {
         // `orcel tunnel allow` on a browser_full tunnel...
         let (device, epoch) = device_identity(TUNNEL);
         let options = AllowOptions {
+            tunnel_id: Some(TUNNEL.into()),
             remote_connection_id: remote_connection_id_for(TUNNEL, "browser_full").unwrap(),
             workspaces: vec!["default".into()],
             scopes: None,
@@ -345,6 +343,7 @@ mod tests {
             workspace_ids: vec!["default".into()],
             read_mode: ReadMode::Session,
             duration_ms: 15 * 60 * 1000,
+            tunnel_id: args["tunnel_id"].as_str().map(str::to_owned),
         };
         assert_eq!(request.tool_surface_profile, "browser_full");
         let trust = |_: &str| Some(1);

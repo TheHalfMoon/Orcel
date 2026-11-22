@@ -34,6 +34,65 @@ pub const REMOTE_PROFILE_CORE: &str = "core";
 pub const REMOTE_PROFILE_BROWSER_FULL: &str = "browser_full";
 /// Every tool-surface profile mapped for remote use.
 pub const REMOTE_PROFILES: [&str; 2] = [REMOTE_PROFILE_CORE, REMOTE_PROFILE_BROWSER_FULL];
+/// SG-000135 OB-09: the provider kind of the ChatGPT Secure MCP Tunnel.
+pub const TUNNEL_PROVIDER_KIND: &str = "openai";
+/// SG-000135 OB-09: the client profile of a tunnel set up for `browser_full`.
+pub const TUNNEL_BROWSER_FULL_CLIENT_PROFILE: &str = "chatgpt-secure-mcp-tunnel-browser-full";
+
+/// #395: one identifier of the tunnel's remote route, derived from the
+/// locally configured tunnel id (`orcel_lifecycle::tunnel_route` uses this
+/// derivation; nothing a remote peer sends can change it).
+pub fn tunnel_derived_id(prefix: &str, label: &str, tunnel_id: &str) -> String {
+    let mut hasher = Sha256::new();
+    for field in ["ORCEL_TUNNEL_ROUTE_V1", label, tunnel_id] {
+        hasher.update((field.len() as u64).to_be_bytes());
+        hasher.update(field.as_bytes());
+    }
+    let digest = hasher.finalize();
+    let hex: String = digest[..16].iter().map(|b| format!("{b:02x}")).collect();
+    format!("{prefix}{hex}")
+}
+
+/// SG-000135 OB-09: the principal, remote connection id and device id of
+/// the tunnel `tunnel_id` set up for `browser_full`.
+pub fn tunnel_browser_full_route(tunnel_id: &str) -> (String, String, String) {
+    (
+        tunnel_derived_id("rp-", "principal", tunnel_id),
+        tunnel_derived_id("rc-", "remote_connection/browser_full", tunnel_id),
+        tunnel_derived_id("dev-", "device", tunnel_id),
+    )
+}
+
+/// SG-000135 OB-09 (engineering-chosen 2026-11-22 under the founder's
+/// delegation): only the ChatGPT Secure MCP Tunnel serves `browser_full`.
+/// A `browser_full` remote-session lease is built only when the local
+/// command proves the route is the tunnel's own: `orcel tunnel allow` sends
+/// the configured tunnel id, and the lease's principal, connection and
+/// device must be exactly what that id derives, with the tunnel's provider
+/// and client profile. A relay route's device id is the device's own key
+/// identity and its connection id is the relay's, so no relay route can
+/// match; every remote request must then match that lease exactly.
+fn check_browser_full_tunnel_route(request: &LeaseRequest) -> Result<(), PolicyError> {
+    let refused = || {
+        invalid("a browser_full remote-session lease covers only the ChatGPT Secure MCP Tunnel's own browser_full route")
+    };
+    let Some(tunnel_id) = request.tunnel_id.as_deref() else {
+        return Err(refused());
+    };
+    if !is_opaque_token(tunnel_id, 128) {
+        return Err(refused());
+    }
+    let (principal, connection, device) = tunnel_browser_full_route(tunnel_id);
+    if request.provider_kind != TUNNEL_PROVIDER_KIND
+        || request.client_profile_id != TUNNEL_BROWSER_FULL_CLIENT_PROFILE
+        || request.principal != principal
+        || request.remote_connection_id != connection
+        || request.device_id != device
+    {
+        return Err(refused());
+    }
+    Ok(())
+}
 /// Remote OAuth scope vocabulary (SG-000054).
 pub const REMOTE_SCOPES: [&str; 3] = ["orcel.read", "orcel.write", "orcel.execute"];
 
@@ -141,6 +200,10 @@ pub struct LeaseRequest {
     pub workspace_ids: Vec<String>,
     pub read_mode: ReadMode,
     pub duration_ms: u64,
+    /// SG-000135 OB-09: the configured tunnel id, sent only by `orcel tunnel
+    /// allow` for a `browser_full` tunnel; it proves the route is the
+    /// tunnel's own (`check_browser_full_tunnel_route`).
+    pub tunnel_id: Option<String>,
 }
 
 /// Environment observed by `orceld` immediately before a decision.
@@ -354,6 +417,17 @@ pub fn check_remote_dispatch(
         });
     }
     validate_remote_context(remote)?;
+    // SG-000135 OB-09: a browser_full context must also say it is the
+    // tunnel's (layered on the exact lease match below, whose browser_full
+    // leases are tunnel-derived by construction).
+    if remote.tool_surface_profile == REMOTE_PROFILE_BROWSER_FULL
+        && (remote.provider_kind != TUNNEL_PROVIDER_KIND
+            || remote.client_profile_id != TUNNEL_BROWSER_FULL_CLIENT_PROFILE)
+    {
+        return Err(inactive(
+            "a browser_full remote context is served only by the ChatGPT Secure MCP Tunnel",
+        ));
+    }
     let lease = leases
         .iter()
         .find(|lease| lease.remote_connection_id == remote.remote_connection_id)
@@ -477,6 +551,16 @@ pub fn build_lease(
         return Err(invalid(
             "only the core and browser_full tool-surface profiles are mapped for remote use",
         ));
+    }
+    match request.tool_surface_profile.as_str() {
+        REMOTE_PROFILE_BROWSER_FULL => check_browser_full_tunnel_route(request)?,
+        // A core lease names no tunnel id: core is unchanged.
+        _ if request.tunnel_id.is_some() => {
+            return Err(invalid(
+                "only a browser_full tunnel lease names a tunnel id",
+            ))
+        }
+        _ => {}
     }
     if request.scope_ceiling.is_empty() || !request.scope_ceiling.iter().all(|s| is_known_scope(s))
     {
@@ -762,6 +846,7 @@ pub(crate) mod tests {
             workspace_ids: vec!["default".into()],
             read_mode: ReadMode::Session,
             duration_ms: 10 * 60 * 1000,
+            tunnel_id: None,
         }
     }
 
@@ -1259,24 +1344,53 @@ pub(crate) mod tests {
         assert!(upsert_lease(&many, extra, NOW + 11 * 60 * 1000).is_ok());
     }
 
+    const TUNNEL: &str = "tunnel_0123456789abcdefghijklmnopqrstuv";
+
+    /// SG-000135 OB-09: the lease request `orcel tunnel allow` sends for a
+    /// tunnel set up for browser_full.
+    fn browser_request(scopes: &[&str]) -> LeaseRequest {
+        let (principal, connection, device) = tunnel_browser_full_route(TUNNEL);
+        LeaseRequest {
+            principal,
+            remote_connection_id: connection,
+            device_id: device,
+            provider_kind: TUNNEL_PROVIDER_KIND.into(),
+            client_profile_id: TUNNEL_BROWSER_FULL_CLIENT_PROFILE.into(),
+            tool_surface_profile: REMOTE_PROFILE_BROWSER_FULL.into(),
+            scope_ceiling: scopes.iter().map(|s| (*s).to_owned()).collect(),
+            tunnel_id: Some(TUNNEL.into()),
+            ..lease_request()
+        }
+    }
+
     /// SG-000135 OB-09: a browser_full remote-session lease, created by the
     /// same STRONG-gated local command as a core one.
     fn browser_lease(scopes: &[&str]) -> RemoteSessionLease {
-        let mut req = lease_request();
-        req.tool_surface_profile = REMOTE_PROFILE_BROWSER_FULL.into();
-        req.scope_ceiling = scopes.iter().map(|s| (*s).to_owned()).collect();
-        build_lease(&req, "lease-b".into(), &env(NOW), &["default".into()]).unwrap()
+        build_lease(
+            &browser_request(scopes),
+            "lease-b".into(),
+            &env(NOW),
+            &["default".into()],
+        )
+        .unwrap()
     }
 
+    /// The tunnel host's remote context for that route.
     fn browser_remote(scopes: &[&str]) -> RemoteContext {
+        let request = browser_request(scopes);
         RemoteContext {
+            principal: request.principal,
+            remote_connection_id: request.remote_connection_id,
+            device_id: request.device_id,
+            provider_kind: request.provider_kind,
+            client_profile_id: request.client_profile_id,
             tool_surface_profile: REMOTE_PROFILE_BROWSER_FULL.into(),
             scopes: scopes.iter().map(|s| (*s).to_owned()).collect(),
             ..remote()
         }
     }
 
-    fn browser_request(operation: &str) -> RequestEnvelope {
+    fn browser_envelope(operation: &str) -> RequestEnvelope {
         let mut request = request("browser.session", operation, "default");
         request.target = None;
         request
@@ -1288,7 +1402,7 @@ pub(crate) mod tests {
         for operation in ["create", "open", "click", "snapshot", "status"] {
             let message = inactive_code(check_remote_dispatch(
                 &[],
-                &browser_request(operation),
+                &browser_envelope(operation),
                 &browser_remote(&both),
                 &env(NOW + 1000),
             ));
@@ -1299,13 +1413,13 @@ pub(crate) mod tests {
         revoked.revoked = true;
         inactive_code(check_remote_dispatch(
             &[revoked],
-            &browser_request("click"),
+            &browser_envelope("click"),
             &browser_remote(&both),
             &env(NOW + 1000),
         ));
         inactive_code(check_remote_dispatch(
             &[browser_lease(&both)],
-            &browser_request("click"),
+            &browser_envelope("click"),
             &browser_remote(&both),
             &env(NOW + LEASE_MAX_DURATION_MS + 1),
         ));
@@ -1331,7 +1445,7 @@ pub(crate) mod tests {
         ] {
             let grant = check_remote_dispatch(
                 &leases,
-                &browser_request(operation),
+                &browser_envelope(operation),
                 &browser_remote(&both),
                 &env(NOW + 1000),
             );
@@ -1369,41 +1483,39 @@ pub(crate) mod tests {
         let read_only = vec![browser_lease(&["orcel.read"])];
         assert!(check_remote_dispatch(
             &read_only,
-            &browser_request("snapshot"),
+            &browser_envelope("snapshot"),
             &browser_remote(&both),
             &env(NOW + 1000),
         )
         .is_ok());
         inactive_code(check_remote_dispatch(
             &read_only,
-            &browser_request("click"),
+            &browser_envelope("click"),
             &browser_remote(&both),
             &env(NOW + 1000),
         ));
         inactive_code(check_remote_dispatch(
             &leases,
-            &browser_request("click"),
+            &browser_envelope("click"),
             &browser_remote(&["orcel.read"]),
             &env(NOW + 1000),
         ));
         // Per-request read mode asks for each browser read, not for actions
         // (each of which keeps its own approval).
-        let mut req = lease_request();
-        req.tool_surface_profile = REMOTE_PROFILE_BROWSER_FULL.into();
-        req.scope_ceiling = vec!["orcel.read".into(), "orcel.execute".into()];
+        let mut req = browser_request(&both);
         req.read_mode = ReadMode::PerRequest;
         let per_request =
             vec![build_lease(&req, "l".into(), &env(NOW), &["default".into()]).unwrap()];
         let read = check_remote_dispatch(
             &per_request,
-            &browser_request("extract"),
+            &browser_envelope("extract"),
             &browser_remote(&both),
             &env(NOW + 1000),
         );
         assert!(read.is_ok_and(|grant| grant.read_requires_approval));
         let act = check_remote_dispatch(
             &per_request,
-            &browser_request("click"),
+            &browser_envelope("click"),
             &browser_remote(&both),
             &env(NOW + 1000),
         );
@@ -1416,15 +1528,19 @@ pub(crate) mod tests {
         // A core lease does not admit a browser_full context, and the core
         // profile maps no broker shape.
         let core = vec![lease()];
+        let forged = RemoteContext {
+            tool_surface_profile: REMOTE_PROFILE_BROWSER_FULL.into(),
+            ..remote()
+        };
         inactive_code(check_remote_dispatch(
             &core,
-            &browser_request("snapshot"),
-            &browser_remote(&both),
+            &browser_envelope("snapshot"),
+            &forged,
             &env(NOW + 1000),
         ));
         inactive_code(check_remote_dispatch(
             &core,
-            &browser_request("snapshot"),
+            &browser_envelope("snapshot"),
             &remote(),
             &env(NOW + 1000),
         ));
@@ -1453,5 +1569,98 @@ pub(crate) mod tests {
             required_scopes_for("browser_structured", "browser.session", "click"),
             None
         );
+    }
+
+    /// SG-000135 OB-09 defence in depth: a browser_full remote-session lease
+    /// is built only for the tunnel's own browser_full route, proven by the
+    /// configured tunnel id; a relay-shaped route (its own device key
+    /// identity and relay connection id) never gets one, and a relay-shaped
+    /// browser_full context never dispatches. Core is unchanged.
+    #[test]
+    fn ob09_only_the_tunnels_own_browser_full_route_gets_a_lease_or_dispatches() {
+        let both = ["orcel.read", "orcel.execute"];
+        let configured = ["default".to_owned()];
+        // The tunnel's route: accepted, and it dispatches.
+        let lease = browser_lease(&both);
+        assert!(check_remote_dispatch(
+            std::slice::from_ref(&lease),
+            &browser_envelope("click"),
+            &browser_remote(&both),
+            &env(NOW + 1000),
+        )
+        .is_ok());
+        // Relay-shaped requests: the relay's ids, another provider or client
+        // profile, no or another tunnel id.
+        let relay_shaped = LeaseRequest {
+            tool_surface_profile: REMOTE_PROFILE_BROWSER_FULL.into(),
+            scope_ceiling: both.iter().map(|s| (*s).to_owned()).collect(),
+            ..lease_request()
+        };
+        let mut refused = vec![
+            relay_shaped.clone(),
+            LeaseRequest {
+                tunnel_id: Some(TUNNEL.into()),
+                ..relay_shaped.clone()
+            },
+        ];
+        for change in [
+            |r: &mut LeaseRequest| r.tunnel_id = None,
+            |r: &mut LeaseRequest| {
+                r.tunnel_id = Some("tunnel_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz".into())
+            },
+            |r: &mut LeaseRequest| r.provider_kind = "generic".into(),
+            |r: &mut LeaseRequest| r.client_profile_id = "remote-default".into(),
+            |r: &mut LeaseRequest| r.device_id = format!("dev-{}", "c".repeat(32)),
+            |r: &mut LeaseRequest| r.remote_connection_id = format!("rc-{}", "b".repeat(32)),
+            |r: &mut LeaseRequest| r.principal = format!("rp-{}", "a".repeat(32)),
+        ] {
+            let mut request = browser_request(&both);
+            change(&mut request);
+            refused.push(request);
+        }
+        for request in &refused {
+            let error = build_lease(request, "l".into(), &env(NOW), &configured).unwrap_err();
+            assert_eq!(error.code, FailureCode::InvalidRequest, "{request:?}");
+        }
+        // A core lease never names a tunnel id; core leases are unchanged.
+        let core_with_tunnel = LeaseRequest {
+            tunnel_id: Some(TUNNEL.into()),
+            ..lease_request()
+        };
+        assert!(build_lease(&core_with_tunnel, "l".into(), &env(NOW), &configured).is_err());
+        assert!(build_lease(&lease_request(), "l".into(), &env(NOW), &configured).is_ok());
+        // A relay-shaped browser_full context is refused before any lease is
+        // consulted, even if a lease with its ids existed.
+        for forged in [
+            RemoteContext {
+                tool_surface_profile: REMOTE_PROFILE_BROWSER_FULL.into(),
+                ..remote()
+            },
+            RemoteContext {
+                provider_kind: "generic".into(),
+                ..browser_remote(&both)
+            },
+            RemoteContext {
+                client_profile_id: "remote-default".into(),
+                ..browser_remote(&both)
+            },
+        ] {
+            let message = inactive_code(check_remote_dispatch(
+                std::slice::from_ref(&lease),
+                &browser_envelope("snapshot"),
+                &forged,
+                &env(NOW + 1000),
+            ));
+            assert!(
+                message.contains("ChatGPT Secure MCP Tunnel")
+                    || message.contains("does not match")
+                    || message.contains("no remote-session lease"),
+                "{message}"
+            );
+        }
+        // The derivation is the lifecycle tunnel route's (pinned there).
+        let (principal, _, device) = tunnel_browser_full_route(TUNNEL);
+        assert_eq!(principal, "rp-182110eb5d85d5ccd3f34df5dba41e1a");
+        assert_eq!(device, "dev-0872269746857073deab118978d116a0");
     }
 }

@@ -110,6 +110,10 @@ pub struct AllowOptions {
     pub scopes: Option<Vec<String>>,
     pub minutes: u64,
     pub read_mode: String,
+    /// SG-000135 OB-09: the configured tunnel id, sent only for a tunnel set
+    /// up for `browser_full`; orceld builds a browser_full lease only when
+    /// the route is exactly what this id derives.
+    pub tunnel_id: Option<String>,
 }
 
 /// Build the `remote.lease.create` arguments. Scopes default to the paired
@@ -165,7 +169,7 @@ pub fn lease_arguments(
             requested.clone()
         }
     };
-    Ok(json!({
+    let mut arguments = json!({
         "principal": field("principal")?,
         "remote_connection_id": options.remote_connection_id,
         "device_id": device_id,
@@ -178,7 +182,11 @@ pub fn lease_arguments(
         "workspaces": options.workspaces,
         "read_mode": options.read_mode,
         "duration_seconds": options.minutes * 60,
-    }))
+    });
+    if let (Some(tunnel_id), Some(map)) = (&options.tunnel_id, arguments.as_object_mut()) {
+        map.insert("tunnel_id".into(), json!(tunnel_id));
+    }
+    Ok(arguments)
 }
 
 /// Resolved launch for the outbound-only device uplink.
@@ -448,6 +456,7 @@ mod tests {
 
     fn options() -> AllowOptions {
         AllowOptions {
+            tunnel_id: None,
             remote_connection_id: format!("rc-{}", "b".repeat(32)),
             workspaces: vec!["default".into()],
             scopes: None,
