@@ -313,7 +313,7 @@ jobs:
           node --version
           log="$RUNNER_TEMP/mac-m1.log"
           cargo test -p orcel-lifecycle --test macos_install --test macos_emergency_revoke -- --nocapture --test-threads=1 2>&1 | tee "$log"
-          for line in "MAC-M1-03-EVIDENCE install root=" "MAC-M1-03-EVIDENCE uninstall removed=" "MAC-M1-03-EVIDENCE refused tampered=true" "MAC-M1-03-EVIDENCE refused symlink=true" "MAC-M1-03-EVIDENCE refused group_writable_file=true" "MAC-M1-03-EVIDENCE refused admin_writable_ancestor=true" "MAC-M1-07-EVIDENCE agent loaded=true" "MAC-M1-07-EVIDENCE bootout loaded=false" "MAC-M1-08-EVIDENCE emergency_revoke"; do
+          for line in "MAC-M1-03-EVIDENCE install root=" "MAC-M1-03-EVIDENCE uninstall removed=" "MAC-M1-03-EVIDENCE refused tampered=true" "MAC-M1-03-EVIDENCE refused symlink=true" "MAC-M1-03-EVIDENCE refused group_writable_file=true" "MAC-M1-03-EVIDENCE refused admin_writable_ancestor=true" "MAC-M1-07-EVIDENCE agent loaded=true" "MAC-M1-07-EVIDENCE bootout loaded=false" "MAC-M1-08-EVIDENCE preactivation sibling_orceld_present=true refused=true" "MAC-M1-08-EVIDENCE installed_orceld code=APPROVAL_"; do
             grep -q "$line" "$log" || { echo "::error::missing $line" >&2; exit 1; }
           done
       - name: Live clipboard roundtrip (macOS)

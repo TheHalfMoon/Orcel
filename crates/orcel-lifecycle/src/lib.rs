@@ -134,8 +134,18 @@ pub fn nonce() -> String {
     )
 }
 
+/// Why the per-user install is refused on this OS.
+#[cfg(not(windows))]
+const UNSUPPORTED: &str = if cfg!(target_os = "macos") {
+    "the Orcel per-user install is not activated on macOS in this build (it waits for the founder's activation of the macOS M1 grain); this unsigned development build refuses install, verify and the commands that need a verified install"
+} else {
+    "Orcel installation is supported on Windows only"
+};
+
 /// The host platform for the running build. Installation is supported on
-/// Windows only; elsewhere every host query fails closed.
+/// Windows only; elsewhere every host query fails closed. On macOS the
+/// per-user install exists (`unix_install::MacosPlatform`) but is not
+/// returned here until the founder activates the macOS M1 grain.
 #[cfg(windows)]
 pub fn host_platform() -> Box<dyn platform::Platform> {
     Box::new(platform::WindowsPlatform::default())
@@ -152,14 +162,10 @@ struct UnsupportedPlatform;
 #[cfg(not(windows))]
 impl platform::Platform for UnsupportedPlatform {
     fn windows_build(&self) -> Result<u32, LifecycleError> {
-        Err(LifecycleError::prerequisite(
-            "Orcel installation is supported on Windows only",
-        ))
+        Err(LifecycleError::prerequisite(UNSUPPORTED))
     }
     fn is_avoidably_elevated(&self) -> Result<bool, LifecycleError> {
-        Err(LifecycleError::prerequisite(
-            "Orcel installation is supported on Windows only",
-        ))
+        Err(LifecycleError::prerequisite(UNSUPPORTED))
     }
     fn protect_tree(&self, _root: &std::path::Path) -> Result<(), LifecycleError> {
         Err(LifecycleError::platform("owner-only ACLs require Windows"))
@@ -302,6 +308,15 @@ pub(crate) mod test_support {
         }
         fn protect_tree(&self, root: &Path) -> Result<(), LifecycleError> {
             self.protected.borrow_mut().push(root.to_path_buf());
+            // As the real platforms leave it: owner-only, so the macOS
+            // private-root check (`Layout::ensure_private_root`) accepts a
+            // root this double "protected".
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(root, fs::Permissions::from_mode(0o700))
+                    .map_err(|error| LifecycleError::io("protect the test root", error))?;
+            }
             Ok(())
         }
         fn verify_tree_acl(&self, _root: &Path) -> Result<(), LifecycleError> {

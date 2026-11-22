@@ -52,6 +52,22 @@ impl Layout {
             })
     }
 
+    /// Creates the root if it is missing and checks it: on macOS it must be
+    /// XP-01's private directory (this user, 0700, no extended ACL grant, no
+    /// ancestor another user can change), as orceld requires and never
+    /// repairs, so a CLI command that writes first (such as `orcel workspace
+    /// add`) cannot leave a root orceld then refuses. Elsewhere it does
+    /// nothing: Windows protects the root at install, Linux keeps its layout.
+    pub fn ensure_private_root(&self) -> Result<(), LifecycleError> {
+        #[cfg(target_os = "macos")]
+        {
+            orcel_platform::paths::ensure_private_dir(&self.root).map_err(|error| {
+                LifecycleError::state(format!("the Orcel state folder: {error}"))
+            })?;
+        }
+        Ok(())
+    }
+
     pub fn bin_dir(&self) -> PathBuf {
         stores::BIN.path(&self.root)
     }

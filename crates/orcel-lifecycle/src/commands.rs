@@ -36,18 +36,23 @@ fn active_version(layout: &Layout) -> Result<String, LifecycleError> {
 }
 
 /// The `orceld` a one-shot local request runs in: the active version of the
-/// verified per-user install on Windows; on Linux and macOS, which have no
-/// such payload, the pinned binary next to `orcel` or from the package
-/// (#382 item 6, [`orcel_lifecycle::orceld_path`]).
+/// verified per-user install on Windows and macOS (macOS M1 activation
+/// checklist: never a binary found beside `orcel`, and nothing at all while
+/// `host_platform()` refuses the install there); on Linux, which has no such
+/// payload, the pinned binary next to `orcel` or from the package (#382 item
+/// 6, [`orcel_lifecycle::orceld_path`]).
 fn local_orceld(layout: &Layout) -> Result<PathBuf, LifecycleError> {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     {
+        // macOS: say the install is not activated, before "not installed".
+        #[cfg(target_os = "macos")]
+        host_platform().check_lifecycle_supported()?;
         let version = active_version(layout)?;
         Ok(layout
             .version_dir(&version)
             .join(per_os::orceld_file_name()))
     }
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         let _ = layout;
         orcel_lifecycle::orceld_path::resolve()
@@ -965,9 +970,9 @@ pub fn emergency_revoke(args: &mut Args) -> Result<Output, LifecycleError> {
     let layout = Layout::for_current_user()?;
     let config = Config::load(&layout)?;
     config.check_workspaces_with_policy()?;
-    // MAC-M1-08: the same orceld as on Windows (the active version of the
-    // verified install); on Linux and macOS the pinned binary next to `orcel`
-    // or from the package. orceld asks for STRONG presence either way.
+    // MAC-M1-08: the active version of the verified install on Windows and
+    // macOS; on Linux the pinned binary next to `orcel` or from the package.
+    // orceld asks for STRONG presence either way.
     let orceld = local_orceld(&layout)?;
     let workspace = config.default_workspace().unwrap_or("default").to_string();
     eprintln!(
