@@ -10,6 +10,11 @@
 //! `ORCEL_REQUIRE_MACOS_INSTALL=1` (CI), a missing prerequisite (Node.js, the
 //! real `orceld`) fails instead of skipping.
 //!
+//! MAC-M1-07: one test also loads the per-user launchd agent, under its own
+//! label, folder and socket, in the runner user's `gui/<uid>` domain, asks
+//! the `orceld` it starts for `system.status`, and unloads it through
+//! uninstall.
+//!
 //! `host_platform()` still refuses these commands on macOS until the macOS
 //! M1 grain is activated; these tests are the hosted-runner evidence the
 //! plan asks for before then. Real Mac hardware: UNVERIFIED.
@@ -22,7 +27,7 @@ use orcel_lifecycle::manifest::{
     REQUIRED_FILES,
 };
 use orcel_lifecycle::platform::find_node_on_path;
-use orcel_lifecycle::unix_install::MacosPlatform;
+use orcel_lifecycle::unix_install::{AgentTarget, MacosPlatform};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -144,7 +149,7 @@ fn mode(path: &Path) -> u32 {
 fn installed(label: &str) -> Option<(PathBuf, PathBuf)> {
     let node = node()?;
     let (home, root) = home_and_root(label);
-    let platform = MacosPlatform;
+    let platform = MacosPlatform::without_agent();
     Installer::new(Layout::new(&root), &platform)
         .install(&release(label), &options(node))
         .expect("install");
@@ -152,7 +157,7 @@ fn installed(label: &str) -> Option<(PathBuf, PathBuf)> {
 }
 
 fn verify(root: &Path) -> Result<(), String> {
-    let platform = MacosPlatform;
+    let platform = MacosPlatform::without_agent();
     Installer::new(Layout::new(root), &platform)
         .verify()
         .map(|_| ())
@@ -163,7 +168,7 @@ fn verify(root: &Path) -> Result<(), String> {
 fn install_verify_run_and_uninstall_round_trip() {
     let Some(node) = node() else { return };
     let (home, root) = home_and_root("roundtrip");
-    let platform = MacosPlatform;
+    let platform = MacosPlatform::without_agent();
     let installer = Installer::new(Layout::new(&root), &platform);
     let report = installer
         .install(&release("roundtrip"), &options(node))
@@ -258,7 +263,7 @@ fn links_in_the_install_or_the_release_fail_closed() {
     let (_, root) = home_and_root("release-link");
     let source = release("release-link");
     std::os::unix::fs::symlink("/usr/bin/true", source.join("link")).unwrap();
-    let platform = MacosPlatform;
+    let platform = MacosPlatform::without_agent();
     assert!(Installer::new(Layout::new(&root), &platform)
         .install(&source, &options(node))
         .is_err());
@@ -290,7 +295,7 @@ fn a_root_under_an_admin_writable_folder_installs_nothing() {
     let shared = unique("admin-writable");
     fs::set_permissions(&shared, fs::Permissions::from_mode(0o775)).unwrap();
     let root = shared.join("Orcel");
-    let platform = MacosPlatform;
+    let platform = MacosPlatform::without_agent();
     let error = Installer::new(Layout::new(&root), &platform)
         .install(&release("admin-writable"), &options(node))
         .unwrap_err();
@@ -314,7 +319,7 @@ fn a_release_with_windows_names_is_not_installable_on_macos() {
         }
     }
     fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-    let platform = MacosPlatform;
+    let platform = MacosPlatform::without_agent();
     let error = Installer::new(Layout::new(&root), &platform)
         .install(&source, &options(node))
         .unwrap_err();
@@ -323,4 +328,134 @@ fn a_release_with_windows_names_is_not_installable_on_macos() {
         "{}",
         error.message
     );
+}
+
+/// Unloads the test's agent however the test ends.
+struct Bootout(String);
+
+impl Drop for Bootout {
+    fn drop(&mut self) {
+        let uid = orcel_platform::session::effective_uid().unwrap_or(0);
+        let _ = std::process::Command::new("/bin/launchctl")
+            .args(["bootout", &format!("gui/{uid}/{}", self.0)])
+            .output();
+    }
+}
+
+fn agent_loaded(label: &str) -> bool {
+    let uid = orcel_platform::session::effective_uid().unwrap();
+    std::process::Command::new("/bin/launchctl")
+        .args(["print", &format!("gui/{uid}/{label}")])
+        .output()
+        .unwrap()
+        .status
+        .success()
+}
+
+fn system_status(socket: &Path) -> serde_json::Value {
+    use std::io::{BufRead, BufReader, Write};
+    let mut stream = std::os::unix::net::UnixStream::connect(socket).expect("connect");
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(60)))
+        .unwrap();
+    let request = serde_json::json!({
+        "version": 1,
+        "request_id": "mac-m1-07",
+        "client_session_id": "mac-m1-07",
+        "workspace_id": "ci",
+        "capability": "system.status",
+        "operation": "get",
+        "target": null,
+        "arguments": {},
+    });
+    let mut line = request.to_string();
+    line.push('\n');
+    stream.write_all(line.as_bytes()).unwrap();
+    let mut answer = String::new();
+    BufReader::new(stream).read_line(&mut answer).unwrap();
+    serde_json::from_str(&answer).unwrap_or_else(|error| panic!("{error}: {answer:?}"))
+}
+
+#[test]
+fn the_launch_agent_starts_orceld_per_connection_and_uninstall_removes_it() {
+    let Some(node) = node() else { return };
+    if std::env::var_os("ORCEL_MACOS_ORCELD").is_none() {
+        assert!(!required(), "ORCEL_MACOS_ORCELD must name the built orceld");
+        eprintln!("MAC-M1-07 skipped: needs the real orceld");
+        return;
+    }
+    let (home, root) = home_and_root("agent");
+    let workspace = home.join("workspace");
+    fs::create_dir_all(&workspace).unwrap();
+    orcel_lifecycle::config::Config {
+        workspaces: vec![orcel_lifecycle::config::WorkspaceEntry {
+            id: "ci".into(),
+            root: workspace,
+        }],
+        ..orcel_lifecycle::config::Config::default()
+    }
+    .save(&Layout::new(&root))
+    .unwrap();
+    let label = format!("ai.orcel.orceld.ci{}", std::process::id());
+    let _guard = Bootout(label.clone());
+    let plist_dir = home.join("Library").join("LaunchAgents");
+    let socket = unique("s").join("orcel").join("orceld.sock");
+    let platform = MacosPlatform {
+        agent: AgentTarget::Custom {
+            plist_dir: plist_dir.clone(),
+            label: label.clone(),
+            socket: socket.clone(),
+            extra_environment: std::collections::BTreeMap::from([(
+                "HOME".to_owned(),
+                home.to_str().unwrap().to_owned(),
+            )]),
+        },
+    };
+    let installer = Installer::new(Layout::new(&root), &platform);
+    installer
+        .install(&release("agent"), &options(node))
+        .expect("install");
+    let plist = plist_dir.join(format!("{label}.plist"));
+    assert_eq!(mode(&plist), 0o600);
+    let text = fs::read_to_string(&plist).unwrap();
+    let program = root.join("versions").join(VERSION).join("orceld");
+    assert!(text.contains(&format!("<string>{}</string>", program.display())));
+    assert!(agent_loaded(&label), "launchctl print gui/<uid>/{label}");
+    {
+        use std::os::unix::fs::FileTypeExt;
+        let metadata = fs::symlink_metadata(&socket).expect("launchd made the socket");
+        assert!(metadata.file_type().is_socket());
+    }
+    assert_eq!(mode(&socket), 0o600);
+    assert_eq!(mode(socket.parent().unwrap()), 0o700);
+
+    for _ in 0..2 {
+        let response = system_status(&socket);
+        assert_eq!(response["ok"], true, "{response}");
+        assert_eq!(response["result"]["name"], "orceld", "{response}");
+        assert_eq!(response["result"]["os"], "macos", "{response}");
+    }
+    // One orceld per connection: none outlives its client.
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    let running = std::process::Command::new("/usr/bin/pgrep")
+        .args(["-f", program.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        !running.status.success(),
+        "an orceld outlived its connection: {}",
+        String::from_utf8_lossy(&running.stdout)
+    );
+    println!(
+        "MAC-M1-07-EVIDENCE agent loaded=true domain=gui label={label} socket_mode=600 socket_dir_mode=700 plist_mode=600 answered=2 lingering=0"
+    );
+
+    let report = installer
+        .uninstall(&UninstallOptions::default())
+        .expect("uninstall");
+    assert!(report.removed.contains(&plist), "{:?}", report.removed);
+    assert!(!plist.exists());
+    assert!(!agent_loaded(&label), "the agent is still loaded");
+    assert!(fs::symlink_metadata(&socket).is_err(), "the socket remains");
+    println!("MAC-M1-07-EVIDENCE bootout loaded=false plist_left=false socket_left=false");
 }

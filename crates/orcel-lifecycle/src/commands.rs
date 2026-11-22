@@ -965,21 +965,17 @@ pub fn emergency_revoke(args: &mut Args) -> Result<Output, LifecycleError> {
     let layout = Layout::for_current_user()?;
     let config = Config::load(&layout)?;
     config.check_workspaces_with_policy()?;
-    let version = active_version(&layout)?;
+    // MAC-M1-08: the same orceld as on Windows (the active version of the
+    // verified install); on Linux and macOS the pinned binary next to `orcel`
+    // or from the package. orceld asks for STRONG presence either way.
+    let orceld = local_orceld(&layout)?;
     let workspace = config.default_workspace().unwrap_or("default").to_string();
     eprintln!(
         "{}",
         per_os::confirm_when_prompted(CONFIRM_EMERGENCY_REVOKE)
     );
     let request = ipc::request(&workspace, "trust.revoke_emergency", "revoke", json!({}));
-    let response = ipc::call(
-        &layout
-            .version_dir(&version)
-            .join(per_os::orceld_file_name()),
-        &config,
-        &request,
-        Duration::from_secs(180),
-    )?;
+    let response = ipc::call(&orceld, &config, &request, Duration::from_secs(180))?;
     let result = ipc::expect_ok(&response)?.clone();
     Ok(Output {
         exit_code: 0,

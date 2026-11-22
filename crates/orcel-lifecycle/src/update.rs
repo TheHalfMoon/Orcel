@@ -316,6 +316,7 @@ impl<'a> Updater<'a> {
                 },
             )?;
             installer.replace_cli(&version_dir.join(crate::per_os::cli_file_name()))?;
+            installer.refresh_service(&version_dir)?;
             write_json_atomic(
                 &self.layout.install_file(),
                 &InstallRecord {
@@ -404,6 +405,7 @@ impl<'a> Updater<'a> {
                 .version_dir(&current.version)
                 .join(crate::per_os::cli_file_name()),
         )?;
+        installer.refresh_service(&self.layout.version_dir(&current.version))?;
         write_json_atomic(&self.layout.install_file(), record)?;
         installer.verify().map(|_| ())
     }
@@ -502,6 +504,7 @@ impl<'a> Updater<'a> {
                 .version_dir(&marker.from)
                 .join(crate::per_os::cli_file_name()),
         )?;
+        installer.refresh_service(&self.layout.version_dir(&marker.from))?;
         write_json_atomic(
             &self.layout.install_file(),
             &InstallRecord {
@@ -609,6 +612,7 @@ impl<'a> Updater<'a> {
                 },
             )?;
             installer.replace_cli(&previous_dir.join(crate::per_os::cli_file_name()))?;
+            installer.refresh_service(&previous_dir)?;
             write_json_atomic(
                 &self.layout.install_file(),
                 &InstallRecord {

@@ -1,0 +1,289 @@
+//! MAC-M1-07: the per-user launchd agent that starts `orceld` on demand on
+//! macOS, the counterpart of XP-17's `orceld.socket` on Linux.
+//!
+//! launchd listens on an owner-only Unix socket and, for each connection,
+//! starts one `orceld` with the connection as its standard input and output
+//! (`inetdCompatibility` with `Wait` false), like `Accept=yes` on Linux. The
+//! socket is `<DARWIN_USER_TEMP_DIR>/orcel/orceld.sock`, in the same 0700
+//! per-user directory as orceld's app API socket. Nothing runs at load and
+//! nothing is kept alive: with no connection there is no process. It opens
+//! no network listener, and the socket grants no new authority: only the
+//! same user can connect, and that user could start `orceld` directly.
+//!
+//! The plist is generated here, from pure inputs, so its content is tested on
+//! every OS. Writing, loading and unloading it is macOS only
+//! ([`crate::unix_install`]), and nothing calls that on a person's Mac until
+//! the macOS M1 grain is activated: `host_platform()` still refuses the
+//! lifecycle commands there.
+
+use crate::LifecycleError;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+/// The agent's launchd label.
+pub const LABEL: &str = "ai.orcel.orceld";
+/// The socket's file name inside the per-user runtime directory.
+pub const SOCKET_FILE: &str = "orceld.sock";
+/// `sun_path` holds 104 bytes on macOS, the terminating NUL included.
+const MAX_SOCKET_PATH: usize = 103;
+
+/// What one agent is: its label, the `orceld` it starts, its socket, and
+/// the environment `orceld` gets (the workspaces among it).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentSpec {
+    pub label: String,
+    pub program: PathBuf,
+    pub socket: PathBuf,
+    pub environment: BTreeMap<String, String>,
+}
+
+impl AgentSpec {
+    /// The plist's file name: `<label>.plist`.
+    pub fn plist_file_name(&self) -> String {
+        format!("{}.plist", self.label)
+    }
+}
+
+/// `~/Library/LaunchAgents` under `home`.
+pub fn launch_agents_dir(home: &Path) -> PathBuf {
+    home.join("Library").join("LaunchAgents")
+}
+
+/// The socket path under the per-user runtime directory.
+pub fn socket_path(runtime_dir: &Path) -> PathBuf {
+    runtime_dir.join("orcel").join(SOCKET_FILE)
+}
+
+/// Only the `ORCEL_*` variables of a child environment
+/// ([`crate::ipc::child_environment`]): launchd already gives the agent the
+/// user's `HOME` and a fixed `PATH`, and nothing else from the CLI's own
+/// environment belongs in a file that outlives it.
+pub fn orcel_variables(environment: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    environment
+        .iter()
+        .filter(|(name, _)| name.starts_with("ORCEL_"))
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect()
+}
+
+fn text(what: &str, path: &Path) -> Result<String, LifecycleError> {
+    // A macOS path: absolute means it starts at `/` (checked as text, so the
+    // generator is tested the same way on every OS).
+    if !path.to_str().is_some_and(|text| text.starts_with('/')) {
+        return Err(LifecycleError::state(format!(
+            "the launchd agent's {what} must be an absolute path: {}",
+            path.display()
+        )));
+    }
+    path.to_str().map(str::to_owned).ok_or_else(|| {
+        LifecycleError::state(format!(
+            "the launchd agent's {what} is not valid UTF-8: {}",
+            path.display()
+        ))
+    })
+}
+
+fn escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+fn valid_label(label: &str) -> bool {
+    !label.is_empty()
+        && label.len() <= 128
+        && label
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-')
+}
+
+/// The agent's property list. Refuses a relative or non-UTF-8 path, a socket
+/// path too long for `sun_path`, a label outside `[A-Za-z0-9.-]`, and an
+/// environment name that is not `[A-Z0-9_]`.
+pub fn plist(spec: &AgentSpec) -> Result<String, LifecycleError> {
+    if !valid_label(&spec.label) {
+        return Err(LifecycleError::state(format!(
+            "invalid launchd label {:?}",
+            spec.label
+        )));
+    }
+    let program = text("program", &spec.program)?;
+    let socket = text("socket", &spec.socket)?;
+    if socket.len() > MAX_SOCKET_PATH {
+        return Err(LifecycleError::state(format!(
+            "the launchd agent's socket path is longer than {MAX_SOCKET_PATH} bytes: {socket}"
+        )));
+    }
+    let mut environment = String::new();
+    for (name, value) in &spec.environment {
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+        {
+            return Err(LifecycleError::state(format!(
+                "invalid environment name {name:?} for the launchd agent"
+            )));
+        }
+        environment.push_str(&format!(
+            "    <key>{}</key>\n    <string>{}</string>\n",
+            escape(name),
+            escape(value)
+        ));
+    }
+    Ok(format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>{label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{program}</string>
+  </array>
+  <key>inetdCompatibility</key>
+  <dict>
+    <key>Wait</key>
+    <false/>
+  </dict>
+  <key>Sockets</key>
+  <dict>
+    <key>Listeners</key>
+    <dict>
+      <key>SockFamily</key>
+      <string>Unix</string>
+      <key>SockType</key>
+      <string>stream</string>
+      <key>SockPathName</key>
+      <string>{socket}</string>
+      <key>SockPathMode</key>
+      <integer>384</integer>
+    </dict>
+  </dict>
+  <key>EnvironmentVariables</key>
+  <dict>
+{environment}  </dict>
+  <key>Umask</key>
+  <integer>63</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
+"#,
+        label = escape(&spec.label),
+        program = escape(&program),
+        socket = escape(&socket),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spec() -> AgentSpec {
+        AgentSpec {
+            label: LABEL.into(),
+            program: PathBuf::from(
+                "/Users/ana/Library/Application Support/Orcel/versions/0.2.0/orceld",
+            ),
+            socket: PathBuf::from("/var/folders/ab/xyz/T/orcel/orceld.sock"),
+            environment: BTreeMap::from([(
+                "ORCEL_WORKSPACES_JSON".to_owned(),
+                r#"[{"id":"a&b","root":"/Users/ana/<p>"}]"#.to_owned(),
+            )]),
+        }
+    }
+
+    #[test]
+    fn the_plist_starts_one_orceld_per_connection_on_an_owner_only_socket() {
+        let text = plist(&spec()).unwrap();
+        for needle in [
+            "<key>Label</key>\n  <string>ai.orcel.orceld</string>",
+            "<string>/Users/ana/Library/Application Support/Orcel/versions/0.2.0/orceld</string>",
+            "<key>inetdCompatibility</key>\n  <dict>\n    <key>Wait</key>\n    <false/>",
+            "<key>SockFamily</key>\n      <string>Unix</string>",
+            "<key>SockPathName</key>\n      <string>/var/folders/ab/xyz/T/orcel/orceld.sock</string>",
+            // 0600: only this user can connect.
+            "<key>SockPathMode</key>\n      <integer>384</integer>",
+            // 0077: what orceld creates is owner-only, as UMask=0077 on Linux.
+            "<key>Umask</key>\n  <integer>63</integer>",
+        ] {
+            assert!(text.contains(needle), "missing {needle:?} in\n{text}");
+        }
+        // On demand only: nothing runs at load or is kept alive, no network.
+        for absent in [
+            "RunAtLoad",
+            "KeepAlive",
+            "SockNodeName",
+            "SockServiceName",
+            "UserName",
+        ] {
+            assert!(!text.contains(absent), "{absent} in\n{text}");
+        }
+    }
+
+    #[test]
+    fn values_are_escaped() {
+        let text = plist(&spec()).unwrap();
+        assert!(text.contains(
+            "<string>[{&quot;id&quot;:&quot;a&amp;b&quot;,&quot;root&quot;:&quot;/Users/ana/&lt;p&gt;&quot;}]</string>"
+        ));
+        assert!(!text.contains("<p>"));
+    }
+
+    #[test]
+    fn unsafe_inputs_are_refused() {
+        let mut relative = spec();
+        relative.program = PathBuf::from("orceld");
+        assert!(plist(&relative).is_err());
+        let mut long = spec();
+        long.socket = PathBuf::from(format!("/{}/orceld.sock", "x".repeat(100)));
+        assert!(plist(&long).is_err());
+        for label in ["", "ai orcel", "ai/orcel", "ai.orcel<x>"] {
+            let mut bad = spec();
+            bad.label = label.into();
+            assert!(plist(&bad).is_err(), "{label:?}");
+        }
+        let mut name = spec();
+        name.environment.insert("bad name".into(), "x".into());
+        assert!(plist(&name).is_err());
+    }
+
+    #[test]
+    fn only_orcel_variables_go_into_the_plist() {
+        let env = BTreeMap::from([
+            ("ORCEL_WORKSPACES_JSON".to_owned(), "[]".to_owned()),
+            ("ORCEL_DEFAULT_WORKSPACE".to_owned(), "a".to_owned()),
+            ("PATH".to_owned(), "/usr/bin".to_owned()),
+            ("HOME".to_owned(), "/Users/ana".to_owned()),
+        ]);
+        let kept = orcel_variables(&env);
+        assert_eq!(
+            kept.keys().collect::<Vec<_>>(),
+            vec!["ORCEL_DEFAULT_WORKSPACE", "ORCEL_WORKSPACES_JSON"]
+        );
+    }
+
+    #[test]
+    fn locations_are_the_launch_agents_folder_and_the_runtime_directory() {
+        assert_eq!(
+            launch_agents_dir(Path::new("/Users/ana")),
+            PathBuf::from("/Users/ana/Library/LaunchAgents")
+        );
+        assert_eq!(
+            socket_path(Path::new("/var/folders/ab/xyz/T")),
+            PathBuf::from("/var/folders/ab/xyz/T/orcel/orceld.sock")
+        );
+        assert_eq!(spec().plist_file_name(), "ai.orcel.orceld.plist");
+    }
+}

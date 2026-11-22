@@ -293,21 +293,28 @@ jobs:
       # through the real Installer and MacosPlatform, with the real orcel,
       # orcel-mcp-host and orceld: install, verify, the installed CLI runs,
       # uninstall; tamper, unlisted, link, hard link, permission and
-      # admin-writable-ancestor refusals. Each test uses its own HOME. The test
-      # fails instead of skipping when ORCEL_REQUIRE_MACOS_INSTALL is set.
-      - name: macOS per-user install round trip and refusals (MAC-M1-03)
+      # admin-writable-ancestor refusals. MAC-M1-07: the per-user launchd
+      # agent under a test label in gui/<uid>, two system.status answers
+      # through its socket, no lingering orceld, uninstall unloads it.
+      # MAC-M1-08: `orcel emergency-revoke` with the real orceld beside orcel
+      # fails closed headless, revokes nothing and is audited. Each test uses
+      # its own HOME. The tests fail instead of skipping when the
+      # ORCEL_REQUIRE_* variables are set.
+      - name: macOS per-user install, launchd agent and emergency revoke (MAC-M1-03, -07, -08)
         if: runner.os == 'macOS'
         shell: bash
         env:
           ORCEL_REQUIRE_MACOS_INSTALL: "1"
+          ORCEL_REQUIRE_MACOS_REVOKE: "1"
         run: |
           set -euo pipefail
-          cargo build -p orceld
+          cargo build -p orceld -p orcel-lifecycle
           export ORCEL_MACOS_ORCELD="$PWD/target/debug/orceld"
           node --version
-          cargo test -p orcel-lifecycle --test macos_install -- --nocapture --test-threads=1 2>&1 | tee "$RUNNER_TEMP/mac-m1-03.log"
-          for line in "install root=" "uninstall removed=" "refused tampered=true" "refused symlink=true" "refused group_writable_file=true" "refused admin_writable_ancestor=true"; do
-            grep -q "MAC-M1-03-EVIDENCE $line" "$RUNNER_TEMP/mac-m1-03.log" || { echo "::error::missing MAC-M1-03-EVIDENCE $line" >&2; exit 1; }
+          log="$RUNNER_TEMP/mac-m1.log"
+          cargo test -p orcel-lifecycle --test macos_install --test macos_emergency_revoke -- --nocapture --test-threads=1 2>&1 | tee "$log"
+          for line in "MAC-M1-03-EVIDENCE install root=" "MAC-M1-03-EVIDENCE uninstall removed=" "MAC-M1-03-EVIDENCE refused tampered=true" "MAC-M1-03-EVIDENCE refused symlink=true" "MAC-M1-03-EVIDENCE refused group_writable_file=true" "MAC-M1-03-EVIDENCE refused admin_writable_ancestor=true" "MAC-M1-07-EVIDENCE agent loaded=true" "MAC-M1-07-EVIDENCE bootout loaded=false" "MAC-M1-08-EVIDENCE emergency_revoke"; do
+            grep -q "$line" "$log" || { echo "::error::missing $line" >&2; exit 1; }
           done
       - name: Live clipboard roundtrip (macOS)
         if: runner.os == 'macOS'

@@ -190,6 +190,7 @@ impl<'a> Installer<'a> {
 
         self.protect_root()?;
         self.verify()?;
+        self.refresh_service(&version_dir)?;
         crate::logs::transcript(
             &self.layout,
             &format!(
@@ -304,6 +305,15 @@ impl<'a> Installer<'a> {
         fs::rename(&staging, &target)
             .map_err(|error| LifecycleError::io("activate staged version", error))?;
         Ok(target)
+    }
+
+    /// Points the on-demand `orceld` service (the launchd agent on macOS,
+    /// none on Windows) at the `orceld` in `version_dir`, the active version.
+    pub(crate) fn refresh_service(&self, version_dir: &Path) -> Result<(), LifecycleError> {
+        self.platform.refresh_service(
+            &self.layout,
+            &version_dir.join(crate::per_os::orceld_file_name()),
+        )
     }
 
     /// Replaces `bin\orcel.exe` (`bin/orcel` off Windows), renaming a possibly
@@ -454,6 +464,8 @@ impl<'a> Installer<'a> {
             ));
         }
 
+        // The on-demand service first, so nothing starts the payload while it goes.
+        let service_removed = self.platform.remove_service()?;
         if !options.purge_data {
             crate::logs::transcript(&self.layout, "uninstall started; user data retained");
         }
@@ -462,7 +474,7 @@ impl<'a> Installer<'a> {
             .platform
             .remove_start_menu_entry(&self.layout.bin_cli());
         let mut report = UninstallReport {
-            removed: Vec::new(),
+            removed: service_removed,
             retained: Vec::new(),
             purged: Vec::new(),
             path_entry_removed: false,

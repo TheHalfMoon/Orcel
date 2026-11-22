@@ -11,6 +11,7 @@ pub mod full_control;
 pub mod health;
 pub mod install;
 pub mod ipc;
+pub mod launchd;
 pub mod layout;
 pub mod legacy_state;
 pub mod lifecycle;
