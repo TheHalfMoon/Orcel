@@ -4,7 +4,7 @@ use crate::layout::{
     write_json_atomic, CurrentRecord, InstallRecord, Layout, CURRENT_SCHEMA, INSTALL_SCHEMA,
 };
 use crate::manifest::{self, join_relative, Manifest, VerifiedRelease, MANIFEST_FILE};
-use crate::platform::{self, Platform, MIN_NODE_MAJOR, MIN_WINDOWS_BUILD};
+use crate::platform::{self, Platform, MIN_NODE_MAJOR};
 use crate::{nonce, LifecycleError};
 use serde::Serialize;
 use std::fs;
@@ -92,14 +92,10 @@ impl<'a> Installer<'a> {
         &self.layout
     }
 
-    /// Validates the Windows build and refuses avoidable elevation.
+    /// Validates the OS version (the Windows build on Windows) and refuses
+    /// avoidable elevation.
     pub fn check_prerequisites_without_node(&self) -> Result<(), LifecycleError> {
-        let build = self.platform.windows_build()?;
-        if build < MIN_WINDOWS_BUILD {
-            return Err(LifecycleError::prerequisite(format!(
-                "Windows build {build} is older than the supported minimum {MIN_WINDOWS_BUILD}"
-            )));
-        }
+        self.platform.check_os_version()?;
         if self.platform.is_avoidably_elevated()? {
             return Err(LifecycleError::prerequisite(
                 "run Orcel lifecycle commands from a non-elevated prompt; administrator rights are not required",
@@ -161,7 +157,7 @@ impl<'a> Installer<'a> {
                 manifest_sha256: release.manifest_sha256.clone(),
             },
         )?;
-        self.replace_cli(&version_dir.join("orcel.exe"))?;
+        self.replace_cli(&version_dir.join(crate::per_os::cli_file_name()))?;
 
         let already_added = previous_record
             .as_ref()
@@ -310,15 +306,17 @@ impl<'a> Installer<'a> {
         Ok(target)
     }
 
-    /// Replaces `bin\orcel.exe`, renaming a possibly running copy aside first.
+    /// Replaces `bin\orcel.exe` (`bin/orcel` off Windows), renaming a possibly
+    /// running copy aside first.
     pub(crate) fn replace_cli(&self, source: &Path) -> Result<(), LifecycleError> {
         let bin = self.layout.bin_dir();
         let target = self.layout.bin_cli();
-        let incoming = bin.join(format!("orcel.exe.new-{}", nonce()));
+        let cli = crate::per_os::cli_file_name();
+        let incoming = bin.join(format!("{cli}.new-{}", nonce()));
         fs::copy(source, &incoming)
             .map_err(|error| LifecycleError::io("copy lifecycle CLI", error))?;
         if target.exists() {
-            let aside = bin.join(format!("orcel.exe.old-{}", nonce()));
+            let aside = bin.join(format!("{cli}.old-{}", nonce()));
             fs::rename(&target, &aside)
                 .map_err(|error| LifecycleError::io("move previous lifecycle CLI aside", error))?;
         }
@@ -329,7 +327,7 @@ impl<'a> Installer<'a> {
                 if entry
                     .file_name()
                     .to_string_lossy()
-                    .starts_with("orcel.exe.old-")
+                    .starts_with(&format!("{cli}.old-"))
                 {
                     let _ = fs::remove_file(entry.path());
                 }
@@ -372,11 +370,16 @@ impl<'a> Installer<'a> {
         }
         manifest::verify_payload(&version_dir, &manifest)?;
         if manifest::sha256_file(&self.layout.bin_cli())?
-            != manifest::sha256_file(&version_dir.join("orcel.exe"))?
+            != manifest::sha256_file(&version_dir.join(crate::per_os::cli_file_name()))?
         {
-            return Err(LifecycleError::state(
-                "bin\\orcel.exe does not match the active version",
-            ));
+            return Err(LifecycleError::state(format!(
+                "{} does not match the active version",
+                if cfg!(windows) {
+                    "bin\\orcel.exe".to_owned()
+                } else {
+                    format!("bin/{}", crate::per_os::cli_file_name())
+                }
+            )));
         }
         self.platform.verify_tree_acl(&self.layout.root)?;
         Ok(InstallState {
@@ -430,7 +433,7 @@ impl<'a> Installer<'a> {
         // and macOS the layout root is the live XDG or Application Support
         // state root, so `--purge-data` must never walk it; the platform
         // refuses first, as it does for install, update and rollback.
-        self.platform.windows_build()?;
+        self.platform.check_lifecycle_supported()?;
         let root_exists = self.layout.root.is_dir();
         let record: Option<InstallRecord> = if root_exists {
             // Tolerant read: uninstall only consults `path_entry_added` and
@@ -478,8 +481,8 @@ impl<'a> Installer<'a> {
 
         if let Ok(exe) = std::env::current_exe() {
             if orcel_policy::protected_state::path_within(&exe, &self.layout.root) {
-                let relocated =
-                    std::env::temp_dir().join(format!("orcel-uninstalled-{}.exe", nonce()));
+                let name = format!("{}{}", nonce(), std::env::consts::EXE_SUFFIX);
+                let relocated = std::env::temp_dir().join(format!("orcel-uninstalled-{name}"));
                 match fs::rename(&exe, &relocated) {
                     Ok(()) => report.relocated_cli = Some(relocated),
                     Err(_) => report.residual.push(exe),
@@ -611,7 +614,10 @@ mod tests {
         assert!(!report.repaired_existing);
         let state = installer.verify().unwrap();
         assert_eq!(state.active.version, "0.2.0");
-        assert!(root.join("bin").join("orcel.exe").is_file());
+        assert!(root
+            .join("bin")
+            .join(crate::per_os::cli_file_name())
+            .is_file());
         assert!(platform.protected_roots().contains(&root));
         let leftovers = fs::read_dir(root.join("versions"))
             .unwrap()
@@ -625,7 +631,7 @@ mod tests {
         let platform = FakePlatform::default();
         let root = temp_dir("install-tamper").join("Orcel");
         let source = release_dir("0.2.0");
-        fs::write(source.join("orcel.exe"), b"evil").unwrap();
+        fs::write(source.join(crate::per_os::cli_file_name()), b"evil").unwrap();
         let installer = Installer::new(Layout::new(&root), &platform);
         assert!(installer.install(&source, &options()).is_err());
         assert!(!root.join("current.json").exists());
@@ -684,7 +690,13 @@ mod tests {
         installer
             .install(&release_dir("0.2.0"), &options())
             .unwrap();
-        fs::write(root.join("versions").join("0.2.0").join("orceld.exe"), b"x").unwrap();
+        fs::write(
+            root.join("versions")
+                .join("0.2.0")
+                .join(crate::per_os::orceld_file_name()),
+            b"x",
+        )
+        .unwrap();
         assert!(installer.verify().is_err());
         let report = installer
             .install(&release_dir("0.2.0"), &options())

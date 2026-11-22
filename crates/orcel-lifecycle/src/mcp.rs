@@ -384,7 +384,7 @@ mod tests {
             })
         );
         assert_eq!(config.default_workspace(), Some("default"));
-        let exe = version_dir.join("orcel-mcp-host.exe");
+        let exe = version_dir.join(crate::per_os::mcp_host_file_name());
         let (host_launch, _) = crate::mcp_host::resolve(&exe, &platform).unwrap();
         assert_eq!(launch, host_launch);
     }

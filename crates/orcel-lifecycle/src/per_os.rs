@@ -9,7 +9,9 @@
 //! This module only names things. It grants nothing and makes no command
 //! reachable on another OS: a command that needs the verified per-user
 //! install still fails closed off Windows, where `host_platform()` is
-//! unsupported.
+//! unsupported. The payload names here are the names the install manifest
+//! requires on each OS (MAC-M1-03, [`crate::manifest::REQUIRED_FILES`]), so
+//! every launched binary is a hash-checked payload file.
 
 /// The OS family whose names and wording the CLI uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +73,16 @@ impl Os {
 /// `orceld`'s file name on this OS (`orceld.exe` on Windows).
 pub fn orceld_file_name() -> String {
     Os::CURRENT.executable_name("orceld")
+}
+
+/// The `orcel` CLI's file name on this OS (`orcel.exe` on Windows).
+pub fn cli_file_name() -> String {
+    Os::CURRENT.executable_name("orcel")
+}
+
+/// The MCP host's file name on this OS (`orcel-mcp-host.exe` on Windows).
+pub fn mcp_host_file_name() -> String {
+    Os::CURRENT.executable_name("orcel-mcp-host")
 }
 
 /// [`Os::confirm_when_prompted`] for this OS.
@@ -156,12 +168,34 @@ mod tests {
         );
     }
 
-    /// The launched `orceld` must be a file the install manifest requires,
-    /// so a launch never reaches an unverified binary. Windows only until
-    /// MAC-M1-03 gives macOS its own payload names.
-    #[cfg(windows)]
+    /// Every binary the CLI launches from the install must be a file the
+    /// install manifest requires, so a launch never reaches an unverified
+    /// binary. Runs on every OS (MAC-M1-03).
     #[test]
     fn the_launched_orceld_is_a_required_payload_file() {
-        assert!(crate::manifest::REQUIRED_FILES.contains(&orceld_file_name().as_str()));
+        for name in [orceld_file_name(), cli_file_name(), mcp_host_file_name()] {
+            assert!(
+                crate::manifest::REQUIRED_FILES.contains(&name.as_str()),
+                "{name} is launched but not a required payload file"
+            );
+        }
+    }
+
+    #[test]
+    fn payload_names_are_pinned_per_os() {
+        assert_eq!(Os::Windows.executable_name("orcel"), "orcel.exe");
+        assert_eq!(
+            Os::Windows.executable_name("orcel-mcp-host"),
+            "orcel-mcp-host.exe"
+        );
+        assert_eq!(Os::MacOs.executable_name("orcel"), "orcel");
+        assert_eq!(
+            Os::MacOs.executable_name("orcel-mcp-host"),
+            "orcel-mcp-host"
+        );
+        if cfg!(windows) {
+            assert_eq!(cli_file_name(), "orcel.exe");
+            assert_eq!(mcp_host_file_name(), "orcel-mcp-host.exe");
+        }
     }
 }

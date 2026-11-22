@@ -315,7 +315,7 @@ impl<'a> Updater<'a> {
                     manifest_sha256: release.manifest_sha256.clone(),
                 },
             )?;
-            installer.replace_cli(&version_dir.join("orcel.exe"))?;
+            installer.replace_cli(&version_dir.join(crate::per_os::cli_file_name()))?;
             write_json_atomic(
                 &self.layout.install_file(),
                 &InstallRecord {
@@ -332,7 +332,8 @@ impl<'a> Updater<'a> {
             )?;
             installer.protect_root()?;
             installer.verify()?;
-            self_check(&version_dir.join("orcel.exe")).map_err(LifecycleError::state)
+            self_check(&version_dir.join(crate::per_os::cli_file_name()))
+                .map_err(LifecycleError::state)
         };
         if let Err(error) = activate() {
             let restored = self.restore(&previous_current, &previous_record);
@@ -397,7 +398,12 @@ impl<'a> Updater<'a> {
     ) -> Result<(), LifecycleError> {
         let installer = self.installer();
         write_json_atomic(&self.layout.current_file(), current)?;
-        installer.replace_cli(&self.layout.version_dir(&current.version).join("orcel.exe"))?;
+        installer.replace_cli(
+            &self
+                .layout
+                .version_dir(&current.version)
+                .join(crate::per_os::cli_file_name()),
+        )?;
         write_json_atomic(&self.layout.install_file(), record)?;
         installer.verify().map(|_| ())
     }
@@ -437,7 +443,13 @@ impl<'a> Updater<'a> {
             .ok()
             .filter(|state| state.active.version == marker.to);
         if completed.is_some()
-            && self_check(&self.layout.version_dir(&marker.to).join("orcel.exe")).is_ok()
+            && self_check(
+                &self
+                    .layout
+                    .version_dir(&marker.to)
+                    .join(crate::per_os::cli_file_name()),
+            )
+            .is_ok()
         {
             let _ = std::fs::remove_file(update_marker_path(&self.layout));
             crate::logs::transcript(
@@ -484,7 +496,12 @@ impl<'a> Updater<'a> {
                 manifest_sha256: manifest::sha256_bytes(&bytes),
             },
         )?;
-        installer.replace_cli(&self.layout.version_dir(&marker.from).join("orcel.exe"))?;
+        installer.replace_cli(
+            &self
+                .layout
+                .version_dir(&marker.from)
+                .join(crate::per_os::cli_file_name()),
+        )?;
         write_json_atomic(
             &self.layout.install_file(),
             &InstallRecord {
@@ -591,7 +608,7 @@ impl<'a> Updater<'a> {
                     manifest_sha256: manifest::sha256_bytes(&manifest_bytes),
                 },
             )?;
-            installer.replace_cli(&previous_dir.join("orcel.exe"))?;
+            installer.replace_cli(&previous_dir.join(crate::per_os::cli_file_name()))?;
             write_json_atomic(
                 &self.layout.install_file(),
                 &InstallRecord {
@@ -695,7 +712,11 @@ mod tests {
         )
         .unwrap();
         installer
-            .replace_cli(&layout.version_dir("0.3.0").join("orcel.exe"))
+            .replace_cli(
+                &layout
+                    .version_dir("0.3.0")
+                    .join(crate::per_os::cli_file_name()),
+            )
             .unwrap();
         installer.verify().unwrap();
         let mut config = crate::config::Config::load(&layout).unwrap();

@@ -1,0 +1,326 @@
+//! MAC-M1-03 on the hosted macOS runner: the per-user install under
+//! `~/Library/Application Support/Orcel`, through the real `Installer` and
+//! the real macOS host operations (`MacosPlatform`), with the real `orcel`
+//! and `orcel-mcp-host` binaries this package builds. `orceld` is the real
+//! binary when `ORCEL_MACOS_ORCELD` names it (the CI step builds it), else a
+//! stand-in file.
+//!
+//! Each test makes its own `HOME` in the temporary folder, so nothing touches
+//! the runner user's own Application Support. With
+//! `ORCEL_REQUIRE_MACOS_INSTALL=1` (CI), a missing prerequisite (Node.js, the
+//! real `orceld`) fails instead of skipping.
+//!
+//! `host_platform()` still refuses these commands on macOS until the macOS
+//! M1 grain is activated; these tests are the hosted-runner evidence the
+//! plan asks for before then. Real Mac hardware: UNVERIFIED.
+#![cfg(target_os = "macos")]
+
+use orcel_lifecycle::install::{InstallOptions, Installer, UninstallOptions};
+use orcel_lifecycle::layout::Layout;
+use orcel_lifecycle::manifest::{
+    sha256_bytes, ConfigSchemaRange, Manifest, ManifestFile, MANIFEST_FILE, MANIFEST_SCHEMA,
+    REQUIRED_FILES,
+};
+use orcel_lifecycle::platform::find_node_on_path;
+use orcel_lifecycle::unix_install::MacosPlatform;
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+
+const VERSION: &str = "0.2.0";
+
+fn required() -> bool {
+    std::env::var_os("ORCEL_REQUIRE_MACOS_INSTALL").is_some()
+}
+
+fn unique(label: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "orcel-mac-m1-03-{label}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir_all(&dir).unwrap();
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+    dir
+}
+
+/// A fresh `HOME` and the Orcel root inside it, where XP-01 puts it on macOS.
+fn home_and_root(label: &str) -> (PathBuf, PathBuf) {
+    let home = unique(label);
+    let root = home
+        .join("Library")
+        .join("Application Support")
+        .join("Orcel");
+    let resolved = orcel_platform::paths::state_root_from(&|name| match name {
+        "HOME" => Some(home.clone().into_os_string()),
+        _ => None,
+    })
+    .unwrap();
+    assert_eq!(
+        resolved, root,
+        "XP-01 puts the macOS root in Application Support"
+    );
+    (home, root)
+}
+
+fn node() -> Option<PathBuf> {
+    let node = find_node_on_path();
+    if node.is_none() {
+        assert!(!required(), "Node.js is required on this runner");
+        eprintln!("MAC-M1-03 skipped: no Node.js on PATH");
+    }
+    node
+}
+
+fn orceld_bytes() -> Vec<u8> {
+    match std::env::var_os("ORCEL_MACOS_ORCELD") {
+        Some(path) => fs::read(&path).expect("read ORCEL_MACOS_ORCELD"),
+        None => {
+            assert!(!required(), "ORCEL_MACOS_ORCELD must name the built orceld");
+            b"orceld stand-in".to_vec()
+        }
+    }
+}
+
+/// A release folder with this OS's required files (real `orcel` and
+/// `orcel-mcp-host`) and a matching manifest.
+fn release(label: &str) -> PathBuf {
+    let dir = unique(label).join("release");
+    fs::create_dir_all(&dir).unwrap();
+    let mut files = Vec::new();
+    let mut paths = REQUIRED_FILES
+        .iter()
+        .map(|path| path.to_string())
+        .collect::<Vec<_>>();
+    paths.push("app/orcel-mcp/node_modules/zod/package.json".into());
+    for path in paths {
+        let contents = match path.as_str() {
+            "orcel" => fs::read(env!("CARGO_BIN_EXE_orcel")).unwrap(),
+            "orcel-mcp-host" => fs::read(env!("CARGO_BIN_EXE_orcel-mcp-host")).unwrap(),
+            "orceld" => orceld_bytes(),
+            other => format!("{other} for {VERSION}").into_bytes(),
+        };
+        let target = dir.join(&path);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, &contents).unwrap();
+        if matches!(path.as_str(), "orcel" | "orcel-mcp-host" | "orceld") {
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        files.push(ManifestFile {
+            path,
+            size: contents.len() as u64,
+            sha256: sha256_bytes(&contents),
+        });
+    }
+    let manifest = Manifest {
+        schema: MANIFEST_SCHEMA.into(),
+        version: VERSION.into(),
+        config_schema: ConfigSchemaRange { min: 1, max: 1 },
+        files,
+    };
+    fs::write(
+        dir.join(MANIFEST_FILE),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+    dir
+}
+
+fn options(node: PathBuf) -> InstallOptions {
+    InstallOptions {
+        node: Some(node),
+        add_to_path: false,
+    }
+}
+
+fn mode(path: &Path) -> u32 {
+    use std::os::unix::fs::MetadataExt;
+    fs::symlink_metadata(path).unwrap().mode() & 0o777
+}
+
+/// Installs a fresh release and returns the root.
+fn installed(label: &str) -> Option<(PathBuf, PathBuf)> {
+    let node = node()?;
+    let (home, root) = home_and_root(label);
+    let platform = MacosPlatform;
+    Installer::new(Layout::new(&root), &platform)
+        .install(&release(label), &options(node))
+        .expect("install");
+    Some((home, root))
+}
+
+fn verify(root: &Path) -> Result<(), String> {
+    let platform = MacosPlatform;
+    Installer::new(Layout::new(root), &platform)
+        .verify()
+        .map(|_| ())
+        .map_err(|error| error.message)
+}
+
+#[test]
+fn install_verify_run_and_uninstall_round_trip() {
+    let Some(node) = node() else { return };
+    let (home, root) = home_and_root("roundtrip");
+    let platform = MacosPlatform;
+    let installer = Installer::new(Layout::new(&root), &platform);
+    let report = installer
+        .install(&release("roundtrip"), &options(node))
+        .expect("install");
+    assert_eq!(report.version, VERSION);
+    assert!(!report.path_entry_added, "macOS PATH is never edited");
+    let state = installer.verify().expect("verify");
+    assert_eq!(state.active.version, VERSION);
+    let version_dir = root.join("versions").join(VERSION);
+    assert_eq!(mode(&root), 0o700);
+    assert_eq!(mode(&version_dir.join("orceld")), 0o700);
+    assert!(!version_dir.join("orceld.exe").exists());
+    let cli = root.join("bin").join("orcel");
+    assert_eq!(mode(&cli), 0o700);
+
+    // The installed CLI copy runs and reads this layout through XP-01.
+    let output = std::process::Command::new(&cli)
+        .arg("version")
+        .env_clear()
+        .env("HOME", &home)
+        .output()
+        .expect("run the installed orcel");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{stdout}");
+    assert!(
+        stdout.contains(&format!("installed: {VERSION}")),
+        "{stdout}"
+    );
+    println!(
+        "MAC-M1-03-EVIDENCE install root={} version={} files={} root_mode={:o} cli_mode={:o} installed_cli_ran=true",
+        root.display(),
+        state.active.version,
+        state.manifest.files.len(),
+        mode(&root),
+        mode(&cli)
+    );
+
+    let uninstall = installer
+        .uninstall(&UninstallOptions::default())
+        .expect("uninstall");
+    assert!(uninstall.residual.is_empty(), "{:?}", uninstall.residual);
+    for gone in ["versions", "bin", "current.json", "install.json"] {
+        assert!(!root.join(gone).exists(), "{gone} remains after uninstall");
+    }
+    let error = installer.verify().unwrap_err();
+    assert_eq!(error.kind, orcel_lifecycle::ErrorKind::NotInstalled);
+    println!(
+        "MAC-M1-03-EVIDENCE uninstall removed={} residual=0 payload_left=false",
+        uninstall.removed.len()
+    );
+}
+
+#[test]
+fn a_tampered_or_extra_payload_file_fails_verification() {
+    let Some((_, root)) = installed("tamper") else {
+        return;
+    };
+    let version_dir = root.join("versions").join(VERSION);
+    fs::write(version_dir.join("orceld"), b"tampered").unwrap();
+    let error = verify(&root).unwrap_err();
+    assert!(error.contains("mismatch"), "{error}");
+
+    let Some((_, root)) = installed("unlisted") else {
+        return;
+    };
+    let version_dir = root.join("versions").join(VERSION);
+    fs::write(version_dir.join("extra"), b"x").unwrap();
+    fs::set_permissions(version_dir.join("extra"), fs::Permissions::from_mode(0o600)).unwrap();
+    let error = verify(&root).unwrap_err();
+    assert!(error.contains("unlisted"), "{error}");
+    println!("MAC-M1-03-EVIDENCE refused tampered=true unlisted=true");
+}
+
+#[test]
+fn links_in_the_install_or_the_release_fail_closed() {
+    let Some((_, root)) = installed("symlink") else {
+        return;
+    };
+    let version_dir = root.join("versions").join(VERSION);
+    std::os::unix::fs::symlink("/usr/bin/true", version_dir.join("link")).unwrap();
+    assert!(verify(&root).is_err());
+
+    let Some((_, root)) = installed("hardlink") else {
+        return;
+    };
+    let outside = unique("hardlink-outside").join("orceld-alias");
+    fs::hard_link(root.join("versions").join(VERSION).join("orceld"), outside).unwrap();
+    let error = verify(&root).unwrap_err();
+    assert!(error.contains("hard link"), "{error}");
+
+    let Some(node) = node() else { return };
+    let (_, root) = home_and_root("release-link");
+    let source = release("release-link");
+    std::os::unix::fs::symlink("/usr/bin/true", source.join("link")).unwrap();
+    let platform = MacosPlatform;
+    assert!(Installer::new(Layout::new(&root), &platform)
+        .install(&source, &options(node))
+        .is_err());
+    assert!(!root.join("current.json").exists());
+    println!("MAC-M1-03-EVIDENCE refused symlink=true hardlink=true release_link=true");
+}
+
+#[test]
+fn group_or_other_access_fails_verification() {
+    let Some((_, root)) = installed("perm-file") else {
+        return;
+    };
+    let cli = root.join("bin").join("orcel");
+    fs::set_permissions(&cli, fs::Permissions::from_mode(0o720)).unwrap();
+    assert!(verify(&root).is_err(), "a group-writable bin/orcel");
+
+    let Some((_, root)) = installed("perm-root") else {
+        return;
+    };
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(verify(&root).is_err(), "a readable install root");
+    println!("MAC-M1-03-EVIDENCE refused group_writable_file=true readable_root=true");
+}
+
+#[test]
+fn a_root_under_an_admin_writable_folder_installs_nothing() {
+    let Some(node) = node() else { return };
+    // The shape of /Applications (root:admin 0775).
+    let shared = unique("admin-writable");
+    fs::set_permissions(&shared, fs::Permissions::from_mode(0o775)).unwrap();
+    let root = shared.join("Orcel");
+    let platform = MacosPlatform;
+    let error = Installer::new(Layout::new(&root), &platform)
+        .install(&release("admin-writable"), &options(node))
+        .unwrap_err();
+    assert!(!root.join("current.json").exists(), "{}", error.message);
+    assert!(!root.join("versions").join(VERSION).exists());
+    println!("MAC-M1-03-EVIDENCE refused admin_writable_ancestor=true");
+}
+
+#[test]
+fn a_release_with_windows_names_is_not_installable_on_macos() {
+    let Some(node) = node() else { return };
+    let (_, root) = home_and_root("windows-names");
+    let source = release("windows-names");
+    let manifest_path = source.join(MANIFEST_FILE);
+    let mut manifest: Manifest =
+        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    for file in &mut manifest.files {
+        if file.path == "orceld" {
+            fs::rename(source.join("orceld"), source.join("orceld.exe")).unwrap();
+            file.path = "orceld.exe".into();
+        }
+    }
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let platform = MacosPlatform;
+    let error = Installer::new(Layout::new(&root), &platform)
+        .install(&source, &options(node))
+        .unwrap_err();
+    assert!(
+        error.message.contains("missing required file orceld"),
+        "{}",
+        error.message
+    );
+}

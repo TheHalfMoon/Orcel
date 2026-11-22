@@ -36,6 +36,24 @@ pub trait Platform {
     fn has_start_menu_entry(&self, cli: &Path) -> Result<bool, LifecycleError>;
     /// Runs `node --version` and returns the parsed version.
     fn node_version(&self, node: &Path) -> Result<crate::version::Version, LifecycleError>;
+    /// Fails unless this OS version may install Orcel. The default is the
+    /// Windows build check (Windows 10 1809 or later); macOS overrides it
+    /// (MAC-M1-03).
+    fn check_os_version(&self) -> Result<(), LifecycleError> {
+        let build = self.windows_build()?;
+        if build < MIN_WINDOWS_BUILD {
+            return Err(LifecycleError::prerequisite(format!(
+                "Windows build {build} is older than the supported minimum {MIN_WINDOWS_BUILD}"
+            )));
+        }
+        Ok(())
+    }
+    /// Fails unless lifecycle commands that touch the payload (uninstall)
+    /// may run here at all. The default is the Windows build query, which
+    /// fails off Windows; macOS overrides it (MAC-M1-03).
+    fn check_lifecycle_supported(&self) -> Result<(), LifecycleError> {
+        self.windows_build().map(|_| ())
+    }
 }
 
 /// Parses `node --version` output such as `v24.19.0`.

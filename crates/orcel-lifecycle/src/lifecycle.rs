@@ -126,19 +126,19 @@ fn health_of(layout: &Layout) -> (Option<String>, Option<u16>) {
     (Some(url), status)
 }
 
-/// Whether `image` is `versions\<version>\orcel.exe` beneath the install
-/// root (case-insensitive, component-wise).
+/// Whether `image` is `versions\<version>\orcel.exe` (`orcel` off Windows)
+/// beneath the install root (case-insensitive, component-wise).
 pub fn is_installed_cli(layout: &Layout, image: &std::path::Path) -> bool {
     let Some(version_dir) = image.parent() else {
         return false;
     };
-    image
-        .file_name()
-        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("orcel.exe"))
-        && version_dir.parent().is_some_and(|versions| {
-            orcel_policy::protected_state::path_within(versions, &layout.versions_dir())
-                && orcel_policy::protected_state::path_within(&layout.versions_dir(), versions)
-        })
+    image.file_name().is_some_and(|name| {
+        name.to_string_lossy()
+            .eq_ignore_ascii_case(&crate::per_os::cli_file_name())
+    }) && version_dir.parent().is_some_and(|versions| {
+        orcel_policy::protected_state::path_within(versions, &layout.versions_dir())
+            && orcel_policy::protected_state::path_within(&layout.versions_dir(), versions)
+    })
 }
 
 #[cfg(windows)]
@@ -620,19 +620,25 @@ mod tests {
     #[test]
     fn only_installed_version_cli_images_are_accepted() {
         let layout = Layout::new(PathBuf::from("/x/Orcel"));
+        // Windows names unchanged; macOS and Linux names have no suffix.
+        let (cli, daemon) = if cfg!(windows) {
+            ("orcel.exe", "orceld.exe")
+        } else {
+            ("orcel", "orceld")
+        };
         assert!(is_installed_cli(
             &layout,
-            Path::new("/x/Orcel/versions/0.1.0/orcel.exe")
+            Path::new(&format!("/x/Orcel/versions/0.1.0/{cli}"))
         ));
         for image in [
-            "/x/Orcel/bin/orcel.exe",
-            "/x/Orcel/versions/0.1.0/orceld.exe",
-            "/x/Orcel/versions/0.1.0/sub/orcel.exe",
-            "/x/Orcel/versions/orcel.exe",
-            "/y/Orcel/versions/0.1.0/orcel.exe",
-            "/x/Windows/System32/cmd.exe",
+            format!("/x/Orcel/bin/{cli}"),
+            format!("/x/Orcel/versions/0.1.0/{daemon}"),
+            format!("/x/Orcel/versions/0.1.0/sub/{cli}"),
+            format!("/x/Orcel/versions/{cli}"),
+            format!("/y/Orcel/versions/0.1.0/{cli}"),
+            "/x/Windows/System32/cmd.exe".to_owned(),
         ] {
-            assert!(!is_installed_cli(&layout, Path::new(image)), "{image}");
+            assert!(!is_installed_cli(&layout, Path::new(&image)), "{image}");
         }
     }
 }
