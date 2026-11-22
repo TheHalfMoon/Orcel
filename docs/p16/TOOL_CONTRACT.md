@@ -12,7 +12,7 @@ Discovery filtering is never authorization: orceld, the remote-session lease, an
 | Profile | Served by | Tools |
 | --- | --- | --- |
 | `core` | relay (remote) | 26 |
-| `desktop_structured` | stdio and loopback HTTP (local) | 45 |
+| `desktop_structured` | stdio and loopback HTTP (local) | 59 |
 
 The `developer` and `coordinate_fallback` profiles named in the plan are not mapped and deny. Unknown profiles deny.
 
@@ -62,6 +62,20 @@ O = openWorldHint (reaches network peers or runs a registered executable).
 | `desktop_window_capture` | `uia.screenshot/capture` | desktop_capture | SOFT | local-only | yes | no | yes | no | one exact-window bounded capture; oversized payloads fail closed |
 | `desktop_window_list` | `uia.window/list` | desktop_observe | none | local-only | yes | no | yes | no | at most 64 windows within 64 KiB |
 | `desktop_window_tree` | `uia.tree/observe` | desktop_observe | none | local-only | yes | no | yes | no | depth 8 and at most 256 elements within 64 KiB |
+| `fc_fs_list` | `fc.fs/list` | read | none | local-only | yes | no | yes | no | at most 1000 entries of one folder, truncation reported |
+| `fc_fs_mkdir` | `fc.fs/mkdir` | lease_write | none | local-only | no | no | no | no | evidence only |
+| `fc_fs_read` | `fc.fs/read_text` | read | none | local-only | yes | no | yes | no | at most 256 KiB of one UTF-8 file, truncation reported |
+| `fc_fs_stat` | `fc.fs/stat` | read | none | local-only | yes | no | yes | no | fixed-size metadata for one path |
+| `fc_fs_write` | `fc.fs/write_text` | lease_write | none | local-only | no | yes | yes | no | the bytes written; writes at most 256 KiB |
+| `fc_git_branch_create` | `fc.git/git_branch_create` | write | SOFT | local-only | no | no | no | no | evidence only |
+| `fc_git_commit` | `fc.git/git_commit` | write | SOFT | local-only | no | no | no | no | evidence only; message at most 8 KiB |
+| `fc_git_diff` | `fc.git/git_diff` | read | none | local-only | yes | no | yes | no | at most 2 MiB of git output |
+| `fc_git_log` | `fc.git/git_log` | read | none | local-only | yes | no | yes | no | at most 100 commits within 2 MiB of git output |
+| `fc_git_stage` | `fc.git/git_add` | write | SOFT | local-only | no | no | yes | no | evidence only; at most 128 paths |
+| `fc_git_status` | `fc.git/git_status` | read | none | local-only | yes | no | yes | no | at most 2 MiB of git output |
+| `fc_git_unstage` | `fc.git/git_unstage` | write | SOFT | local-only | no | no | yes | no | evidence only; at most 128 paths |
+| `fc_process_run` | `fc.process/run` | execute | SOFT | local-only | no | yes | no | yes | at most 64 KiB of output within 50 s |
+| `fc_status` | `fc.status/get` | read | none | local-only | yes | no | yes | no | this client's reference and the leases it can use |
 | `fs_edit` | `fs.edit/edit` | write | SOFT | orcel.write | no | yes | no | no | evidence only; files of at most 2 MiB |
 | `fs_find` | `fs.find/find` | read | none | orcel.read | yes | no | yes | no | at most 500 results, depth 16, 20000 entries visited |
 | `fs_list` | `fs.list/list` | read | none | orcel.read | yes | no | yes | no | at most 5000 entries of one directory, truncation reported |

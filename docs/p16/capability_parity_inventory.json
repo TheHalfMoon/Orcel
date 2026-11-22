@@ -522,6 +522,104 @@
       "status": "implemented_exposed",
       "mcp_tool": "desktop_window_action",
       "note": "SG-000095 exact-window focus/minimize/maximize/restore/close under Full User authority and SOFT approval; protected and stale targets fail closed."
+    },
+    {
+      "capability": "fc.status",
+      "operation": "get",
+      "status": "implemented_exposed",
+      "mcp_tool": "fc_status",
+      "note": "SG132_SLICE9: read-only; this client's reference and the Full Control leases it can use. Local only; grants nothing."
+    },
+    {
+      "capability": "fc.fs",
+      "operation": "stat",
+      "status": "implemented_exposed",
+      "mcp_tool": "fc_fs_stat",
+      "note": "SG132_SLICE8/9: Full Control lease (filesystem executor, this client, roots) and the service's audit-first Authorize; no approval. Local only."
+    },
+    {
+      "capability": "fc.fs",
+      "operation": "list",
+      "status": "implemented_exposed",
+      "mcp_tool": "fc_fs_list",
+      "note": "SG132_SLICE8/9: Full Control lease and Authorize; no approval; at most 1000 entries. Local only."
+    },
+    {
+      "capability": "fc.fs",
+      "operation": "read_text",
+      "status": "implemented_exposed",
+      "mcp_tool": "fc_fs_read",
+      "note": "SG132_SLICE8/9: Full Control lease and Authorize; no approval; at most 256 KiB. Local only."
+    },
+    {
+      "capability": "fc.fs",
+      "operation": "write_text",
+      "status": "implemented_exposed",
+      "mcp_tool": "fc_fs_write",
+      "note": "SG132_SLICE8/9: covered by the Full Control lease with no per-call approval (SG-000132 amendment of 2026-11-19); Authorize first; never .git or Orcel state. Local only."
+    },
+    {
+      "capability": "fc.fs",
+      "operation": "mkdir",
+      "status": "implemented_exposed",
+      "mcp_tool": "fc_fs_mkdir",
+      "note": "SG132_SLICE8/9: covered by the Full Control lease with no per-call approval (SG-000132 amendment of 2026-11-19); Authorize first; never .git or Orcel state. Local only."
+    },
+    {
+      "capability": "fc.process",
+      "operation": "run",
+      "status": "implemented_exposed",
+      "mcp_tool": "fc_process_run",
+      "note": "SG132_SLICE8/9: Full Control lease with shells, a fresh SOFT approval on every call (SG-000096 A3), Authorize, a service-made Job Object. Local only."
+    },
+    {
+      "capability": "fc.git",
+      "operation": "git_status",
+      "status": "implemented_exposed",
+      "mcp_tool": "fc_git_status",
+      "note": "SG132_SLICE8/9: Full Control lease with shells and Authorize; no approval. Local only."
+    },
+    {
+      "capability": "fc.git",
+      "operation": "git_diff",
+      "status": "implemented_exposed",
+      "mcp_tool": "fc_git_diff",
+      "note": "SG132_SLICE8/9: Full Control lease with shells and Authorize; no approval. Local only."
+    },
+    {
+      "capability": "fc.git",
+      "operation": "git_log",
+      "status": "implemented_exposed",
+      "mcp_tool": "fc_git_log",
+      "note": "SG132_SLICE8/9: Full Control lease with shells and Authorize; no approval. Local only."
+    },
+    {
+      "capability": "fc.git",
+      "operation": "git_add",
+      "status": "implemented_exposed",
+      "mcp_tool": "fc_git_stage",
+      "note": "SG132_SLICE8/9: Full Control lease with shells, a fresh SOFT approval on every call, Authorize. Local only."
+    },
+    {
+      "capability": "fc.git",
+      "operation": "git_unstage",
+      "status": "implemented_exposed",
+      "mcp_tool": "fc_git_unstage",
+      "note": "SG132_SLICE8/9: Full Control lease with shells, a fresh SOFT approval on every call, Authorize. Local only."
+    },
+    {
+      "capability": "fc.git",
+      "operation": "git_commit",
+      "status": "implemented_exposed",
+      "mcp_tool": "fc_git_commit",
+      "note": "SG132_SLICE8/9: Full Control lease with shells, a fresh SOFT approval on every call, Authorize. Local only."
+    },
+    {
+      "capability": "fc.git",
+      "operation": "git_branch_create",
+      "status": "implemented_exposed",
+      "mcp_tool": "fc_git_branch_create",
+      "note": "SG132_SLICE8/9: Full Control lease with shells, a fresh SOFT approval on every call, Authorize. Local only."
     }
   ],
   "workflows": [

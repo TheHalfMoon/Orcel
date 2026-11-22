@@ -110,7 +110,8 @@
         "desktop_observe",
         "desktop_capture",
         "desktop_control",
-        "clipboard"
+        "clipboard",
+        "lease_write"
       ]
     },
     "ExecutorClass": {

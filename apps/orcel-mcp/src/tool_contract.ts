@@ -33,7 +33,15 @@ export type EffectClass =
   | "desktop_observe"
   | "desktop_capture"
   | "desktop_control"
-  | "clipboard";
+  | "clipboard"
+  /**
+   * SG132_SLICE9.md: a Full Control file write or folder creation covered by
+   * the lease, with no per-call approval (the SG-000132 amendment "Full
+   * Control file writes covered by the lease, and the fc_* tool surface",
+   * 2026-11-19). It changes state; the lease, granted with the service's
+   * confirmation and Windows Hello, is its approval.
+   */
+  | "lease_write";
 
 export type ApprovalClass = "none" | "SOFT" | "STRONG";
 
@@ -228,6 +236,67 @@ export const TOOL_CONTRACT: Readonly<Record<string, ToolContractEntry>> = {
   desktop_window_tree: {
     capability: "uia.tree", operation: "observe", effect: "desktop_observe", approval: "none", remote: "local_only",
     outputBound: "depth 8 and at most 256 elements within 64 KiB", annotations: read("Read window UI tree")
+  },
+  // SG132_SLICE9.md: the Full Control tools, local only, each needing a Full
+  // Control lease in orceld (SG132_SLICE8.md). Program runs and Git changes
+  // ask SOFT on every call; file writes are lease-covered (`lease_write`).
+  fc_status: {
+    capability: "fc.status", operation: "get", effect: "read", approval: "none", remote: "local_only",
+    outputBound: "this client's reference and the leases it can use", annotations: read("Full Control status")
+  },
+  fc_fs_stat: {
+    capability: "fc.fs", operation: "stat", effect: "read", approval: "none", remote: "local_only",
+    outputBound: "fixed-size metadata for one path", annotations: read("Full Control file metadata")
+  },
+  fc_fs_list: {
+    capability: "fc.fs", operation: "list", effect: "read", approval: "none", remote: "local_only",
+    outputBound: "at most 1000 entries of one folder, truncation reported", annotations: read("Full Control list folder")
+  },
+  fc_fs_read: {
+    capability: "fc.fs", operation: "read_text", effect: "read", approval: "none", remote: "local_only",
+    outputBound: "at most 256 KiB of one UTF-8 file, truncation reported", annotations: read("Full Control read file")
+  },
+  fc_fs_write: {
+    capability: "fc.fs", operation: "write_text", effect: "lease_write", approval: "none", remote: "local_only",
+    outputBound: "the bytes written; writes at most 256 KiB",
+    annotations: change("Full Control write file", { destructive: true, idempotent: true })
+  },
+  fc_fs_mkdir: {
+    capability: "fc.fs", operation: "mkdir", effect: "lease_write", approval: "none", remote: "local_only",
+    outputBound: "evidence only", annotations: change("Full Control create folder", { destructive: false, idempotent: false })
+  },
+  fc_process_run: {
+    capability: "fc.process", operation: "run", effect: "execute", approval: "SOFT", remote: "local_only",
+    outputBound: "at most 64 KiB of output within 50 s",
+    annotations: change("Full Control run program", { destructive: true, idempotent: false, openWorld: true })
+  },
+  fc_git_status: {
+    capability: "fc.git", operation: "git_status", effect: "read", approval: "none", remote: "local_only",
+    outputBound: "at most 2 MiB of git output", annotations: read("Full Control Git status")
+  },
+  fc_git_diff: {
+    capability: "fc.git", operation: "git_diff", effect: "read", approval: "none", remote: "local_only",
+    outputBound: "at most 2 MiB of git output", annotations: read("Full Control Git diff")
+  },
+  fc_git_log: {
+    capability: "fc.git", operation: "git_log", effect: "read", approval: "none", remote: "local_only",
+    outputBound: "at most 100 commits within 2 MiB of git output", annotations: read("Full Control Git log")
+  },
+  fc_git_stage: {
+    capability: "fc.git", operation: "git_add", effect: "write", approval: "SOFT", remote: "local_only",
+    outputBound: "evidence only; at most 128 paths", annotations: change("Full Control Git stage", { destructive: false, idempotent: true })
+  },
+  fc_git_unstage: {
+    capability: "fc.git", operation: "git_unstage", effect: "write", approval: "SOFT", remote: "local_only",
+    outputBound: "evidence only; at most 128 paths", annotations: change("Full Control Git unstage", { destructive: false, idempotent: true })
+  },
+  fc_git_commit: {
+    capability: "fc.git", operation: "git_commit", effect: "write", approval: "SOFT", remote: "local_only",
+    outputBound: "evidence only; message at most 8 KiB", annotations: change("Full Control Git commit", { destructive: false, idempotent: false })
+  },
+  fc_git_branch_create: {
+    capability: "fc.git", operation: "git_branch_create", effect: "write", approval: "SOFT", remote: "local_only",
+    outputBound: "evidence only", annotations: change("Full Control Git create branch", { destructive: false, idempotent: false })
   },
   clipboard_read: {
     capability: "clipboard", operation: "read", effect: "clipboard", approval: "SOFT", remote: "local_only",
@@ -502,9 +571,33 @@ export function contractEntryFor(name: string, profile: ToolSurfaceProfile): Too
 }
 
 /**
- * `desktop_structured`, listed explicitly instead of every contract key, so
- * that adding a tool to the contract (a browser tool in particular) never
- * widens it.
+ * SG132_SLICE9.md: the Full Control tools, in `desktop_structured` only
+ * (founder decision 3 of 2026-11-19: the normal local tool list). orceld
+ * refuses `fc.*` under any other tool surface, so the browser profiles,
+ * which extend `DESKTOP_STRUCTURED_TOOLS`, never list them.
+ */
+export const FULL_CONTROL_TOOLS: readonly string[] = Object.freeze([
+  "fc_status",
+  "fc_fs_stat",
+  "fc_fs_list",
+  "fc_fs_read",
+  "fc_fs_write",
+  "fc_fs_mkdir",
+  "fc_process_run",
+  "fc_git_status",
+  "fc_git_diff",
+  "fc_git_log",
+  "fc_git_stage",
+  "fc_git_unstage",
+  "fc_git_commit",
+  "fc_git_branch_create"
+] as const);
+
+/**
+ * The local tools every local profile serves, listed explicitly instead of
+ * every contract key, so that adding a tool to the contract (a browser tool
+ * in particular) never widens it. `desktop_structured` is these and
+ * `FULL_CONTROL_TOOLS`.
  */
 export const DESKTOP_STRUCTURED_TOOLS: readonly string[] = Object.freeze([
   "system_status",
@@ -563,7 +656,7 @@ export const DESKTOP_STRUCTURED_TOOLS: readonly string[] = Object.freeze([
  */
 export const SURFACE_PROFILES: Readonly<Record<ToolSurfaceProfile, readonly string[]>> = {
   core: REMOTE_TOOL_NAMES,
-  desktop_structured: DESKTOP_STRUCTURED_TOOLS,
+  desktop_structured: Object.freeze([...DESKTOP_STRUCTURED_TOOLS, ...FULL_CONTROL_TOOLS]),
   browser_structured: Object.freeze([...DESKTOP_STRUCTURED_TOOLS, ...LIVE_BROWSER_TOOLS]),
   // SG-000135 OB-02: local configuration only; never remote.
   browser_full: Object.freeze([...DESKTOP_STRUCTURED_TOOLS, ...BROWSER_FULL_TOOLS])
