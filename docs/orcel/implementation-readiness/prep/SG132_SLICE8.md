@@ -71,9 +71,11 @@ roots could be swapped for a junction (into Orcel's state, or out of the roots) 
 opening, the worker reads where the handle really is (`GetFinalPathNameByHandleW`) and checks it again: inside the
 resolved roots, outside any `.git` folder, outside Orcel's state; on a mismatch it refuses with
 `PATH_RACE_DETECTED` before writing a byte. A file this call created is opened with delete access and removed by its
-handle (never by a name that could now point elsewhere); an existing file is left untouched. For `mkdir`, the created
-folder is opened again by name without following a reparse point and checked the same way; on a mismatch it is removed
-by its handle, which succeeds only while it is empty. Outside Windows there is no authority service, no lease and no
+handle (never by a name that could now point elsewhere); an existing file is left untouched. For `mkdir` (since the
+follow-up of residual 7), the parent folder is opened by its handle, refused if it is now a reparse point, and checked
+the same way; the new folder is created relative to that handle (`NtCreateFile` with `RootDirectory`) and its own
+handle is checked the same way; on a mismatch it is removed by that handle, which succeeds only while it is empty.
+Nothing is reopened by name. Outside Windows there is no authority service, no lease and no
 worker dispatch (the dispatcher refuses before any launch), so only the path checks exist there.
 
 ## 2. What changed
@@ -182,7 +184,7 @@ real desktop shows.
 | One MCP client uses a lease granted to another | The principal is the caller's `client_ref`; a lease bound to another client refuses before `Authorize` (and the service checks it again) | `fc_requests_the_principal_is_the_calling_clients_reference`; `fc_dispatch_the_desktop_gate_names_the_calling_client` (same binding) |
 | **SG-000132 amendment (2026-11-19):** a file write or folder creation runs without a per-call approval | By the amendment: the lease covers `write_text` and `mkdir`. What still holds: the lease's executor, client and roots; the service's audit-first `Authorize` and its record; the dispatch job; the worker's root, link, hard link and `.git` checks; the outcome record | `fc_requests_file_writes_are_lease_covered_and_ask_nothing` (no approval asked; `Authorize`, executor `filesystem`, paths and outcome present); the worker's checks: `fc_worker_tests` (slice 3) |
 | A lease-covered write inside a broad root overwrites Orcel's own state (approval ledger, trust records, audit chain, the authority's state) without a prompt | Spec 4.14, kept by the amendment: the worker refuses writes and folder creation in the authority's state folder and in every protected state root, after resolving the target; an unresolvable protected root refuses all writes | `fc_requests_file_writes_never_reach_orcel_state` (every OS); `fc_requests_the_worker_refuses_writes_into_orcel_state` (Windows, real folders, a case variant included); `fc_requests_junctions_and_short_names_into_state_are_refused` (Windows: a junction inside the roots into the state folder, and the state folder's 8.3 short name, skipped with a message on a volume without short names); fail closed without a state root: `orcel-policy` `write_roots_fail_closed_without_a_state_root` |
-| A folder inside the roots is swapped for a junction (into Orcel's state or out of the roots) after the path checks and before the open | The opened handle's final path is checked again; a mismatch is `PATH_RACE_DETECTED`, nothing is written, and a file or (empty) folder this call created is removed by its handle | `fc_requests_a_junction_swapped_in_after_the_checks_is_caught` (Windows: a real swap between the checks and the open, for a file and a folder); `fc_requests_the_opened_target_is_checked_again` (every OS, the check itself) |
+| A folder inside the roots is swapped for a junction (into Orcel's state or out of the roots) after the path checks and before the open | The opened handle's final path is checked again; a mismatch is `PATH_RACE_DETECTED`, nothing is written, and a file or (empty) folder this call created is removed by its handle | `fc_requests_a_junction_swapped_in_after_the_checks_is_caught` (Windows: a real swap between the checks and the open, for a file and for a folder's parent and an ancestor of it); `fc_requests_mkdir_creates_relative_to_the_checked_parent_handle` (Windows: the parent moved and replaced by a junction after its open; the folder is made in the held parent); `fc_requests_the_opened_target_is_checked_again` (every OS, the check itself) |
 | A program or a Git change runs without the person's fresh approval, or one approval covers two actions | `run`, `git_add`, `git_unstage`, `git_commit`, `git_branch_create` ask on every call; each approval is bound to that call's digest, which the service records; a No authorizes and runs nothing | `fc_requests_process_and_git_mutations_ask_every_call` (two rounds, every digest distinct and equal to an `Authorize` digest); `fc_dispatch_process_and_git_mutations_need_a_fresh_approval_bound_to_the_digest` |
 | The approval is an in-app control, or not SOFT, or not bound to the action | `BrokerApproval` asks orceld's broker for a SOFT, single-use prompt with the action digest, the program or repository, and a local origin; No and unavailable refuse | `fc_requests_the_windows_approval_is_soft_and_bound_to_the_digest` (scripted brokers); that the broker's SOFT prompt is the Windows dialog: `orcel-approval`'s own suites; the dialog itself on a real desktop: **UNVERIFIED (founder run)** |
 | `fc.status` grants or leaks authority | Read-only: no `Authorize`, no job, no approval; lists only desktop Full User leases this client can use (bound to it, or unbound); another client's lease is not listed | `fc_requests_status_shows_the_lease_scope_and_grants_nothing` |
@@ -214,18 +216,22 @@ real desktop shows.
    which program is behind it.
 6. **Long arguments are shortened in the dialog.** The dialog bounds its fields; the approval is bound to the digest
    over the whole operation, so a long argument list the person did not see in full is still the one that runs.
-7. **The handle re-check has its own small windows.** A folder created through a swapped junction is removed only if
-   it is still empty when the re-check fails (another writer could fill it first; it is then left, and the call is
-   still refused). The re-check of `mkdir` opens the new folder by name again; if the name was swapped back in that
-   instant, the check sees the intended place and passes while the folder was made elsewhere (an empty folder, no
-   content). The converse case: `open_created_folder` reopens the new folder by name, and
-   `FILE_FLAG_OPEN_REPARSE_POINT` covers only the last component, so a concurrent racer that moves a parent
-   junction between `create_dir` and the reopen can make the re-check see, and the cleanup delete, a different
-   folder that already existed, if it is empty (impact: one empty folder; it needs a racer running at that instant).
-   The fix is to create the child relative to the checked parent's handle (`NtCreateFile` with `RootDirectory`), a
-   later slice. A file write has neither case: it is checked and, if this call created it, removed through the one
-   handle it writes with, and an existing file is opened without delete access and never removed. Outside Windows
-   there is no re-check (no Full Control dispatch exists there).
+7. **The handle re-check has one small window left.** Since the slice 8 follow-up (branch
+   `authority/fc-mkdir-relative`), `mkdir` creates nothing by path and reopens nothing by name: it opens the checked
+   parent folder by its handle without following a reparse point at the parent's own name (and refuses one there,
+   since the path checks resolved it to a plain folder), checks where that handle really is (inside the roots,
+   outside `.git` and Orcel's state), creates the new folder relative to it (`NtCreateFile` with `RootDirectory`,
+   `FILE_CREATE`, `FILE_DIRECTORY_FILE` and `FILE_OPEN_REPARSE_POINT`), and re-checks the handle that call returns,
+   which is exactly the folder it created (`opened::make_folder`; test
+   `fc_requests_mkdir_creates_relative_to_the_checked_parent_handle`). That closes both earlier cases: a name swapped
+   back before the by-name reopen (the check passed while the folder was made elsewhere), and the converse, a racer
+   moving a parent junction between `create_dir` and the reopen so that the re-check saw, and the cleanup deleted, a
+   different empty folder that already existed. What remains: if the held parent folder itself is moved out of the
+   roots (or into Orcel's state) after its check and before the create, the new folder is made there, refused by its
+   re-check and removed by its own handle only while still empty (another writer could fill it first; it is then
+   left, and the call is still refused). A file write is unchanged: it is checked and, if this call created it,
+   removed through the one handle it writes with, and an existing file is opened without delete access and never
+   removed. Outside Windows there is no re-check (no Full Control dispatch exists there).
 8. **No MCP tool yet.** Until option B's slice 2, only a local process that writes orceld's request line can send
    these requests (the same exposure as every other local shape).
 9. Slice 4 residuals (the program between check and start, window routes, Git's bundled programs) and slice 5 and 6

@@ -1149,15 +1149,31 @@ fn fc_requests_a_junction_swapped_in_after_the_checks_is_caught() {
     opened::discard(&opened_file);
     drop(opened_file);
     assert!(!state.join("x.txt").exists(), "removed by its handle");
-    std::fs::create_dir(&folder).expect("created through the junction");
-    let opened_folder = opened::open_created_folder(&folder).expect("opened");
+    // SG132_SLICE8.md residual 7: `mkdir` opens the parent by its handle
+    // without following the junction now at its name, and refuses it;
+    // nothing is created through the swap.
     assert_eq!(
-        code(opened::recheck(&opened_folder, &resolved_roots, &protected)),
+        code(opened::make_folder(&folder, &resolved_roots, &protected)),
         Some(FailureCode::PathRaceDetected)
     );
-    opened::discard(&opened_folder);
-    drop(opened_folder);
-    assert!(!state.join("new").exists(), "removed by its handle");
+    assert!(!state.join("new").exists(), "nothing created in the state");
+    assert!(!work.join("safe-old").join("new").exists());
+    // A swap one level higher: the parent is reached through a junction
+    // at an ancestor, so its handle is in the state; refused by where it
+    // really is.
+    std::fs::create_dir_all(state.join("deep")).expect("deep");
+    std::fs::create_dir_all(work.join("safe-old").join("deep")).expect("deep");
+    let deep = creatable_with(&format!(r"{root}\safe-old\deep\new"), &roots, &protected)
+        .expect("checked while safe-old is a folder");
+    std::fs::rename(work.join("safe-old"), work.join("safe-older")).expect("rename");
+    junction(&work.join("safe-old"), &state);
+    assert_eq!(
+        code(opened::make_folder(&deep, &resolved_roots, &protected)),
+        Some(FailureCode::PathRaceDetected)
+    );
+    assert!(!state.join("deep").join("new").exists(), "nothing created");
+    std::fs::remove_dir(work.join("safe-old")).expect("junction removed");
+    std::fs::rename(work.join("safe-older"), work.join("safe-old")).expect("rename back");
     // Without a swap the same open passes the re-check.
     let plain =
         creatable_with(&format!(r"{root}\safe-old\y.txt"), &roots, &protected).expect("checked");
@@ -1166,6 +1182,94 @@ fn fc_requests_a_junction_swapped_in_after_the_checks_is_caught() {
     drop(opened_plain);
     let _ = std::fs::remove_dir(work.join("safe"));
     let _ = std::fs::remove_dir_all(base);
+}
+
+/// SG132_SLICE8.md residual 7, the converse case: once `mkdir` holds the
+/// checked parent's handle, the folder is created inside that very folder
+/// and the handle it re-checks (and would remove) is the folder it created.
+/// Moving the parent away and putting a junction at its old name after the
+/// open changes nothing: the new folder is made in the real (moved) parent,
+/// never through the junction, and a folder that already existed is never
+/// opened, checked or removed.
+#[cfg(windows)]
+#[test]
+fn fc_requests_mkdir_creates_relative_to_the_checked_parent_handle() {
+    use crate::fc_worker::{creatable_with, opened};
+    use windows_folders::{junction, scratch};
+    let base = scratch("relative");
+    let work = base.join("work");
+    let elsewhere = base.join("elsewhere");
+    std::fs::create_dir_all(work.join("parent")).expect("parent");
+    // A pre-existing empty folder outside the roots with the same name.
+    std::fs::create_dir_all(elsewhere.join("new")).expect("pre-existing");
+    let root = work.to_string_lossy().into_owned();
+    let roots = vec![root.clone()];
+    let resolved_roots = vec![std::fs::canonicalize(&work).expect("root")];
+    let folder = creatable_with(&format!(r"{root}\parent\new"), &roots, &[]).expect("checked");
+    let parent =
+        opened::open_checked_parent(folder.parent().expect("a parent"), &resolved_roots, &[])
+            .expect("the parent passes");
+    // The racer: the parent moves within the roots and a junction to
+    // `elsewhere` takes its name.
+    std::fs::rename(work.join("parent"), work.join("moved")).expect("rename");
+    junction(&work.join("parent"), &elsewhere);
+    let created = opened::create_folder_in(&parent, folder.file_name().expect("a name"))
+        .expect("created in the held parent");
+    opened::recheck(&created, &resolved_roots, &[]).expect("where the held parent is");
+    drop(created);
+    assert!(
+        work.join("moved").join("new").is_dir(),
+        "made in the real parent"
+    );
+    assert!(
+        elsewhere.join("new").is_dir(),
+        "the other folder is untouched"
+    );
+    // An existing name is never opened: FILE_CREATE refuses it.
+    let again =
+        opened::create_folder_in(&parent, folder.file_name().expect("a name")).expect_err("exists");
+    assert_eq!(again.kind(), std::io::ErrorKind::AlreadyExists);
+    drop(parent);
+    // Through `perform`: the ordinary case still works and an existing
+    // folder is refused.
+    std::fs::remove_dir(work.join("parent")).expect("junction removed");
+    std::fs::create_dir(work.join("plain")).expect("plain");
+    let made = format!(r"{root}\plain\made");
+    crate::fc_worker::opened::make_folder(
+        &creatable_with(&made, &roots, &[]).expect("checked"),
+        &resolved_roots,
+        &[],
+    )
+    .expect("made");
+    assert!(work.join("plain").join("made").is_dir());
+    assert!(crate::fc_worker::opened::make_folder(
+        &creatable_with(&made, &roots, &[]).expect("checked"),
+        &resolved_roots,
+        &[],
+    )
+    .is_err());
+    let _ = std::fs::remove_dir_all(base);
+}
+
+/// SG132_SLICE8.md residual 7: no name-based reopen of a created folder is
+/// left in the worker. The source of `fc_worker.rs` names neither the
+/// removed reopen helper nor a `create_dir` on the Windows path; `mkdir`
+/// goes through `opened::make_folder` only.
+#[test]
+fn fc_requests_mkdir_has_no_name_based_reopen() {
+    let source = include_str!("fc_worker.rs");
+    let removed = ["open_", "created_", "folder"].concat();
+    assert!(!source.contains(&removed), "the name-based reopen is gone");
+    let mkdir = source
+        .split("WorkerOp::Mkdir { path } =>")
+        .nth(1)
+        .and_then(|rest| rest.split("WorkerOp::Run").next())
+        .expect("the mkdir arm");
+    let compact: String = mkdir.chars().filter(|c| !c.is_whitespace()).collect();
+    assert!(compact.contains("#[cfg(windows)]opened::make_folder("));
+    let create_dir = ["std::fs::", "create_dir("].concat();
+    assert_eq!(compact.matches(&create_dir).count(), 1);
+    assert!(compact.contains(&["#[cfg(not(windows))]", &create_dir].concat()));
 }
 
 /// A junction inside the roots that points into Orcel's state, and an 8.3
