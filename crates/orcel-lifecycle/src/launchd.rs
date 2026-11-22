@@ -20,6 +20,12 @@
 //! effect on the hosted runner (the log came out 0644); the key stays as well.
 //! Like `UMask=0077` on Linux, it applies to everything orceld creates.
 //!
+//! The log is bounded: when it is over [`MAX_STDERR_LOG`] it is moved to
+//! `orceld-agent.log.1` (replacing an older one), both when the agent is
+//! written ([`rotate_log`], at install, update and rollback) and by the shell
+//! each time launchd starts `orceld`. The shell's own standard error goes to
+//! `/dev/null` first, so nothing it might print reaches the socket.
+//!
 //! The plist is generated here, from pure inputs, so its content is tested on
 //! every OS. Writing, loading and unloading it is macOS only
 //! ([`crate::unix_install`]), and nothing calls that on a person's Mac until
@@ -37,12 +43,46 @@ pub const LABEL: &str = "ai.orcel.orceld";
 pub const SOCKET_FILE: &str = "orceld.sock";
 /// `sun_path` holds 104 bytes on macOS, the terminating NUL included.
 const MAX_SOCKET_PATH: usize = 103;
-/// The shell, by absolute path, and its script: standard error to the log
-/// file (`$1`) with an owner-only umask, then become `orceld` (`$0`).
+/// The shell, by absolute path, and its script: an owner-only umask, the
+/// shell's own standard error to `/dev/null`, the log (`$1`) moved to
+/// `$1.1` when it is over 1 MiB, standard error to the log, then become
+/// `orceld` (`$0`). `stat` and `mv` by absolute path.
 const SHELL: &str = "/bin/sh";
-const SHELL_SCRIPT: &str = r#"umask 077; exec 2>>"$1"; exec "$0""#;
+const SHELL_SCRIPT: &str = r#"umask 077; exec 2>/dev/null; if [ "$(/usr/bin/stat -f %z "$1")" -gt 1048576 ]; then /bin/mv -f "$1" "$1.1"; fi; exec 2>>"$1"; exec "$0""#;
 /// The agent's standard error log inside the install's `logs` folder.
 pub const STDERR_LOG: &str = "orceld-agent.log";
+/// The size over which the log is moved aside (the shell script's 1048576).
+pub const MAX_STDERR_LOG: u64 = 1024 * 1024;
+
+/// Moves `log` to `<log>.1`, replacing an older one, when it is over `limit`
+/// bytes; returns whether it did. A missing log is nothing to do. Only a
+/// regular file is moved: anything else there is an error, left in place.
+pub fn rotate_log(log: &Path, limit: u64) -> Result<bool, LifecycleError> {
+    let metadata = match std::fs::symlink_metadata(log) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(LifecycleError::io(
+                format!("inspect {}", log.display()),
+                error,
+            ))
+        }
+    };
+    if !metadata.is_file() {
+        return Err(LifecycleError::state(format!(
+            "{} is not a regular file and was left in place",
+            log.display()
+        )));
+    }
+    if metadata.len() <= limit {
+        return Ok(false);
+    }
+    let mut aside = log.as_os_str().to_owned();
+    aside.push(".1");
+    std::fs::rename(log, PathBuf::from(&aside))
+        .map_err(|error| LifecycleError::io(format!("rotate {}", log.display()), error))?;
+    Ok(true)
+}
 
 /// What one agent is: its label, the `orceld` it starts, its socket, the
 /// file its standard error goes to, and the environment `orceld` gets (the
@@ -246,7 +286,7 @@ mod tests {
         for needle in [
             "<key>Label</key>\n  <string>ai.orcel.orceld</string>",
             // Standard error to the log file, never the socket; then orceld.
-            "<array>\n    <string>/bin/sh</string>\n    <string>-c</string>\n    <string>umask 077; exec 2&gt;&gt;&quot;$1&quot;; exec &quot;$0&quot;</string>\n    <string>/Users/ana/Library/Application Support/Orcel/versions/0.2.0/orceld</string>\n    <string>/Users/ana/Library/Application Support/Orcel/logs/orceld-agent.log</string>\n  </array>",
+            "<array>\n    <string>/bin/sh</string>\n    <string>-c</string>\n    <string>umask 077; exec 2&gt;/dev/null; if [ &quot;$(/usr/bin/stat -f %z &quot;$1&quot;)&quot; -gt 1048576 ]; then /bin/mv -f &quot;$1&quot; &quot;$1.1&quot;; fi; exec 2&gt;&gt;&quot;$1&quot;; exec &quot;$0&quot;</string>\n    <string>/Users/ana/Library/Application Support/Orcel/versions/0.2.0/orceld</string>\n    <string>/Users/ana/Library/Application Support/Orcel/logs/orceld-agent.log</string>\n  </array>",
             "<key>inetdCompatibility</key>\n  <dict>\n    <key>Wait</key>\n    <false/>",
             "<key>SockFamily</key>\n      <string>Unix</string>",
             "<key>SockPathName</key>\n      <string>/var/folders/ab/xyz/T/orcel/orceld.sock</string>",
@@ -342,6 +382,34 @@ mod tests {
             ..config
         });
         assert!(!plain.contains_key("ORCEL_APPROVAL_PREVIEWS"));
+    }
+
+    #[test]
+    fn the_shell_bound_matches_the_rotation_limit() {
+        assert!(SHELL_SCRIPT.contains(&format!("-gt {MAX_STDERR_LOG} ]")));
+        // Nothing the shell prints can reach the socket: its stderr goes to
+        // /dev/null before anything else runs.
+        let quiet = SHELL_SCRIPT.find("exec 2>/dev/null").unwrap();
+        assert!(quiet < SHELL_SCRIPT.find("if [").unwrap());
+    }
+
+    #[test]
+    fn the_log_is_moved_aside_only_when_over_the_limit() {
+        let dir = crate::test_support::temp_dir("launchd-rotate");
+        let log = dir.join(STDERR_LOG);
+        assert!(!rotate_log(&log, 8).unwrap(), "a missing log");
+        std::fs::write(&log, b"12345678").unwrap();
+        assert!(!rotate_log(&log, 8).unwrap(), "at the limit");
+        std::fs::write(dir.join("orceld-agent.log.1"), b"older").unwrap();
+        std::fs::write(&log, b"123456789").unwrap();
+        assert!(rotate_log(&log, 8).unwrap());
+        assert!(!log.exists());
+        assert_eq!(
+            std::fs::read(dir.join("orceld-agent.log.1")).unwrap(),
+            b"123456789"
+        );
+        std::fs::create_dir(&log).unwrap();
+        assert!(rotate_log(&log, 0).is_err(), "a folder is left in place");
     }
 
     #[test]

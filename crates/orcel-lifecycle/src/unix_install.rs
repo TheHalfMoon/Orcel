@@ -303,12 +303,14 @@ mod macos {
                 return Ok(());
             };
             let config = crate::config::Config::load(layout)?;
+            let stderr_log = layout.logs_dir().join(launchd::STDERR_LOG);
+            launchd::rotate_log(&stderr_log, launchd::MAX_STDERR_LOG)?;
             let mut environment = launchd::agent_environment(&config);
             environment.extend(extra);
             let spec = AgentSpec {
                 label: label.clone(),
                 program: orceld.to_path_buf(),
-                stderr_log: layout.logs_dir().join(launchd::STDERR_LOG),
+                stderr_log: stderr_log.clone(),
                 socket: socket.clone(),
                 environment,
             };

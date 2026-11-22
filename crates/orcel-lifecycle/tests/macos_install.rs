@@ -429,6 +429,12 @@ fn the_launch_agent_starts_orceld_per_connection_and_uninstall_removes_it() {
     assert_eq!(mode(&socket), 0o600);
     assert_eq!(mode(socket.parent().unwrap()), 0o700);
 
+    // A log over the bound is moved aside when launchd next starts orceld.
+    let log = root.join("logs").join("orceld-agent.log");
+    let oversized = orcel_lifecycle::launchd::MAX_STDERR_LOG as usize + 1;
+    fs::write(&log, vec![b'x'; oversized]).unwrap();
+    fs::set_permissions(&log, fs::Permissions::from_mode(0o600)).unwrap();
+
     for _ in 0..2 {
         let response = system_status(&socket);
         assert_eq!(response["ok"], true, "{response}");
@@ -437,7 +443,9 @@ fn the_launch_agent_starts_orceld_per_connection_and_uninstall_removes_it() {
     }
     // orceld's standard error (its readiness line) went to the log file, not
     // the connection: launchd's inetd mode puts stderr on the socket too.
-    let log = root.join("logs").join("orceld-agent.log");
+    let rotated = fs::metadata(root.join("logs").join("orceld-agent.log.1"))
+        .expect("the oversized log was moved aside");
+    assert_eq!(rotated.len() as usize, oversized);
     let logged = fs::read_to_string(&log).expect("the agent's stderr log");
     assert_eq!(
         logged.matches("orceld ready:").count(),
@@ -457,7 +465,7 @@ fn the_launch_agent_starts_orceld_per_connection_and_uninstall_removes_it() {
         String::from_utf8_lossy(&running.stdout)
     );
     println!(
-        "MAC-M1-07-EVIDENCE agent loaded=true domain=gui label={label} socket_mode=600 socket_dir_mode=700 plist_mode=600 answered=2 stderr_to_log=2 lingering=0"
+        "MAC-M1-07-EVIDENCE agent loaded=true domain=gui label={label} socket_mode=600 socket_dir_mode=700 plist_mode=600 answered=2 stderr_to_log=2 rotated_on_start=true lingering=0"
     );
 
     let report = installer
@@ -468,4 +476,122 @@ fn the_launch_agent_starts_orceld_per_connection_and_uninstall_removes_it() {
     assert!(!agent_loaded(&label), "the agent is still loaded");
     assert!(fs::symlink_metadata(&socket).is_err(), "the socket remains");
     println!("MAC-M1-07-EVIDENCE bootout loaded=false plist_left=false socket_left=false");
+}
+
+/// MAC-M1-07 follow-up, report only: does launchd's `StandardErrorPath`
+/// keep standard error off the connection under `inetdCompatibility`, and
+/// does the plist's `Umask` apply to the file it opens? A plain `orceld`
+/// agent (no shell) under its own label answers one `system.status`; the
+/// outcome is printed as `MAC-M1-07-EXPERIMENT`, and only cleanup failures
+/// fail the test. The shipped agent keeps the shell until this says
+/// otherwise.
+#[test]
+fn experiment_standard_error_path_under_inetd_compatibility() {
+    if std::env::var_os("ORCEL_MACOS_ORCELD").is_none() {
+        eprintln!("MAC-M1-07 experiment skipped: needs the real orceld");
+        return;
+    }
+    let (home, root) = home_and_root("stderr-path");
+    let workspace = home.join("workspace");
+    fs::create_dir_all(&workspace).unwrap();
+    fs::create_dir_all(&root).unwrap();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+    let orceld = root.join("orceld");
+    fs::write(&orceld, orceld_bytes()).unwrap();
+    fs::set_permissions(&orceld, fs::Permissions::from_mode(0o700)).unwrap();
+    let log = root.join("stderr.log");
+    let socket_dir = unique("e").join("orcel");
+    fs::create_dir_all(&socket_dir).unwrap();
+    fs::set_permissions(&socket_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    let socket = socket_dir.join("orceld.sock");
+    let label = format!("ai.orcel.orceld.exp{}", std::process::id());
+    let _guard = Bootout(label.clone());
+    let workspaces = serde_json::json!([{ "id": "ci", "root": workspace }]).to_string();
+    let escape = |text: &str| {
+        text.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+    };
+    let plist = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>{label}</string>
+  <key>ProgramArguments</key><array><string>{orceld}</string></array>
+  <key>inetdCompatibility</key><dict><key>Wait</key><false/></dict>
+  <key>Sockets</key><dict><key>Listeners</key><dict>
+    <key>SockFamily</key><string>Unix</string>
+    <key>SockType</key><string>stream</string>
+    <key>SockPathName</key><string>{socket}</string>
+    <key>SockPathMode</key><integer>384</integer>
+  </dict></dict>
+  <key>StandardErrorPath</key><string>{log}</string>
+  <key>EnvironmentVariables</key><dict>
+    <key>HOME</key><string>{home}</string>
+    <key>ORCEL_WORKSPACES_JSON</key><string>{workspaces}</string>
+  </dict>
+  <key>Umask</key><integer>63</integer>
+</dict>
+</plist>
+"#,
+        orceld = escape(orceld.to_str().unwrap()),
+        socket = escape(socket.to_str().unwrap()),
+        log = escape(log.to_str().unwrap()),
+        home = escape(home.to_str().unwrap()),
+        workspaces = escape(&workspaces),
+    );
+    let plist_path = home.join(format!("{label}.plist"));
+    fs::write(&plist_path, plist).unwrap();
+    let uid = orcel_platform::session::effective_uid().unwrap();
+    let bootstrap = std::process::Command::new("/bin/launchctl")
+        .args([
+            "bootstrap",
+            &format!("gui/{uid}"),
+            plist_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        bootstrap.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bootstrap.stderr)
+    );
+    let answer = {
+        use std::io::{BufRead, BufReader, Write};
+        let mut stream = std::os::unix::net::UnixStream::connect(&socket).expect("connect");
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(60)))
+            .unwrap();
+        let request = serde_json::json!({
+            "version": 1, "request_id": "exp", "client_session_id": "exp",
+            "workspace_id": "ci", "capability": "system.status", "operation": "get",
+            "target": null, "arguments": {},
+        });
+        stream
+            .write_all(format!("{request}{}", '\n').as_bytes())
+            .unwrap();
+        let mut line = String::new();
+        let _ = BufReader::new(stream).read_line(&mut line);
+        line
+    };
+    let socket_clean = serde_json::from_str::<serde_json::Value>(&answer)
+        .map(|value| value["ok"] == true)
+        .unwrap_or(false);
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    let logged = fs::read_to_string(&log).unwrap_or_default();
+    let log_mode = fs::symlink_metadata(&log)
+        .map(|_| format!("{:o}", mode(&log)))
+        .unwrap_or_else(|_| "absent".to_owned());
+    println!(
+        "MAC-M1-07-EXPERIMENT standard_error_path socket_clean={socket_clean} readiness_in_file={} log_mode={log_mode} first_line={:?}",
+        logged.contains("orceld ready:"),
+        answer.chars().take(60).collect::<String>()
+    );
+    let bootout = std::process::Command::new("/bin/launchctl")
+        .args(["bootout", &format!("gui/{uid}/{label}")])
+        .output()
+        .unwrap();
+    assert!(bootout.status.success() || !agent_loaded(&label));
 }
