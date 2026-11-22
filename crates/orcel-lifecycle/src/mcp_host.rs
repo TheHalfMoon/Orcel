@@ -181,7 +181,9 @@ mod tests {
         }
         .save(&layout)
         .unwrap();
-        let exe = layout.version_dir(version).join("orcel-mcp-host.exe");
+        let exe = layout
+            .version_dir(version)
+            .join(crate::per_os::mcp_host_file_name());
         (layout, exe)
     }
 
@@ -292,9 +294,15 @@ mod tests {
     fn inactive_version_foreign_location_and_old_node_fail_closed() {
         let platform = FakePlatform::default();
         let (layout, _) = install("0.2.0", &platform);
-        let stale = layout.version_dir("0.1.0").join("orcel-mcp-host.exe");
+        let stale = layout
+            .version_dir("0.1.0")
+            .join(crate::per_os::mcp_host_file_name());
         assert!(resolve(&stale, &platform).is_err());
-        assert!(resolve(&std::env::temp_dir().join("orcel-mcp-host.exe"), &platform).is_err());
+        assert!(resolve(
+            &std::env::temp_dir().join(crate::per_os::mcp_host_file_name()),
+            &platform
+        )
+        .is_err());
         let (_, exe) = install("0.2.0", &platform);
         let old_node = FakePlatform {
             node_major: 18,

@@ -15,12 +15,14 @@ pub const INSTALL_SCHEMA: &str = "orcel-install-v1";
 /// (`%USERPROFILE%\.orcel` on Windows).
 ///
 /// On Linux and macOS the same root is the XDG or Application Support state
-/// root, and only the state paths apply there (`state_dir`, `config_file`,
-/// `logs_dir`, the ledgers). The payload paths (`bin_dir`, `versions_dir`,
-/// `current.json`, `install.json`) are Windows-only: on other OSes the
-/// host platform refuses `install`, `update`, `rollback` and `uninstall`
-/// before any of them is created or removed, and `orceld` comes from the
-/// package or tarball location instead (`commands::local_orceld`, XP-17).
+/// root. On Linux only the state paths apply there (`state_dir`,
+/// `config_file`, `logs_dir`, the ledgers). On macOS the payload paths
+/// (`bin_dir`, `versions_dir`, `current.json`, `install.json`) are the same
+/// per-user install as on Windows (MAC-M1-03, [`crate::unix_install`]), but
+/// `host_platform()` still refuses `install`, `update`, `rollback` and
+/// `uninstall` there until the macOS M1 grain is activated. Until then, and on
+/// Linux, `orceld` comes from the package or tarball location instead
+/// (`commands::local_orceld`, XP-17).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layout {
     pub root: PathBuf,
@@ -54,7 +56,7 @@ impl Layout {
         stores::BIN.path(&self.root)
     }
     pub fn bin_cli(&self) -> PathBuf {
-        self.bin_dir().join("orcel.exe")
+        self.bin_dir().join(crate::per_os::cli_file_name())
     }
     pub fn versions_dir(&self) -> PathBuf {
         stores::VERSIONS.path(&self.root)

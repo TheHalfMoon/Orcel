@@ -22,10 +22,25 @@ const MAX_RELATIVE_PATH: usize = 200;
 /// versions already installed, so a file added here would stop a rollback to a release
 /// without it: the Windows app and the contained-tier helper stay out for that reason,
 /// and release qualification requires them in a new package instead.
+///
+/// The three binaries carry this OS's names ([`crate::per_os`]): `.exe` on
+/// Windows (unchanged), none on macOS and Linux (MAC-M1-03). Every binary the
+/// CLI launches from an install is one of these, so it is always hash-checked.
+#[cfg(windows)]
 pub const REQUIRED_FILES: &[&str] = &[
     "orcel.exe",
     "orcel-mcp-host.exe",
     "orceld.exe",
+    "app/orcel-mcp/package.json",
+    "app/orcel-mcp/dist/index.js",
+    "LICENSE",
+];
+/// See the Windows list above; the same files with this OS's binary names.
+#[cfg(not(windows))]
+pub const REQUIRED_FILES: &[&str] = &[
+    "orcel",
+    "orcel-mcp-host",
+    "orceld",
     "app/orcel-mcp/package.json",
     "app/orcel-mcp/dist/index.js",
     "LICENSE",
@@ -158,6 +173,18 @@ pub fn verify_payload(dir: &Path, manifest: &Manifest) -> Result<(), LifecycleEr
                 "payload entry is not a regular file: {}",
                 file.path
             )));
+        }
+        // MAC-M1-03: on Linux and macOS a payload file with another hard link
+        // could be changed through a name outside the install; refuse it.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if metadata.nlink() != 1 {
+                return Err(LifecycleError::manifest(format!(
+                    "payload file has another hard link: {}",
+                    file.path
+                )));
+            }
         }
         if metadata.len() != file.size {
             return Err(LifecycleError::manifest(format!(
@@ -329,9 +356,42 @@ mod tests {
     #[test]
     fn tampered_payload_fails_closed() {
         let dir = release_dir("0.2.0");
-        fs::write(dir.join("orceld.exe"), b"tampered-orceld!").unwrap();
+        fs::write(
+            dir.join(crate::per_os::orceld_file_name()),
+            b"tampered-orceld!",
+        )
+        .unwrap();
         let error = verify_release(&dir).unwrap_err();
         assert!(error.message.contains("mismatch"), "{}", error.message);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// The Windows payload names are the exact earlier names (MAC-M1-03 pin).
+    #[cfg(windows)]
+    #[test]
+    fn windows_required_files_are_unchanged() {
+        assert_eq!(
+            REQUIRED_FILES,
+            &[
+                "orcel.exe",
+                "orcel-mcp-host.exe",
+                "orceld.exe",
+                "app/orcel-mcp/package.json",
+                "app/orcel-mcp/dist/index.js",
+                "LICENSE",
+            ]
+        );
+    }
+
+    /// MAC-M1-03: a payload file with a second hard link is refused on Unix.
+    #[cfg(unix)]
+    #[test]
+    fn a_hard_linked_payload_file_fails_closed() {
+        let dir = release_dir("0.2.0");
+        let outside = temp_dir("manifest-hardlink").join("orceld-alias");
+        fs::hard_link(dir.join(crate::per_os::orceld_file_name()), &outside).unwrap();
+        let error = verify_release(&dir).unwrap_err();
+        assert!(error.message.contains("hard link"), "{}", error.message);
         let _ = fs::remove_dir_all(dir);
     }
 

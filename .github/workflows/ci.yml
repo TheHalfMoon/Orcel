@@ -289,6 +289,26 @@ jobs:
           kill "$sway_pid" || true
           tail -n 20 "$RUNNER_TEMP/sway.log"
           exit "$status"
+      # MAC-M1-03: the per-user install under ~/Library/Application Support/Orcel
+      # through the real Installer and MacosPlatform, with the real orcel,
+      # orcel-mcp-host and orceld: install, verify, the installed CLI runs,
+      # uninstall; tamper, unlisted, link, hard link, permission and
+      # admin-writable-ancestor refusals. Each test uses its own HOME. The test
+      # fails instead of skipping when ORCEL_REQUIRE_MACOS_INSTALL is set.
+      - name: macOS per-user install round trip and refusals (MAC-M1-03)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          ORCEL_REQUIRE_MACOS_INSTALL: "1"
+        run: |
+          set -euo pipefail
+          cargo build -p orceld
+          export ORCEL_MACOS_ORCELD="$PWD/target/debug/orceld"
+          node --version
+          cargo test -p orcel-lifecycle --test macos_install -- --nocapture --test-threads=1 2>&1 | tee "$RUNNER_TEMP/mac-m1-03.log"
+          for line in "install root=" "uninstall removed=" "refused tampered=true" "refused symlink=true" "refused group_writable_file=true" "refused admin_writable_ancestor=true"; do
+            grep -q "MAC-M1-03-EVIDENCE $line" "$RUNNER_TEMP/mac-m1-03.log" || { echo "::error::missing MAC-M1-03-EVIDENCE $line" >&2; exit 1; }
+          done
       - name: Live clipboard roundtrip (macOS)
         if: runner.os == 'macOS'
         env:

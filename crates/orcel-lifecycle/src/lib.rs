@@ -28,6 +28,8 @@ pub mod runtime;
 #[cfg(windows)]
 pub mod start_menu;
 pub mod tunnel_route;
+#[cfg(unix)]
+pub mod unix_install;
 pub mod update;
 pub mod version;
 

@@ -296,7 +296,7 @@ pub fn tunnel_config(
         runtime_key_file: layout.runtime_key_file(),
         mcp_command: layout
             .version_dir(active_version)
-            .join("orcel-mcp-host.exe"),
+            .join(crate::per_os::mcp_host_file_name()),
         health_url_file: layout.health_url_file(),
         workspace_roots: config
             .workspaces
