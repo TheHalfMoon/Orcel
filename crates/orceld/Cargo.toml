@@ -74,6 +74,11 @@ libc = "0.2"
 # SDDL), Storage_FileSystem (pipe open flags, ReadFile/WriteFile), System_IO
 # (overlapped I/O with timeouts) and System_Pipes. Same crate and version.
 windows-sys = { version = "0.52", features = [
+  # SG132_SLICE8.md residual 7: fc-worker `mkdir` creates the folder relative
+  # to its checked parent's handle with ntdll's NtCreateFile (RootDirectory),
+  # so the handle it re-checks is exactly the folder it created.
+  "Wdk_Foundation",
+  "Wdk_Storage_FileSystem",
   "Win32_Foundation",
   "Win32_Security",
   "Win32_Security_Authorization",
@@ -88,6 +93,7 @@ windows-sys = { version = "0.52", features = [
   # IsProcessInJob. tests/ob04_shadow_scan.rs keeps every input, focus,
   # foreground and clipboard mutation out of all of orceld's sources.
   "Win32_System_JobObjects",
+  "Win32_System_Kernel",
   "Win32_System_SystemInformation",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_WindowsAndMessaging",

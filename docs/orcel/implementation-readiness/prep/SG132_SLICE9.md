@@ -103,7 +103,8 @@ Test names: `apps/orcel-mcp/src/full-control.test.ts` unless stated.
 1. Founder runs (slice 8 next step 2), now through a real MCP client: `fc_status`, then a lease granted to its
    reference (`orcel full-control grant --client <client_ref> --executors filesystem,shell_process --root <folder>
    --shells`), a write without a prompt, a program run and a Git commit with the Windows dialog.
-2. Slice 8's remaining steps (the `mkdir` re-check relative to the parent handle; slice 6 steps).
+2. Slice 8's remaining steps (slice 6 steps). The `mkdir` re-check relative to the parent handle is done in the
+   slice 8 follow-up (branch `authority/fc-mkdir-relative`; [SG132_SLICE8.md](SG132_SLICE8.md) residual 7).
 
 ## Tests
 

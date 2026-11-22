@@ -458,14 +458,28 @@ pub(crate) mod opened {
     use super::{check_final_path, failure};
     use orcel_contracts::FailureCode;
     use orcel_provider_fs::ProviderError;
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
     use std::os::windows::fs::OpenOptionsExt;
-    use std::os::windows::io::AsRawHandle;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
     use std::path::{Path, PathBuf};
-    use windows_sys::Win32::Foundation::{GENERIC_WRITE, HANDLE};
-    use windows_sys::Win32::Storage::FileSystem::{
-        FileDispositionInfo, SetFileInformationByHandle, DELETE, FILE_DISPOSITION_INFO,
-        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
+    use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
+    use windows_sys::Wdk::Storage::FileSystem::{
+        NtCreateFile, FILE_CREATE, FILE_DIRECTORY_FILE, FILE_OPEN_REPARSE_POINT,
+        FILE_SYNCHRONOUS_IO_NONALERT,
     };
+    use windows_sys::Win32::Foundation::{
+        RtlNtStatusToDosError, GENERIC_WRITE, HANDLE, UNICODE_STRING,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileDispositionInfo, GetFileInformationByHandle, SetFileInformationByHandle,
+        BY_HANDLE_FILE_INFORMATION, DELETE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL,
+        FILE_ATTRIBUTE_REPARSE_POINT, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, SYNCHRONIZE,
+    };
+    use windows_sys::Win32::System::Kernel::OBJ_CASE_INSENSITIVE;
+    use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
 
     /// The access a write open asks for: write and read-attributes (the
     /// link count and final path checks) always; delete only when this call
@@ -514,13 +528,141 @@ pub(crate) mod opened {
         }
     }
 
-    /// The folder this call just created, opened by its name without
-    /// following a reparse point, with delete access.
-    pub(crate) fn open_created_folder(resolved: &Path) -> std::io::Result<std::fs::File> {
-        std::fs::OpenOptions::new()
-            .access_mode(DELETE | FILE_READ_ATTRIBUTES)
+    /// SG132_SLICE8.md residual 7: the folder `mkdir` makes, created
+    /// relative to its checked parent's handle, so the handle re-checked is
+    /// exactly the folder this call created; nothing is reopened by name.
+    /// The parent is opened without following a reparse point at its own
+    /// name and refused if it is one (the path checks resolved it to a
+    /// plain folder, so a reparse point there now is a swap); where the
+    /// parent really is, by its handle, is checked like any write target.
+    /// The new folder is then checked by its handle and, if it is not where
+    /// it should be, removed by that handle while empty.
+    pub(crate) fn make_folder(
+        resolved: &Path,
+        roots: &[PathBuf],
+        protected: &[PathBuf],
+    ) -> Result<(), ProviderError> {
+        let (Some(parent), Some(name)) = (resolved.parent(), resolved.file_name()) else {
+            return Err(failure(
+                FailureCode::InvalidRequest,
+                "the path names no entry to create",
+            ));
+        };
+        let parent = open_checked_parent(parent, roots, protected)?;
+        let folder = create_folder_in(&parent, name)
+            .map_err(|error| super::io_failure("create the folder", &error))?;
+        if let Err(error) = recheck(&folder, roots, protected) {
+            discard(&folder);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// The parent folder of a folder to create, by its handle: not a
+    /// reparse point at its own name, a folder, and really inside the roots
+    /// and outside `.git` and Orcel's state ([`recheck`]).
+    pub(crate) fn open_checked_parent(
+        parent: &Path,
+        roots: &[PathBuf],
+        protected: &[PathBuf],
+    ) -> Result<std::fs::File, ProviderError> {
+        let folder = std::fs::OpenOptions::new()
+            .access_mode(FILE_READ_ATTRIBUTES | SYNCHRONIZE)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
-            .open(resolved)
+            .open(parent)
+            .map_err(|error| super::io_failure("open the parent folder", &error))?;
+        // SAFETY: a zeroed BY_HANDLE_FILE_INFORMATION is a valid
+        // out-parameter.
+        let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+        // SAFETY: an open handle and a live out-parameter.
+        if unsafe { GetFileInformationByHandle(folder.as_raw_handle() as HANDLE, &mut info) } == 0 {
+            return Err(failure(
+                FailureCode::PathRaceDetected,
+                format!(
+                    "what the parent folder is could not be read: {}",
+                    std::io::Error::last_os_error()
+                ),
+            ));
+        }
+        if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+            || info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0
+        {
+            return Err(failure(
+                FailureCode::PathRaceDetected,
+                "the parent is now a link, a junction or not a folder; it changed after the checks",
+            ));
+        }
+        recheck(&folder, roots, protected)?;
+        Ok(folder)
+    }
+
+    /// Creates the folder `name` inside the folder `parent` is open on
+    /// (`NtCreateFile` with `RootDirectory` and `FILE_CREATE`: it never
+    /// opens an existing entry and never follows a reparse point), and
+    /// returns the new folder's handle, with delete access.
+    pub(crate) fn create_folder_in(
+        parent: &std::fs::File,
+        name: &OsStr,
+    ) -> std::io::Result<std::fs::File> {
+        let mut wide: Vec<u16> = name.encode_wide().collect();
+        if wide.is_empty()
+            || wide
+                .iter()
+                .any(|&unit| unit == 0 || unit == u16::from(b'\\') || unit == u16::from(b'/'))
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "the name is not one plain name",
+            ));
+        }
+        let bytes = u16::try_from(wide.len() * 2).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "the name is too long")
+        })?;
+        let object_name = UNICODE_STRING {
+            Length: bytes,
+            MaximumLength: bytes,
+            Buffer: wide.as_mut_ptr(),
+        };
+        let attributes = OBJECT_ATTRIBUTES {
+            Length: std::mem::size_of::<OBJECT_ATTRIBUTES>() as u32,
+            RootDirectory: parent.as_raw_handle() as HANDLE,
+            ObjectName: &object_name,
+            Attributes: OBJ_CASE_INSENSITIVE as u32,
+            SecurityDescriptor: std::ptr::null(),
+            SecurityQualityOfService: std::ptr::null(),
+        };
+        let mut handle: HANDLE = 0;
+        // SAFETY: a zeroed IO_STATUS_BLOCK is a valid out-parameter.
+        let mut status_block: IO_STATUS_BLOCK = unsafe { std::mem::zeroed() };
+        // SAFETY: every pointer is live for the call: the out handle, the
+        // attributes (naming `wide` through `object_name`, and the live
+        // parent handle) and the status block; no allocation size and no
+        // extended attributes.
+        let status = unsafe {
+            NtCreateFile(
+                &mut handle,
+                DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+                &attributes,
+                &mut status_block,
+                std::ptr::null(),
+                FILE_ATTRIBUTE_NORMAL,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                FILE_CREATE,
+                FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+                std::ptr::null(),
+                0,
+            )
+        };
+        if status < 0 {
+            // SAFETY: a plain conversion of a status code.
+            let code = unsafe { RtlNtStatusToDosError(status) };
+            return Err(std::io::Error::from_raw_os_error(code as i32));
+        }
+        // SAFETY: NtCreateFile succeeded, so `handle` is a new handle that
+        // nothing else owns.
+        Ok(std::fs::File::from(unsafe {
+            OwnedHandle::from_raw_handle(handle as _)
+        }))
     }
 
     /// [`check_final_path`] for an open handle.
@@ -808,24 +950,15 @@ pub(crate) fn perform(op: &WorkerOp, roots: &[String]) -> Result<Value, Provider
         WorkerOp::Mkdir { path } => {
             let protected = protected_write_roots()?;
             let resolved = creatable_with(path, roots, &protected)?;
+            // Created relative to the checked parent's handle and checked
+            // by its own handle (SG132_SLICE8.md residual 7); a folder that
+            // is not where it should be is removed (while empty) and
+            // refused.
+            #[cfg(windows)]
+            opened::make_folder(&resolved, &resolved_roots(roots), &protected)?;
+            #[cfg(not(windows))]
             std::fs::create_dir(&resolved)
                 .map_err(|error| io_failure("create the folder", &error))?;
-            // Where the new folder really is, by its handle; a folder
-            // created through a swapped junction is removed (while empty)
-            // and refused.
-            #[cfg(windows)]
-            {
-                let folder = opened::open_created_folder(&resolved).map_err(|error| {
-                    failure(
-                        FailureCode::PathRaceDetected,
-                        format!("the created folder could not be opened again: {error}"),
-                    )
-                })?;
-                if let Err(error) = opened::recheck(&folder, &resolved_roots(roots), &protected) {
-                    opened::discard(&folder);
-                    return Err(error);
-                }
-            }
             Ok(json!({ "created": true }))
         }
         WorkerOp::Run {
