@@ -307,8 +307,9 @@ those. Orcel itself stays public.
    `verified` means, so they need adopting first. Then #438: a browser loop on CI shows about 40 s of slowdown during a
    `StorSvc` or VSS burst after a Defender update, in 3 of 3 runs, gone in the 2 runs with `StorSvc`
    stopped and the update running, but with no navigation timeout in any of them, so its link to
-   this issue is unproven. Compare `MACHINE` lines at the next real timeout. Don't change Windows
-   services on a person's machine for this. Then #649 when its evidence first prints, #653 by comparing supervisor logs if it recurs,
+   this issue is unproven. The Node job now stops `StorSvc` on its GitHub-hosted Windows runner, a
+   mitigation under test, and samples disk latency; compare `MACHINE` lines at the next real timeout.
+   Don't change Windows services on a person's machine for this. Then #649 when its evidence first prints, #653 by comparing supervisor logs if it recurs,
    and #655 (uninstall's lists miss some state). A cgroup the engine cannot leave stays open: B9c shows Landlock alone
    doesn't do it (an inherited descriptor, `clone3` and the user bus all get past it),
    and refusing `clone3` needs a real engine to test against, which waits on activation.

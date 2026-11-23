@@ -1203,6 +1203,23 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Typecheck
         run: npm run typecheck
+      # #438: a mitigation under test, not proven. Navigation timeouts here coincide with a disk
+      # burst of VSSVC and the Storage Service about 11 minutes after the VM starts, and #652's loop
+      # did not slow down in the 2 runs with this service stopped. #438 stays open; remove this step
+      # if timeouts go on with it. Only on a GitHub-hosted runner, a VM thrown away after the job:
+      # never on a person's or a self-hosted machine. The step fails when the service is not stopped,
+      # so no run is counted as one without it by mistake.
+      - name: Stop the Storage Service (GitHub-hosted Windows runner only)
+        if: runner.os == 'Windows' && runner.environment == 'github-hosted'
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          if ($env:RUNNER_ENVIRONMENT -ne "github-hosted" -or $env:GITHUB_ACTIONS -ne "true") { throw "not a GitHub-hosted runner" }
+          Set-Service StorSvc -StartupType Disabled
+          Stop-Service StorSvc -Force
+          $service = Get-Service StorSvc
+          "MACHINE $((Get-Date).ToUniversalTime().ToString('HH:mm:ss')) StorSvc $($service.Status) $($service.StartType)"
+          if ($service.Status -ne "Stopped" -or $service.StartType -ne "Disabled") { throw "StorSvc is $($service.Status), $($service.StartType)" }
       - name: Test
         env:
           # M-BR-01 and M-BR-02: a scripted plan on the controlled site, Windows only.
@@ -1216,6 +1233,9 @@ jobs:
         run: |
           $log = Join-Path $env:RUNNER_TEMP "machine-sampler.log"
           if (Test-Path $log) { Get-Content $log | ForEach-Object { "MACHINE $_" } }
+          # Whether the Storage Service stayed stopped through the tests (read only).
+          $service = Get-Service StorSvc -ErrorAction SilentlyContinue
+          "MACHINE StorSvc at the end: $($service.Status) $($service.StartType)"
           $since = (Get-Date).AddHours(-2)
           foreach ($filter in @(
             @{ LogName = "Application"; ProviderName = "VSS"; StartTime = $since },
