@@ -146,6 +146,15 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
 }
 
+/// Milliseconds that only move forward: since Windows started, sleep and
+/// hibernation included (so a heartbeat does not survive them), and not
+/// moved by a change of the PC's clock.
+#[cfg(windows)]
+pub fn monotonic_ms() -> u64 {
+    // SAFETY: takes no argument and cannot fail.
+    unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount64() }
+}
+
 /// Milliseconds since the Unix epoch (0 if the clock is before it).
 pub fn now_ms() -> u64 {
     std::time::SystemTime::now()

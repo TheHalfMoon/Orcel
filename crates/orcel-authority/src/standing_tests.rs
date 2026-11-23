@@ -7,8 +7,20 @@
 use super::*;
 use crate::core::standing::{
     pin_program, PinnedProgram, StandingApproval, StandingScope, INDICATOR_HEARTBEAT_MS,
+    RUN_REFUSAL_LIFTED,
 };
 use crate::protocol::StandingClaim;
+use serde_json::json;
+
+/// What the box says a pin does not cover (review of #844).
+const NOT_PINNED: [&str; 6] = [
+    "DLLs",
+    ".local",
+    "manifest",
+    "._pth",
+    "pyvenv.cfg",
+    "not its arguments",
+];
 
 const TASK: &str = "build the repo";
 const REPO: &str = r"C:\work\repo";
@@ -35,10 +47,22 @@ fn lease_scope() -> LeaseScope {
     }
 }
 
+/// Shells without the filesystem executor (not a lease that can be granted).
+fn shells_only() -> LeaseScope {
+    LeaseScope::DesktopFullUser {
+        executors: vec![ExecutorClass::ShellProcess],
+        roots: vec![r"C:\work".to_owned()],
+        shells: true,
+    }
+}
+
+/// `run` is refused under every lease that can be granted today (review of
+/// #847, its own test); the other tests lift that to test the rest.
 fn standing_scope() -> StandingScope {
+    RUN_REFUSAL_LIFTED.with(|lifted| lifted.set(true));
     StandingScope {
         executors: vec![ExecutorClass::ShellProcess],
-        operations: vec!["run".to_owned(), "git_commit".to_owned()],
+        operations: vec!["run".to_owned()],
         roots: vec![REPO.to_owned()],
         origins: Vec::new(),
         commands: vec![pin(TOOL)],
@@ -241,7 +265,7 @@ fn standing_is_issued_with_its_lease_through_the_owner_gate() -> Result<(), Stri
         "STANDING APPROVAL",
         &client_ref(),
         TASK,
-        "operations [run, git_commit]",
+        "operations [run]",
         REPO,
         TOOL,
         "Standing approval expires: 30 minutes",
@@ -388,7 +412,7 @@ fn standing_scope_must_fit_its_lease_and_one_identified_client() -> Result<(), S
     let refused = |change: &dyn Fn(&mut StandingScope)| {
         let mut scope = standing_scope();
         change(&mut scope);
-        scope.validate(&lease_scope(), &client_ref(), 30).err()
+        scope.validate(&shells_only(), &client_ref(), 30).err()
     };
     let codes = [
         refused(&|s| s.roots = vec![r"C:\elsewhere".to_owned()]),
@@ -424,8 +448,41 @@ fn standing_scope_must_fit_its_lease_and_one_identified_client() -> Result<(), S
         .validate(&no_shells, &client_ref(), 30)
         .is_err());
     assert!(standing_scope()
-        .validate(&lease_scope(), &client_ref(), 30)
+        .validate(&shells_only(), &client_ref(), 30)
         .is_ok());
+    // Review of #847: never `run` under a lease whose file writes ask
+    // nothing; nothing is recorded.
+    let scope = standing_scope();
+    RUN_REFUSAL_LIFTED.with(|lifted| lifted.set(false));
+    assert_eq!(
+        code(core.handle(
+            &owner(),
+            standing_begin_with(lease_scope(), &client_ref(), scope.clone())
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    assert!(scope.validate(&shells_only(), &client_ref(), 30).is_ok());
+    assert!(core.sessions_awaiting_unlock().is_empty());
+    // Nor any Git change, under any lease.
+    for operation in ["git_add", "git_unstage", "git_commit", "git_branch_create"] {
+        for commands in [Vec::new(), vec![pin(TOOL)]] {
+            let mut git = scope.clone();
+            git.operations = vec![operation.to_owned()];
+            git.commands = commands.clone();
+            assert!(git.validate(&shells_only(), &client_ref(), 30).is_err());
+            git.operations.push("run".to_owned());
+            assert!(git.validate(&shells_only(), &client_ref(), 30).is_err());
+            assert_eq!(
+                code(core.handle(
+                    &owner(),
+                    standing_begin_with(lease_scope(), &client_ref(), git)
+                )),
+                Some(FailureCode::InvalidRequest)
+            );
+        }
+    }
+    // And no lease with folders is without those writes today.
+    assert!(shells_only().validate().is_err());
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
@@ -436,7 +493,7 @@ fn standing_covers_only_its_scope_client_and_task() -> Result<(), String> {
     let events = Events::default();
     let mut core = open_enrolled(&dir, &events)?;
     let (lease, standing, _) = grant_standing(&mut core, standing_scope())?;
-    // Covered: the named program in its folder, and a commit there.
+    // Covered: the named program in its folder.
     let run = ok(covered(
         &mut core,
         &lease,
@@ -446,15 +503,6 @@ fn standing_covers_only_its_scope_client_and_task() -> Result<(), String> {
         Some(TOOL),
     ))?;
     assert_eq!(run["standing_id"], Value::String(standing.id.clone()));
-    let commit = ok(covered(
-        &mut core,
-        &lease,
-        ExecutorClass::ShellProcess,
-        git_claims("git_commit", REPO),
-        &standing.id,
-        None,
-    ))?;
-    assert_eq!(commit["standing_id"], Value::String(standing.id.clone()));
     assert!(audit_text(&dir)?.contains(&format!("\"standing_id\":\"{}\"", standing.id)));
     // Not covered: another program, a folder outside, another operation, a
     // capability that does not match, another client, another task, a
@@ -478,6 +526,11 @@ fn standing_covers_only_its_scope_client_and_task() -> Result<(), String> {
         (
             ExecutorClass::ShellProcess,
             git_claims("git_commit", outside),
+            None,
+        ),
+        (
+            ExecutorClass::ShellProcess,
+            git_claims("git_commit", REPO),
             None,
         ),
         (
@@ -568,6 +621,9 @@ fn standing_expiry_ends_it_and_the_lease_stays() -> Result<(), String> {
     short.minutes = Some(5);
     let (lease, standing, text) = grant_standing(&mut core, short)?;
     assert!(text.contains("Standing approval expires: 5 minutes"));
+    for item in NOT_PINNED {
+        assert!(text.contains(item), "the box names {item} as not pinned");
+    }
     assert_eq!(standing.expires_at_ms, standing.issued_at_ms + 5 * 60_000);
     advance(5 * 60_000);
     core.tick().map_err(|e| e.to_string())?;
@@ -601,6 +657,186 @@ fn standing_expiry_ends_it_and_the_lease_stays() -> Result<(), String> {
             standing: None,
         },
     ))?;
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// One covered run, authorized with a live indicator; the answer.
+fn covered_run(
+    core: &mut AuthorityCore,
+    lease: &SignedLease,
+    standing_id: &str,
+) -> Result<Value, String> {
+    core.indicator_heartbeat_for_test(&owner());
+    ok(covered(
+        core,
+        lease,
+        ExecutorClass::ShellProcess,
+        run_claims(TOOL),
+        standing_id,
+        Some(TOOL),
+    ))
+}
+
+fn active(core: &mut AuthorityCore, answer: &Value) -> Result<Option<FailureCode>, String> {
+    Ok(code(core.handle(
+        &orceld(),
+        Request::DispatchActive {
+            authorization_id: str_of(answer, "authorization_id")?,
+        },
+    )))
+}
+
+/// Review of #844: a standing approval that ended between `Authorize` and
+/// the resume stops the dispatch, and its lease stays.
+#[test]
+fn standing_ended_before_the_resume_stops_the_dispatch() -> Result<(), String> {
+    let dir = temp_dir("standing-resume")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    let (lease, standing, _) = grant_standing(&mut core, standing_scope())?;
+    // In force: the answer names the folders, and the dispatch resumes.
+    let first = covered_run(&mut core, &lease, &standing.id)?;
+    assert_eq!(first["standing_roots"], json!([REPO]));
+    assert_eq!(ack_as(&mut core, &orceld(), &first), None);
+    assert_eq!(active(&mut core, &first)?, None);
+    // No live indicator any more: not resumed.
+    let second = covered_run(&mut core, &lease, &standing.id)?;
+    assert_eq!(ack_as(&mut core, &orceld(), &second), None);
+    advance(INDICATOR_HEARTBEAT_MS);
+    assert_eq!(
+        active(&mut core, &second)?,
+        Some(FailureCode::IndicatorUnavailable)
+    );
+    // Revoked: not resumed, and neither job is left.
+    let third = covered_run(&mut core, &lease, &standing.id)?;
+    assert_eq!(ack_as(&mut core, &orceld(), &third), None);
+    ok(core.handle(
+        &other_process(),
+        Request::StandingRevoke {
+            standing_id: standing.id.clone(),
+        },
+    ))?;
+    core.indicator_heartbeat_for_test(&owner());
+    assert_eq!(active(&mut core, &third)?, Some(FailureCode::LeaseInvalid));
+    ok(core.handle(
+        &owner(),
+        Request::Verify {
+            lease_id: lease.body.lease_id.clone(),
+        },
+    ))?;
+    ok(core.handle(
+        &owner(),
+        Request::Revoke {
+            lease_id: lease.body.lease_id.clone(),
+        },
+    ))?;
+    // Expired, before any sweep saw it: not resumed.
+    let mut short = standing_scope();
+    short.minutes = Some(5);
+    let (lease, standing, _) = grant_standing(&mut core, short)?;
+    advance(5 * 60_000 - 1_000);
+    let fourth = covered_run(&mut core, &lease, &standing.id)?;
+    assert_eq!(ack_as(&mut core, &orceld(), &fourth), None);
+    advance(1_000);
+    let job = str_of(&fourth, "job_id")?;
+    assert!(live_jobs().contains(&job), "still held");
+    assert_eq!(active(&mut core, &fourth)?, Some(FailureCode::LeaseInvalid));
+    assert!(!live_jobs().contains(&job), "and ended with the answer");
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// Review of #844: revoking a standing approval, or its expiry, ends the
+/// running jobs of the dispatches it covered (as a lease's end does) and no
+/// other job of the lease.
+#[test]
+fn standing_revoke_and_expiry_end_its_running_jobs_only() -> Result<(), String> {
+    let dir = temp_dir("standing-jobs")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    for expiry in [false, true] {
+        let mut scope = standing_scope();
+        scope.minutes = Some(5);
+        let (lease, standing, _) = grant_standing(&mut core, scope)?;
+        if expiry {
+            advance(5 * 60_000 - 1_000);
+        }
+        let running = covered_run(&mut core, &lease, &standing.id)?;
+        ack_and_confirm(&mut core, &running)?;
+        // The same operation, approved per action, under the same lease.
+        let asked = ok(core.handle(
+            &orceld(),
+            Request::Authorize {
+                lease_id: lease.body.lease_id.clone(),
+                executor: ExecutorClass::ShellProcess,
+                claims: run_claims(TOOL),
+                job_ack: true,
+                standing: None,
+            },
+        ))?;
+        ack_and_confirm(&mut core, &asked)?;
+        let job = str_of(&running, "job_id")?;
+        let other = str_of(&asked, "job_id")?;
+        assert!(live_jobs().contains(&job));
+        if expiry {
+            advance(1_000);
+            core.tick().map_err(|e| e.to_string())?;
+        } else {
+            ok(core.handle(
+                &owner(),
+                Request::StandingRevoke {
+                    standing_id: standing.id.clone(),
+                },
+            ))?;
+        }
+        assert!(terminated_jobs().contains(&job), "expiry {expiry}");
+        assert!(!live_jobs().contains(&job));
+        assert!(live_jobs().contains(&other), "the asked run goes on");
+        // Its outcome is still recorded.
+        let reported = ok(core.handle(
+            &orceld(),
+            Request::Outcome {
+                authorization_id: str_of(&running, "authorization_id")?,
+                outcome: DispatchOutcome::Failed,
+                code: Some(FailureCode::LeaseInvalid),
+            },
+        ))?;
+        assert_eq!(reported["job_terminated"], false);
+        ok(core.handle(
+            &owner(),
+            Request::Revoke {
+                lease_id: lease.body.lease_id.clone(),
+            },
+        ))?;
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// The indicator's heartbeat ages by the monotonic clock: setting the PC's
+/// clock back does not keep one alive, and one from the future is none.
+#[test]
+fn standing_indicator_age_is_monotonic_and_never_negative() -> Result<(), String> {
+    let dir = temp_dir("standing-monotonic")?;
+    let events = Events::default();
+    let mut core = open_enrolled(&dir, &events)?;
+    let alive = |core: &mut AuthorityCore| -> Result<bool, String> {
+        let status = ok(core.handle(&owner(), Request::Status))?;
+        Ok(status["standing_approvals"]["indicator_alive"] == true)
+    };
+    core.indicator_heartbeat_for_test(&owner());
+    assert!(alive(&mut core)?);
+    NOW.with(|now| now.set(now.get() - 3_600));
+    advance(INDICATOR_HEARTBEAT_MS - 1);
+    assert!(alive(&mut core)?, "still young");
+    advance(1);
+    assert!(!alive(&mut core)?, "old, whatever the PC's clock says");
+    core.indicator_heartbeat_for_test(&owner());
+    NOW.with(|now| now.set(now.get() + 3_600_000));
+    assert!(alive(&mut core)?, "the PC's clock does not end one either");
+    MONOTONIC.with(|now| now.set(now.get() - 1));
+    assert!(!alive(&mut core)?, "a heartbeat from the future is none");
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }

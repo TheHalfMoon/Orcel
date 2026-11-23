@@ -207,6 +207,9 @@ pub struct Services {
     /// WP1-10: creates and terminates the dispatch Job Objects.
     pub jobs: Box<dyn dispatch_jobs::JobHost>,
     pub clock: fn() -> u64,
+    /// Milliseconds that only move forward (sleep included), whatever the
+    /// PC's clock is set to: the indicator's heartbeat age.
+    pub monotonic: fn() -> u64,
 }
 
 /// A confirmation's answer.
@@ -902,7 +905,7 @@ impl AuthorityCore {
             // WP1-14: standing approvals are issued and used only while an
             // indicator heartbeat of the caller's logon session is live.
             "standing_approvals": {
-                "indicator_alive": self.indicator_alive(&caller.user_sid, caller.logon_session_id, self.now()),
+                "indicator_alive": self.indicator_alive(&caller.user_sid, caller.logon_session_id),
                 "indicator_heartbeat_ms": standing::INDICATOR_HEARTBEAT_MS,
                 "operations": standing::STANDING_OPERATIONS,
             },
@@ -2166,11 +2169,13 @@ impl AuthorityCore {
         // WP1-14: a standing approval named in place of the action's own
         // approval must be the caller's, in force, shown by a live
         // indicator, and cover exactly this dispatch.
-        let standing_id = match standing {
-            Some(claim) => Some(
-                self.check_standing_authorize(caller, lease_id, executor, &claims, claim, now)?,
-            ),
-            None => None,
+        let (standing_id, standing_roots) = match standing {
+            Some(claim) => {
+                let (id, roots) =
+                    self.check_standing_authorize(caller, lease_id, executor, &claims, claim, now)?;
+                (Some(id), Some(roots))
+            }
+            None => (None, None),
         };
         let authorization_id = format!("az-{}", hex(&self.random(16)?));
         // WP1-10: the dispatch's Job Object exists before the allow record
@@ -2207,7 +2212,13 @@ impl AuthorityCore {
             }
             return Err(error);
         }
-        self.open_dispatch(caller, &authorization_id, lease_id, job_id.as_deref());
+        self.open_dispatch(
+            caller,
+            &authorization_id,
+            lease_id,
+            job_id.as_deref(),
+            standing_id.as_deref(),
+        );
         Ok(json!({
             "authorization_id": authorization_id,
             "lease_id": lease_id,
@@ -2217,6 +2228,9 @@ impl AuthorityCore {
             // The value of the assign-only handle duplicated into orceld.
             "job_handle": job.as_ref().map(|job| job.handle),
             "standing_id": standing_id,
+            // Review of #844: the folders this dispatch is covered in, for
+            // the worker (an orceld that gets none runs nothing covered).
+            "standing_roots": standing_roots,
             "deferred": DEFERRED,
         }))
     }

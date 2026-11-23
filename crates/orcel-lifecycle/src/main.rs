@@ -95,11 +95,12 @@ Full User desktop control (local only):
       [--standing-minutes <n>]
       With the Orcel authority service: a Full User lease (filesystem and shells over the
       roots) and a standing approval for one client and task, granted together through the
-      same lock, unlock, service box and Windows Hello. The listed operations (run, git_add,
-      git_unstage, git_commit, git_branch_create) inside the folders then do not ask each
-      time. run needs --program: each is pinned now to its contents (SHA-256) and file, shown
-      in the box, and asks again once either changes. Never Admin, remote callers or browser
-      actions. Needs a live Orcel indicator; until it exists the service refuses.
+      same lock, unlock, service box and Windows Hello. Nothing can be granted this way today:
+      run, the only operation, is refused (each run keeps its own approval) because this lease
+      writes files in its folders without asking and --program pins one file (SHA-256 and
+      identity), not the DLLs, configuration or other files it loads and not its arguments;
+      Git changes always ask. Never Admin, remote callers or browser actions. Needs a live
+      Orcel indicator, which does not exist yet.
   orcel full-control standing revoke [--id <sa-...>]
                                           End standing approvals; their leases stay.
   orcel full-control standing status      List standing approvals and the indicator state.

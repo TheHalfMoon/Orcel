@@ -19,7 +19,9 @@
 //! unless it is in some Job Object (`IsProcessInJob` with no job handle: a
 //! sanity check, not a boundary; the boundary is orceld assigning it before
 //! it runs), resolves each path and the lease's roots (junctions and links
-//! included) and acts only inside them, refuses any file with more than
+//! included) and acts only inside them (inside a covering standing
+//! approval's real folders when one covered the operation, [`CoveredBy`]),
+//! refuses any file with more than
 //! one name (a hard link), and exits.
 //!
 //! Operations (WP1-15, SG-000097 and SG-000096): the filesystem family
@@ -286,11 +288,25 @@ pub(crate) struct WorkerRequest {
     pub token: String,
     pub roots: Vec<String>,
     pub op: WorkerOp,
-    /// Review of #844 (WP1-14): for a run a standing approval covered, the
-    /// program as pinned at grant; the worker starts it only if the file it
-    /// holds open is that file with those contents.
+    /// Review of #844 (WP1-14): present only when a standing approval covered
+    /// the operation. An older worker refuses a request that carries it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pinned: Option<PinnedProgram>,
+    pub covered: Option<CoveredBy>,
+}
+
+/// What a standing approval that covered an operation holds the worker to
+/// (review of #844). It comes from the service (the folders from its
+/// `Authorize` answer), never from the calling client.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CoveredBy {
+    /// The approval's folders. The operation stays inside the ones that are
+    /// real folders now ([`exec::standing_folders`]), in place of the
+    /// lease's roots: what its paths resolve to, not only their text.
+    pub roots: Vec<String>,
+    /// The program as pinned at grant; the worker starts it only if the file
+    /// it holds open is that file with those contents.
+    pub program: PinnedProgram,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -818,28 +834,49 @@ fn refuse_hard_links(file: &std::fs::File) -> Result<(), ProviderError> {
     Ok(())
 }
 
-/// Performs one operation inside `roots` (no pinned program: the run was
-/// approved per action). The Windows worker tests (`fc_worker_tests`'
+/// Performs one operation inside `roots` (not covered by a standing
+/// approval: approved per action, or asking nothing). The Windows worker tests (`fc_worker_tests`'
 /// `windows` module) drive the worker's operations through it, so it exists
 /// only in Windows test builds.
 #[cfg(all(test, windows))]
 pub(crate) fn perform(op: &WorkerOp, roots: &[String]) -> Result<Value, ProviderError> {
-    perform_pinned(op, roots, None)
+    perform_covered(op, roots, None)
 }
 
-/// [`perform`]; a run a standing approval covered starts only the `pinned`
-/// program (review of #844). `pinned` on any other operation refuses.
-pub(crate) fn perform_pinned(
+/// [`perform`]; a run a standing approval covered (review of #844) stays
+/// inside that approval's real folders and starts only the pinned program.
+/// `covered` on any other operation refuses (review of #847: no Git change
+/// is ever covered).
+pub(crate) fn perform_covered(
     op: &WorkerOp,
     roots: &[String],
-    pinned: Option<&PinnedProgram>,
+    covered: Option<&CoveredBy>,
 ) -> Result<Value, ProviderError> {
-    if pinned.is_some() && !matches!(op, WorkerOp::Run { .. }) {
+    let Some(covered) = covered else {
+        return act(op, roots, false, None);
+    };
+    if !matches!(op, WorkerOp::Run { .. }) {
         return Err(failure(
             FailureCode::InvalidRequest,
-            "only a run names a pinned program",
+            "a standing approval covers only a run",
         ));
     }
+    let folders = exec::standing_folders(&covered.roots, roots)?;
+    let _held = folders
+        .iter()
+        .map(|folder| exec::hold_folder(Path::new(folder)))
+        .collect::<Result<Vec<_>, _>>()?;
+    act(op, &folders, true, Some(&covered.program))
+}
+
+/// One operation inside `roots`: the lease's, or a covering standing
+/// approval's real folders (`covered`).
+fn act(
+    op: &WorkerOp,
+    roots: &[String],
+    covered: bool,
+    pinned: Option<&PinnedProgram>,
+) -> Result<Value, ProviderError> {
     match op {
         WorkerOp::Stat { path } => {
             let resolved = existing(path, roots)?;
@@ -1003,6 +1040,7 @@ pub(crate) fn perform_pinned(
             *timeout_ms,
             *max_output_bytes,
             roots,
+            covered,
             pinned,
         ),
         WorkerOp::GitStatus { repository } => {
@@ -1076,7 +1114,7 @@ pub(crate) fn serve(input: &mut impl Read, output: &mut impl Write, in_job: bool
         }
     };
     let result = if in_job {
-        perform_pinned(&request.op, &request.roots, request.pinned.as_ref())
+        perform_covered(&request.op, &request.roots, request.covered.as_ref())
     } else {
         Err(failure(
             FailureCode::CapabilityDenied,
@@ -1179,7 +1217,9 @@ pub(crate) use launch::{start_suspended_in_job, Launch};
 #[cfg(windows)]
 #[cfg_attr(not(test), allow(dead_code))]
 mod launch {
-    use super::{WorkerOp, WorkerReply, WorkerRequest, MAX_FRAME_BYTES, WORKER_CONTRACT};
+    use super::{
+        CoveredBy, WorkerOp, WorkerReply, WorkerRequest, MAX_FRAME_BYTES, WORKER_CONTRACT,
+    };
     use crate::full_control_dispatch::{JobGrant, WorkerLauncher};
     use orcel_authority::core::Entropy;
     use orcel_authority::win::Owned;
@@ -1522,7 +1562,7 @@ mod launch {
             job: &JobGrant,
             roots: &[String],
             op: &WorkerOp,
-            pinned: Option<&orcel_authority::core::standing::PinnedProgram>,
+            covered: Option<&CoveredBy>,
             confirm: &dyn Fn() -> Result<(), ProviderError>,
         ) -> Result<Value, ProviderError> {
             // The assign-only handle the service duplicated into this
@@ -1535,7 +1575,7 @@ mod launch {
                 token: token.clone(),
                 roots: roots.to_vec(),
                 op: op.clone(),
-                pinned: pinned.cloned(),
+                covered: covered.cloned(),
             })
             .map_err(|error| ProviderError::new(FailureCode::InternalError, error.to_string()))?;
             let (process, mut stdin, stdout) = self.start(job, confirm)?;

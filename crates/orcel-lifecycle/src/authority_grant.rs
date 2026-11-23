@@ -299,7 +299,7 @@ pub fn parse_operations(list: &str) -> Result<Vec<String>, LifecycleError> {
                 Ok(name.to_owned())
             } else {
                 Err(LifecycleError::usage(format!(
-                    "unknown operation {name:?}; use run, git_add, git_unstage, git_commit or git_branch_create"
+                    "unknown operation {name:?}; a standing approval covers only run (every Git change asks)"
                 )))
             }
         })
@@ -321,9 +321,9 @@ pub fn pin_programs(paths: &[String]) -> Result<Vec<PinnedProgram>, LifecycleErr
 
 /// WP1-14: the lease and standing approval a standing grant asks for. The
 /// lease grants the filesystem and shell/process executors over `roots`;
-/// the standing approval covers `operations` inside `folders` (and, for a
-/// run, only its pinned programs, which a run requires). Validated here as
-/// the service validates it.
+/// the standing approval covers `operations` inside `folders`. Validated
+/// here as the service validates it, which refuses `run` under such a lease
+/// (review of #847).
 pub fn standing_request(
     client_ref: String,
     task: String,
@@ -787,34 +787,26 @@ mod tests {
             })
         };
         let roots = vec![r"D:\work".to_owned()];
-        let ok = standing(
-            "run,git_commit",
-            &[r"D:\work\repo"],
-            Some(vec![r"D:\work\repo\tool.exe"]),
-        )
-        .and_then(|scope| {
-            standing_request(client.clone(), "build".to_owned(), roots.clone(), 30, scope)
-        });
-        let Ok(request) = ok else {
-            assert!(ok.is_ok(), "{ok:?}");
-            return;
-        };
-        assert!(matches!(
-            request.scope,
-            LeaseScope::DesktopFullUser { shells: true, .. }
-        ));
+        // Nothing a standing approval covers can be granted today (review of
+        // #847): Git changes always ask, and `run` is refused under a lease
+        // that writes its folders without a prompt.
+        for git in ["git_add", "git_unstage", "git_commit", "git_branch_create"] {
+            assert!(parse_operations(git).is_err(), "{git}");
+        }
+        assert!(parse_operations("run").is_ok());
         // Unknown operations, folders outside the roots, an unidentified
         // client and Admin are refused before anything is sent.
         assert!(parse_operations("run,delete").is_err());
-        let outside = standing("git_commit", &[r"E:\elsewhere"], None).and_then(|scope| {
+        let tool = || Some(vec![r"D:\work\repo\tool.exe"]);
+        let outside = standing("run", &[r"E:\elsewhere"], tool()).and_then(|scope| {
             standing_request(client.clone(), "b".into(), roots.clone(), 30, scope)
         });
         assert!(outside.is_err());
-        let unidentified = standing("git_commit", &[r"D:\work\repo"], None).and_then(|scope| {
+        let unidentified = standing("run", &[r"D:\work\repo"], tool()).and_then(|scope| {
             standing_request("orcel-owner".into(), "b".into(), roots.clone(), 30, scope)
         });
         assert!(unidentified.is_err());
-        let admin = standing("git_commit", &[r"D:\work\repo"], None).and_then(|mut scope| {
+        let admin = standing("run", &[r"D:\work\repo"], tool()).and_then(|mut scope| {
             scope.executors = vec![ExecutorClass::Admin];
             standing_request(client.clone(), "b".into(), roots.clone(), 30, scope)
         });
@@ -825,6 +817,17 @@ mod tests {
             standing_request(client.clone(), "b".into(), roots.clone(), 30, scope)
         });
         assert!(any_program.is_err());
+        // Review of #847: nor a pinned one, under a lease that writes its
+        // folder without a prompt.
+        let pinned = standing(
+            "run",
+            &[r"D:\work\repo"],
+            Some(vec![r"D:\work\repo\tool.exe"]),
+        )
+        .and_then(|scope| standing_request(client.clone(), "b".into(), roots.clone(), 30, scope));
+        assert!(pinned.err().is_some_and(|error| error
+            .to_string()
+            .contains("each run keeps its own approval")));
         assert!(pin_programs(&[r"Z:\no\such\tool.exe".to_owned()]).is_err());
     }
 

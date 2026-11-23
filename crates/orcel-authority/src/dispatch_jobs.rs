@@ -22,7 +22,9 @@
 //! with its outcome (`Outcome` terminates the job), and one dispatch cannot
 //! add processes to another's job. The service ends a lease's jobs whenever
 //! the lease stops being active: revoke, Stop, session lock, sign-out,
-//! disconnect, expiry, an epoch move, re-enrollment and reset. Jobs whose
+//! disconnect, expiry, an epoch move, re-enrollment and reset; and the jobs
+//! of the dispatches a standing approval covered when that approval ends
+//! (`StandingRevoke`, its own expiry) while its lease stays. Jobs whose
 //! processes all exited are closed after [`JOB_IDLE_MS`], and every job is
 //! terminated [`JOB_MAX_MS`] after it was made whatever it holds; a lease
 //! holds at most [`MAX_JOBS_PER_LEASE`] jobs and the service [`MAX_JOBS`].
@@ -186,6 +188,8 @@ pub(crate) struct OpenDispatch {
     logon_session_id: u64,
     lease_id: String,
     job_id: Option<String>,
+    /// WP1-14: the standing approval that covered it, if one did.
+    standing_id: Option<String>,
 }
 
 fn is_authorization_id(text: &str) -> bool {
@@ -337,6 +341,7 @@ impl AuthorityCore {
         authorization_id: &str,
         lease_id: &str,
         job_id: Option<&str>,
+        standing_id: Option<&str>,
     ) {
         while self.open_dispatches.len() >= MAX_OPEN_DISPATCHES {
             // An evicted dispatch can no longer be confirmed or reported, so
@@ -353,6 +358,7 @@ impl AuthorityCore {
             logon_session_id: caller.logon_session_id,
             lease_id: lease_id.to_owned(),
             job_id: job_id.map(str::to_owned),
+            standing_id: standing_id.map(str::to_owned),
         });
     }
 
@@ -362,15 +368,30 @@ impl AuthorityCore {
         })
     }
 
+    /// Whether the standing approval that covered `authorization_id` (if one
+    /// did) has ended: revoked, expired, or with its lease.
+    fn standing_ended(&self, authorization_id: &str, now: u64) -> bool {
+        self.open_dispatches
+            .iter()
+            .find(|open| open.authorization_id == authorization_id)
+            .and_then(|open| open.standing_id.as_deref())
+            .is_some_and(|id| !self.standing_in_force(id, now))
+    }
+
     /// Ends every held job whose lease is no longer active (revoked,
-    /// stopped, expired, from an older epoch, or gone). Their open
-    /// dispatches stay, so the outcome is still recorded.
+    /// stopped, expired, from an older epoch, or gone), and every job of a
+    /// dispatch whose standing approval ended (review of #844: revoked or
+    /// expired while its lease stays). Their open dispatches stay, so the
+    /// outcome is still recorded.
     pub(super) fn sweep_jobs(&mut self) {
         let now = self.now();
         let dead: Vec<String> = self
             .jobs
             .iter()
-            .filter(|job| !self.lease_active(&job.lease_id, now))
+            .filter(|job| {
+                !self.lease_active(&job.lease_id, now)
+                    || self.standing_ended(&job.authorization_id, now)
+            })
             .map(|job| job.id.clone())
             .collect();
         for id in dead {
@@ -661,7 +682,10 @@ impl AuthorityCore {
 
     /// orceld asks, after assigning its suspended worker and before resuming
     /// it, whether the authorization still stands: its lease is active and
-    /// its job still held. Anything else is `LEASE_INVALID`.
+    /// its job still held. Anything else is `LEASE_INVALID`. Review of #844:
+    /// a dispatch a standing approval covered also needs that approval still
+    /// in force and a live indicator (`INDICATOR_UNAVAILABLE`), as its
+    /// `Authorize` did.
     ///
     /// SG132_SLICE5.md: for an authorization that holds a job (a dispatch
     /// job, or the desktop host job `DesktopHostJob` answered), only the
@@ -685,6 +709,14 @@ impl AuthorityCore {
         let index = self.open_dispatch_of(caller, role, authorization_id)?;
         let open = &self.open_dispatches[index];
         let lease_id = open.lease_id.clone();
+        if let Some(standing_id) = &open.standing_id {
+            if !self.standing_in_force(standing_id, now) {
+                return Err(AuthorityError::lease_invalid(
+                    "the dispatch's standing approval ended",
+                ));
+            }
+            self.require_indicator(caller)?;
+        }
         if open.job_id.is_some() {
             self.confirm_job(caller, role, authorization_id, now)?;
         } else if !self.lease_active(&lease_id, now) {

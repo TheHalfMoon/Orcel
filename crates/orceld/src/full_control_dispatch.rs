@@ -126,6 +126,10 @@ pub(crate) struct Grant {
     pub job: Option<JobGrant>,
     /// The lease's roots, which `fc-worker` resolves before acting.
     pub roots: Vec<String>,
+    /// Review of #844: the folders of the standing approval this dispatch
+    /// was admitted under, which the service's answer confirmed; `None` for
+    /// every other dispatch.
+    pub standing_roots: Option<Vec<String>>,
 }
 
 /// A dispatch Job Object as `Authorize` handed it over: its id (for the
@@ -213,15 +217,16 @@ pub(crate) trait ActionApproval {
 pub(crate) trait WorkerLauncher {
     /// Starts the worker suspended, assigns it with `job.handle` (and closes
     /// that handle on every path), calls `confirm`, and resumes the worker
-    /// only if it succeeds (terminating it otherwise). `pinned`: review of
-    /// #844, the program a standing approval covered the run with; the
-    /// worker refuses to start any other contents or file.
+    /// only if it succeeds (terminating it otherwise). `covered`: review of
+    /// #844, present when a standing approval covered the operation: its
+    /// folders, which the worker holds the operation to, and for a run the
+    /// pinned program; the worker starts no other contents or file.
     fn run(
         &self,
         job: &JobGrant,
         roots: &[String],
         op: &crate::fc_worker::WorkerOp,
-        pinned: Option<&PinnedProgram>,
+        covered: Option<&crate::fc_worker::CoveredBy>,
         confirm: &dyn Fn() -> Result<(), ProviderError>,
     ) -> Result<Value, ProviderError>;
 }
@@ -291,7 +296,14 @@ pub(crate) fn authorize(
 /// digest and the chosen lease, the per-action approval (`Ok(None)`) or the
 /// standing approval that stands in for it.
 type BeforeAuthorize<'a> =
-    dyn Fn(&str, &LeaseBody) -> Result<Option<StandingClaim>, ProviderError> + 'a;
+    dyn Fn(&str, &LeaseBody) -> Result<Option<StandingUse>, ProviderError> + 'a;
+
+/// The standing approval a dispatch names in place of its own approval, and
+/// that approval's folders as the service listed them.
+struct StandingUse {
+    claim: StandingClaim,
+    roots: Vec<String>,
+}
 
 /// [`authorize`], calling `before` with the action digest and the chosen
 /// lease once a lease covers the action and before the service is asked:
@@ -385,7 +397,12 @@ fn authorize_with(
         origin: None,
         paths: (!action.paths.is_empty()).then(|| action.paths.clone()),
     };
-    let answer = port.authorize(&body.lease_id, executor, claims, standing.as_ref())?;
+    let answer = port.authorize(
+        &body.lease_id,
+        executor,
+        claims,
+        standing.as_ref().map(|standing| &standing.claim),
+    )?;
     // SG132_SLICE5.md: a job handle that came with an answer refused here
     // is left alone (never acknowledged, used or closed): the service
     // closes it in this process after its acknowledgement timeout.
@@ -405,10 +422,15 @@ fn authorize_with(
     }
     // WP1-14: a dispatch admitted in place of its own approval must be
     // admitted under exactly the standing approval named.
-    if let Some(claim) = &standing {
-        if answer["standing_id"].as_str() != Some(claim.standing_id.as_str()) {
+    // Review of #844: and in exactly its folders (an older service confirms
+    // none, so nothing runs covered under it).
+    if let Some(standing) = &standing {
+        if answer["standing_id"].as_str() != Some(standing.claim.standing_id.as_str())
+            || standing.roots.is_empty()
+            || answer["standing_roots"] != serde_json::json!(standing.roots)
+        {
             return Err(unavailable(
-                "the authority did not confirm the standing approval this dispatch named",
+                "the authority did not confirm the standing approval this dispatch named and its folders",
             ));
         }
     }
@@ -448,6 +470,7 @@ fn authorize_with(
         lease_id: body.lease_id.clone(),
         job,
         roots: roots_of(&body),
+        standing_roots: standing.map(|standing| standing.roots),
     }))
 }
 
@@ -559,7 +582,8 @@ pub(crate) fn run_in_worker_pinned(
         // service checks it again. Otherwise the person is asked. Review of
         // #844: a run is covered only by its program's contents and file as
         // pinned at grant; a program that cannot be pinned now is not.
-        if !remote {
+        // Review of #847: only a run is ever covered.
+        if !remote && run_program(&op).is_some() {
             let standing = port.standing()?;
             // Re-review of #844: hash only a program some approval in
             // effect pins at this path; any other run is asked, unread.
@@ -573,8 +597,7 @@ pub(crate) fn run_in_worker_pinned(
                     })
                 })
                 .and_then(pinner);
-            let runs = run_program(&op).is_some();
-            if !runs || pinned.is_some() {
+            if pinned.is_some() {
                 if let Some(covering) = covering_standing(
                     &standing,
                     body,
@@ -586,9 +609,12 @@ pub(crate) fn run_in_worker_pinned(
                     now_ms,
                 ) {
                     covered_pin.replace(pinned.clone());
-                    return Ok(Some(StandingClaim {
-                        standing_id: covering.id.clone(),
-                        program: pinned,
+                    return Ok(Some(StandingUse {
+                        claim: StandingClaim {
+                            standing_id: covering.id.clone(),
+                            program: pinned,
+                        },
+                        roots: covering.roots.clone(),
                     }));
                 }
             }
@@ -607,8 +633,19 @@ pub(crate) fn run_in_worker_pinned(
         ));
     };
     let confirm = || port.dispatch_active(&grant.authorization_id);
-    let pinned = covered_pin.borrow().clone();
-    let result = launcher.run(job, &grant.roots, &op, pinned.as_ref(), &confirm);
+    let covered = match (grant.standing_roots.clone(), covered_pin.borrow().clone()) {
+        (Some(roots), Some(program)) => Some(crate::fc_worker::CoveredBy { roots, program }),
+        (None, None) => None,
+        // Never a covered dispatch in the lease's whole roots.
+        _ => {
+            let refused = Err(unavailable(
+                "a dispatch a standing approval covered names its folders and its program",
+            ));
+            record_outcome(port, &ticket, &refused);
+            return refused;
+        }
+    };
+    let result = launcher.run(job, &grant.roots, &op, covered.as_ref(), &confirm);
     record_outcome(port, &ticket, &result);
     result
 }
@@ -643,7 +680,9 @@ pub(crate) fn covering_standing<'a>(
     pinned: Option<&PinnedProgram>,
     now_ms: u64,
 ) -> Option<&'a StandingApproval> {
-    if remote || !op.needs_approval() {
+    // Review of #847: only a run; every Git change asks, whatever a standing
+    // approval names.
+    if remote || run_program(op).is_none() {
         return None;
     }
     let principal = principal_id?;

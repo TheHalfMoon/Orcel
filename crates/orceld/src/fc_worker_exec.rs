@@ -342,6 +342,102 @@ pub(crate) fn resolve_folder(path: &str, roots: &[String]) -> Result<PathBuf, Pr
     Ok(resolved)
 }
 
+/// Review of #844: the folders of a standing approval that are real now: a
+/// folder whose path leads somewhere else (a junction or a link anywhere on
+/// it, a substituted drive, a short name) is left out, so it covers nothing
+/// whatever the box showed. Each must also lie inside the lease's roots. As
+/// resolved, so [`hold_folder`] can hold them.
+pub(crate) fn standing_folders(
+    folders: &[String],
+    roots: &[String],
+) -> Result<Vec<String>, ProviderError> {
+    let spelled = |text: &str| {
+        text.replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_ascii_lowercase()
+    };
+    let lease = resolved_roots(roots);
+    let real: Vec<String> = folders
+        .iter()
+        .filter(|folder| super::lexical(folder, roots).is_ok())
+        .filter_map(|folder| {
+            let resolved = std::fs::canonicalize(folder).ok()?;
+            if !lease.iter().any(|root| resolved.starts_with(root)) {
+                return None;
+            }
+            let text = plain(&resolved).to_str()?.to_owned();
+            (spelled(&text) == spelled(folder)).then_some(text)
+        })
+        .collect();
+    if real.is_empty() {
+        return Err(failure(
+            FailureCode::PathEscape,
+            "none of the standing approval's folders is now the folder its path names (missing, a link or a junction, or outside the lease's roots); nothing was run",
+        ));
+    }
+    Ok(real)
+}
+
+/// Review of #844: `folder` held open without delete sharing while a covered
+/// operation uses it, so neither it nor a folder above it can be renamed or
+/// replaced meanwhile, and checked by its handle to be where it was resolved.
+#[cfg(windows)]
+pub(crate) fn hold_folder(folder: &Path) -> Result<std::fs::File, ProviderError> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(folder)
+        .map_err(|error| io_failure("hold the folder", &error))?;
+    let actual = orcel_authority::win::install_os::final_path(&held).map_err(|error| {
+        failure(
+            FailureCode::PathRaceDetected,
+            format!("where the held folder is could not be read: {error}"),
+        )
+    })?;
+    if plain(&actual) != plain(folder) {
+        return Err(failure(
+            FailureCode::PathRaceDetected,
+            "the folder changed after its checks; nothing was run",
+        ));
+    }
+    Ok(held)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn hold_folder(folder: &Path) -> Result<std::fs::File, ProviderError> {
+    std::fs::File::open(folder).map_err(|error| io_failure("hold the folder", &error))
+}
+
+/// Review of #847: the folder `held` is open on is not a reparse point now.
+/// Holding it keeps it and the folders above it from being renamed, and a
+/// folder that holds another cannot become a junction; an empty one can.
+pub(crate) fn still_a_folder(held: &std::fs::File) -> Result<(), ProviderError> {
+    let metadata = held
+        .metadata()
+        .map_err(|error| io_failure("read the held folder", &error))?;
+    #[cfg(windows)]
+    let reparse = {
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_attributes()
+            & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+            != 0
+    };
+    #[cfg(not(windows))]
+    let reparse = false;
+    if reparse || !metadata.is_dir() {
+        return Err(failure(
+            FailureCode::PathRaceDetected,
+            "the working folder became a link or junction after its checks; nothing was run",
+        ));
+    }
+    Ok(())
+}
+
 /// What one reader captured.
 #[derive(Default)]
 struct Capture {
@@ -389,7 +485,6 @@ fn captured(shared: &Arc<Mutex<Capture>>) -> (String, u64, bool) {
     }
 }
 
-/// The process family: runs `program` with `args` in `cwd`.
 /// The bounds of a run's own arguments, checked before anything is
 /// resolved: here in the worker and, SG132_SLICE8.md, by orceld before the
 /// person is asked (`WorkerOp::check_arguments`).
@@ -438,6 +533,12 @@ pub(crate) fn check_run_arguments(
     Ok(())
 }
 
+/// The process family: runs `program` with `args` in `cwd`. `covered`: a
+/// standing approval covered it and `roots` are its real folders, so the
+/// program and the working folder both resolve inside them; `pinned` is then
+/// the program as pinned at grant. Nothing else the program loads or reads
+/// is pinned (SG132_SLICE10.md residual 2).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_program(
     program: &str,
     args: &[String],
@@ -445,6 +546,7 @@ pub(crate) fn run_program(
     timeout_ms: u64,
     max_output_bytes: usize,
     roots: &[String],
+    covered: bool,
     pinned: Option<&orcel_authority::core::standing::PinnedProgram>,
 ) -> Result<Value, ProviderError> {
     check_run_arguments(program, args, timeout_ms, max_output_bytes)?;
@@ -466,6 +568,11 @@ pub(crate) fn run_program(
         }
     }
     let folder = plain(&resolve_folder(cwd, roots)?);
+    let held = if covered {
+        Some(hold_folder(&folder)?)
+    } else {
+        None
+    };
     let mut command = Command::new(&resolved.path);
     command
         .args(args)
@@ -485,6 +592,11 @@ pub(crate) fn run_program(
     }
     // Review of #824: the program started is the one checked.
     resolved.reverify()?;
+    // Review of #847: and the held folder is still a folder (an empty one can
+    // be made a junction in place, without renaming it).
+    if let Some(held) = &held {
+        still_a_folder(held)?;
+    }
     let mut child = command
         .spawn()
         .map_err(|error| io_failure("start the program", &error))?;
