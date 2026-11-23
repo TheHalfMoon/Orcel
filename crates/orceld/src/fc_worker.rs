@@ -31,6 +31,7 @@
 //! program's descendants) can never hold orceld's reply pipe.
 
 use crate::full_control_dispatch::Family;
+use orcel_authority::core::standing::PinnedProgram;
 use orcel_contracts::FailureCode;
 use orcel_provider_fs::ProviderError;
 use serde::{Deserialize, Serialize};
@@ -285,6 +286,11 @@ pub(crate) struct WorkerRequest {
     pub token: String,
     pub roots: Vec<String>,
     pub op: WorkerOp,
+    /// Review of #844 (WP1-14): for a run a standing approval covered, the
+    /// program as pinned at grant; the worker starts it only if the file it
+    /// holds open is that file with those contents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned: Option<PinnedProgram>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -812,8 +818,26 @@ fn refuse_hard_links(file: &std::fs::File) -> Result<(), ProviderError> {
     Ok(())
 }
 
-/// Performs one operation inside `roots`.
+/// Performs one operation inside `roots` (no pinned program: the run was
+/// approved per action). Tests drive the worker's operations through it.
+#[cfg(test)]
 pub(crate) fn perform(op: &WorkerOp, roots: &[String]) -> Result<Value, ProviderError> {
+    perform_pinned(op, roots, None)
+}
+
+/// [`perform`]; a run a standing approval covered starts only the `pinned`
+/// program (review of #844). `pinned` on any other operation refuses.
+pub(crate) fn perform_pinned(
+    op: &WorkerOp,
+    roots: &[String],
+    pinned: Option<&PinnedProgram>,
+) -> Result<Value, ProviderError> {
+    if pinned.is_some() && !matches!(op, WorkerOp::Run { .. }) {
+        return Err(failure(
+            FailureCode::InvalidRequest,
+            "only a run names a pinned program",
+        ));
+    }
     match op {
         WorkerOp::Stat { path } => {
             let resolved = existing(path, roots)?;
@@ -970,7 +994,15 @@ pub(crate) fn perform(op: &WorkerOp, roots: &[String]) -> Result<Value, Provider
             cwd,
             timeout_ms,
             max_output_bytes,
-        } => exec::run_program(program, args, cwd, *timeout_ms, *max_output_bytes, roots),
+        } => exec::run_program(
+            program,
+            args,
+            cwd,
+            *timeout_ms,
+            *max_output_bytes,
+            roots,
+            pinned,
+        ),
         WorkerOp::GitStatus { repository } => {
             exec::run_git(repository, exec::GitAction::Status, roots)
         }
@@ -1042,7 +1074,7 @@ pub(crate) fn serve(input: &mut impl Read, output: &mut impl Write, in_job: bool
         }
     };
     let result = if in_job {
-        perform(&request.op, &request.roots)
+        perform_pinned(&request.op, &request.roots, request.pinned.as_ref())
     } else {
         Err(failure(
             FailureCode::CapabilityDenied,
@@ -1488,6 +1520,7 @@ mod launch {
             job: &JobGrant,
             roots: &[String],
             op: &WorkerOp,
+            pinned: Option<&orcel_authority::core::standing::PinnedProgram>,
             confirm: &dyn Fn() -> Result<(), ProviderError>,
         ) -> Result<Value, ProviderError> {
             // The assign-only handle the service duplicated into this
@@ -1500,6 +1533,7 @@ mod launch {
                 token: token.clone(),
                 roots: roots.to_vec(),
                 op: op.clone(),
+                pinned: pinned.cloned(),
             })
             .map_err(|error| ProviderError::new(FailureCode::InternalError, error.to_string()))?;
             let (process, mut stdin, stdout) = self.start(job, confirm)?;

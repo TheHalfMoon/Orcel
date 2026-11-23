@@ -92,6 +92,142 @@ pub fn same_program(left: &str, right: &str) -> bool {
     normalize(left) == normalize(right)
 }
 
+/// Review of #844: a program a standing approval names, pinned to the file
+/// it was at grant: its path, the SHA-256 of its contents and its file
+/// identity (volume serial number and file index on Windows, device and
+/// inode elsewhere, as `orceld fc-worker` spells it). The folders lie inside
+/// the lease's roots, where file writes run without a prompt, so a path
+/// alone would cover whatever is written there later; a pinned program
+/// covers only these exact bytes in this exact file. Computed by the owner
+/// CLI at grant (`pin_program`) and shown in the service's box; checked
+/// again by orceld before it skips the per-action approval, by the service
+/// at `Authorize` (against orceld's claim), and by the worker on the file it
+/// holds open without write sharing right before the start.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PinnedProgram {
+    pub path: String,
+    pub sha256: String,
+    pub identity: String,
+}
+
+impl PinnedProgram {
+    /// Whether `other` is the same program: same path, same contents, same
+    /// file.
+    pub fn matches(&self, other: &PinnedProgram) -> bool {
+        same_program(&self.path, &other.path)
+            && self.sha256 == other.sha256
+            && self.identity == other.identity
+    }
+
+    fn check(&self) -> Result<(), AuthorityError> {
+        check_shown_path(&self.path)?;
+        if !self.path.to_ascii_lowercase().ends_with(".exe") {
+            return Err(invalid("a program is an absolute .exe path"));
+        }
+        let hex_digit = |b: u8| b.is_ascii_digit() || (b'a'..=b'f').contains(&b);
+        if self.sha256.len() != 64 || !self.sha256.bytes().all(hex_digit) {
+            return Err(invalid(
+                "a pinned program's sha256 is 64 lowercase hex characters",
+            ));
+        }
+        if self.identity.is_empty()
+            || self.identity.len() > 64
+            || !self.identity.bytes().all(|b| b == b'-' || hex_digit(b))
+        {
+            return Err(invalid(
+                "a pinned program's file identity is 1 to 64 lowercase hex characters and dashes",
+            ));
+        }
+        Ok(())
+    }
+
+    /// How the box and the Event Log show it.
+    pub fn describe(&self) -> String {
+        format!(
+            "{} (SHA-256 {}, file id {})",
+            self.path, self.sha256, self.identity
+        )
+    }
+}
+
+/// The identity of an open file, spelled as `orceld fc-worker` spells it.
+#[cfg(windows)]
+pub fn file_identity(file: &std::fs::File) -> Result<String, AuthorityError> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+    // SAFETY: a zeroed BY_HANDLE_FILE_INFORMATION is a valid out-parameter.
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: an open file handle and a live out-parameter.
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) } == 0 {
+        return Err(AuthorityError::invalid(format!(
+            "read the program's file identity: {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+    Ok(format!(
+        "{:08x}-{:08x}{:08x}",
+        info.dwVolumeSerialNumber, info.nFileIndexHigh, info.nFileIndexLow
+    ))
+}
+
+/// The identity of an open file, spelled as `orceld fc-worker` spells it.
+#[cfg(unix)]
+pub fn file_identity(file: &std::fs::File) -> Result<String, AuthorityError> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = file.metadata().map_err(|error| {
+        AuthorityError::invalid(format!("read the program's file identity: {error}"))
+    })?;
+    Ok(format!("{:x}-{:x}", metadata.dev(), metadata.ino()))
+}
+
+/// The pin of `file`, already open at `path`: its identity and the SHA-256
+/// of its contents, read from the start through this handle.
+pub fn pin_open_file(path: &str, file: &std::fs::File) -> Result<PinnedProgram, AuthorityError> {
+    use sha2::{Digest, Sha256};
+    use std::io::{Read, Seek, SeekFrom};
+    let failed = |error: std::io::Error| {
+        AuthorityError::invalid(format!("read the program to pin it: {error}"))
+    };
+    let mut reader = file;
+    reader.seek(SeekFrom::Start(0)).map_err(failed)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        let read = reader.read(&mut buffer).map_err(failed)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(PinnedProgram {
+        path: path.to_owned(),
+        sha256: hex(&hasher.finalize()),
+        identity: file_identity(file)?,
+    })
+}
+
+/// The pin of the program at `path` now (opened for reading, sharing read
+/// access only on Windows, so it cannot change while it is hashed).
+pub fn pin_program(path: &str) -> Result<PinnedProgram, AuthorityError> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.share_mode(windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ);
+    }
+    let file = options
+        .open(path)
+        .map_err(|error| AuthorityError::invalid(format!("open the program to pin it: {error}")))?;
+    if !file.metadata().map(|meta| meta.is_file()).unwrap_or(false) {
+        return Err(AuthorityError::invalid("the program is not a file"));
+    }
+    pin_open_file(path, &file)
+}
+
 /// What the owner asks a standing approval to cover (`StandingBegin`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -107,10 +243,11 @@ pub struct StandingScope {
     /// Must be empty: browser actions keep their own approval.
     #[serde(default)]
     pub origins: Vec<String>,
-    /// When present, the only programs (absolute `.exe` paths inside
-    /// `roots`) a covered `run` may start; requires `run`.
+    /// The only programs a covered `run` may start, each pinned to its
+    /// contents and file (absolute `.exe` paths inside `roots`): 1 to 8 with
+    /// `run`, none without it. There is no "any program in the folders".
     #[serde(default)]
-    pub commands: Option<Vec<String>>,
+    pub commands: Vec<PinnedProgram>,
     /// At most the lease's minutes; absent means the lease's.
     #[serde(default)]
     pub minutes: Option<u64>,
@@ -219,29 +356,27 @@ impl StandingScope {
                 return Err(invalid("a folder is named twice"));
             }
         }
-        if let Some(commands) = &self.commands {
-            if !self.operations.iter().any(|operation| operation == "run") {
-                return Err(invalid("programs are named only for the run operation"));
+        let runs = self.operations.iter().any(|operation| operation == "run");
+        if !runs && !self.commands.is_empty() {
+            return Err(invalid("programs are named only for the run operation"));
+        }
+        if runs && (self.commands.is_empty() || self.commands.len() > MAX_STANDING_COMMANDS) {
+            return Err(invalid(
+                "a standing approval for run names 1 to 8 pinned programs; it never covers any program in its folders",
+            ));
+        }
+        for (index, command) in self.commands.iter().enumerate() {
+            command.check()?;
+            if !path_within_roots(&command.path, &self.roots) {
+                return Err(AuthorityError::denied(
+                    "a standing approval's program lies outside its folders",
+                ));
             }
-            if commands.is_empty() || commands.len() > MAX_STANDING_COMMANDS {
-                return Err(invalid("a standing approval names 1 to 8 programs"));
-            }
-            for (index, command) in commands.iter().enumerate() {
-                check_shown_path(command)?;
-                if !command.to_ascii_lowercase().ends_with(".exe") {
-                    return Err(invalid("a program is an absolute .exe path"));
-                }
-                if !path_within_roots(command, &self.roots) {
-                    return Err(AuthorityError::denied(
-                        "a standing approval's program lies outside its folders",
-                    ));
-                }
-                if commands[..index]
-                    .iter()
-                    .any(|other| same_program(other, command))
-                {
-                    return Err(invalid("a program is named twice"));
-                }
+            if self.commands[..index]
+                .iter()
+                .any(|other| same_program(&other.path, &command.path))
+            {
+                return Err(invalid("a program is named twice"));
             }
         }
         if let Some(minutes) = self.minutes {
@@ -256,9 +391,14 @@ impl StandingScope {
 
     /// One line for the confirmation and the Event Log.
     pub fn describe(&self) -> String {
-        let programs = match &self.commands {
-            Some(commands) => commands.join(", "),
-            None => "any program inside those folders".to_owned(),
+        let programs = if self.commands.is_empty() {
+            "none".to_owned()
+        } else {
+            self.commands
+                .iter()
+                .map(PinnedProgram::describe)
+                .collect::<Vec<_>>()
+                .join(", ")
         };
         format!(
             "operations [{}]; folders [{}]; programs [{}]",
@@ -300,7 +440,8 @@ pub struct StandingApproval {
     pub roots: Vec<String>,
     /// Always empty in this slice.
     pub origins: Vec<String>,
-    pub commands: Option<Vec<String>>,
+    /// The pinned programs a covered run may start (empty without `run`).
+    pub commands: Vec<PinnedProgram>,
     pub issued_at_ms: u64,
     /// At most the lease's expiry.
     pub expires_at_ms: u64,
@@ -317,8 +458,9 @@ pub struct Cover<'a> {
     pub capability: &'a str,
     pub operation: &'a str,
     pub paths: &'a [String],
-    /// The program a run starts (one of `paths`); `None` for Git.
-    pub program: Option<&'a str>,
+    /// The program a run starts (one of `paths`) as pinned now (its
+    /// contents and file); `None` for Git.
+    pub program: Option<&'a PinnedProgram>,
     /// Must be `None`: browser actions are never covered.
     pub origin: Option<&'a str>,
     pub now_ms: u64,
@@ -370,16 +512,19 @@ impl StandingApproval {
         }
         match (cover.operation, cover.program) {
             ("run", Some(program)) => {
-                if !cover.paths.iter().any(|path| same_program(path, program)) {
+                if !cover
+                    .paths
+                    .iter()
+                    .any(|path| same_program(path, &program.path))
+                {
                     return refuse("the program is not one of the action's paths");
                 }
-                if let Some(commands) = &self.commands {
-                    if !commands
-                        .iter()
-                        .any(|command| same_program(command, program))
-                    {
-                        return refuse("it does not name this program");
-                    }
+                // Review of #844: the same path, contents and file as
+                // pinned at grant, or not covered.
+                if !self.commands.iter().any(|pinned| pinned.matches(program)) {
+                    return refuse(
+                        "it does not name this program, or the program's contents or file changed since the grant",
+                    );
                 }
             }
             ("run", None) => return refuse("a run names its program"),
@@ -529,9 +674,10 @@ impl AuthorityCore {
         )?;
         let programs = approval
             .commands
-            .as_ref()
-            .map(|commands| commands.join(", "))
-            .unwrap_or_else(|| "any in the folders".to_owned());
+            .iter()
+            .map(PinnedProgram::describe)
+            .collect::<Vec<_>>()
+            .join(", ");
         self.event(
             crate::EVENT_GRANTED_SCOPE,
             false,
@@ -722,7 +868,7 @@ impl AuthorityCore {
             capability: &claims.capability,
             operation: &claims.operation,
             paths: &paths,
-            program: claim.program.as_deref(),
+            program: claim.program.as_ref(),
             origin: claims.origin.as_deref(),
             now_ms: now,
         })?;
@@ -744,7 +890,7 @@ impl AuthorityCore {
 pub(super) fn confirmation_paragraph(scope: &StandingScope, lease_minutes: u64) -> String {
     let minutes = scope.minutes.unwrap_or(lease_minutes);
     format!(
-        "STANDING APPROVAL: while it lasts, Orcel does NOT ask you before each of these actions by this client for this task:\n{}\nStanding approval expires: {minutes} minutes after approval (never after the lease)\nIt never covers Admin, remote callers, browser actions or another client, and it ends with Stop, locking the PC, sign-out, revoke or the lease's end.",
+        "STANDING APPROVAL: while it lasts, Orcel does NOT ask you before each of these actions by this client for this task:\n{}\nA program is covered only while its contents (SHA-256) and file match what is shown here; if either changes, Orcel asks again.\nStanding approval expires: {minutes} minutes after approval (never after the lease)\nIt never covers Admin, remote callers, browser actions or another client, and it ends with Stop, locking the PC, sign-out, revoke or the lease's end.",
         scope.describe()
     )
 }

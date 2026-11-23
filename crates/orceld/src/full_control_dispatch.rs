@@ -49,7 +49,7 @@
 //! per-action approval; nothing here approves or grants anything.
 
 use orcel_authority::core::dispatch_jobs::is_job_id;
-use orcel_authority::core::standing::{Cover, StandingApproval};
+use orcel_authority::core::standing::{Cover, PinnedProgram, StandingApproval};
 use orcel_authority::lease::{check_dispatch_path, path_within_roots, LeaseBody, LeaseScope};
 use orcel_authority::protocol::{AuthorizeClaims, DispatchOutcome, StandingClaim};
 use orcel_contracts::{ExecutorClass, FailureCode, RequestEnvelope};
@@ -213,12 +213,15 @@ pub(crate) trait ActionApproval {
 pub(crate) trait WorkerLauncher {
     /// Starts the worker suspended, assigns it with `job.handle` (and closes
     /// that handle on every path), calls `confirm`, and resumes the worker
-    /// only if it succeeds (terminating it otherwise).
+    /// only if it succeeds (terminating it otherwise). `pinned`: review of
+    /// #844, the program a standing approval covered the run with; the
+    /// worker refuses to start any other contents or file.
     fn run(
         &self,
         job: &JobGrant,
         roots: &[String],
         op: &crate::fc_worker::WorkerOp,
+        pinned: Option<&PinnedProgram>,
         confirm: &dyn Fn() -> Result<(), ProviderError>,
     ) -> Result<Value, ProviderError>;
 }
@@ -493,6 +496,38 @@ pub(crate) fn run_in_worker(
     remote: bool,
     now_ms: u64,
 ) -> Result<Value, ProviderError> {
+    run_in_worker_pinned(
+        port,
+        launcher,
+        approval,
+        request,
+        principal_id,
+        remote,
+        now_ms,
+        &pin_now,
+    )
+}
+
+/// Review of #844: the program at `path` as it is now (its contents'
+/// SHA-256 and its file identity); `None` when it cannot be read, which
+/// means no standing approval covers the run (the person is asked).
+fn pin_now(path: &str) -> Option<PinnedProgram> {
+    orcel_authority::core::standing::pin_program(path).ok()
+}
+
+/// [`run_in_worker`] with `pinner` pinning the program a run names (tests
+/// pin without files).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_in_worker_pinned(
+    port: &dyn AuthorityPort,
+    launcher: &dyn WorkerLauncher,
+    approval: &dyn ActionApproval,
+    request: &RequestEnvelope,
+    principal_id: Option<&str>,
+    remote: bool,
+    now_ms: u64,
+    pinner: &dyn Fn(&str) -> Option<PinnedProgram>,
+) -> Result<Value, ProviderError> {
     let op: crate::fc_worker::WorkerOp = serde_json::from_value(request.arguments.clone())
         .map_err(|error| {
             ProviderError::new(
@@ -512,22 +547,39 @@ pub(crate) fn run_in_worker(
         principal_id,
         paths: op.paths(),
     };
+    // The pin a standing approval covered the run with, for the worker to
+    // check on the file it holds right before the start.
+    let covered_pin: RefCell<Option<PinnedProgram>> = RefCell::new(None);
     let approve = |digest: &str, body: &LeaseBody| {
         if !op.needs_approval() {
             return Ok(None);
         }
         // WP1-14: a standing approval in effect that covers exactly this
         // operation stands in for the person's per-action approval; the
-        // service checks it again. Otherwise the person is asked.
+        // service checks it again. Otherwise the person is asked. Review of
+        // #844: a run is covered only by its program's contents and file as
+        // pinned at grant; a program that cannot be pinned now is not.
         if !remote {
             let standing = port.standing()?;
-            if let Some(covering) =
-                covering_standing(&standing, body, &op, request, principal_id, remote, now_ms)
-            {
-                return Ok(Some(StandingClaim {
-                    standing_id: covering.id.clone(),
-                    program: run_program(&op).map(str::to_owned),
-                }));
+            let pinned = run_program(&op).and_then(pinner);
+            let runs = run_program(&op).is_some();
+            if !runs || pinned.is_some() {
+                if let Some(covering) = covering_standing(
+                    &standing,
+                    body,
+                    &op,
+                    request,
+                    principal_id,
+                    remote,
+                    pinned.as_ref(),
+                    now_ms,
+                ) {
+                    covered_pin.replace(pinned.clone());
+                    return Ok(Some(StandingClaim {
+                        standing_id: covering.id.clone(),
+                        program: pinned,
+                    }));
+                }
             }
         }
         approval.approve(&op, request, digest).map(|()| None)
@@ -544,7 +596,8 @@ pub(crate) fn run_in_worker(
         ));
     };
     let confirm = || port.dispatch_active(&grant.authorization_id);
-    let result = launcher.run(job, &grant.roots, &op, &confirm);
+    let pinned = covered_pin.borrow().clone();
+    let result = launcher.run(job, &grant.roots, &op, pinned.as_ref(), &confirm);
     record_outcome(port, &ticket, &result);
     result
 }
@@ -562,11 +615,13 @@ fn run_program(op: &crate::fc_worker::WorkerOp) -> Option<&str> {
 /// the lease `body` for the calling client `principal_id`: the same lease,
 /// client and task, the operation's executor and name, its capability, every
 /// path it touches inside the approval's folders, and for a run its program
-/// among the approval's programs when it names any. Only operations that
-/// otherwise ask a per-action approval are covered; a remote caller, an
-/// unidentified client and anything else never are (the person is asked).
-/// The rule is `StandingApproval::check_cover`, which the service's
-/// `Authorize` applies again.
+/// `pinned` now (path, contents' SHA-256, file identity) equal to one the
+/// approval pinned at grant. Only operations that otherwise ask a per-action
+/// approval are covered; a remote caller, an unidentified client and
+/// anything else never are (the person is asked). The rule is
+/// `StandingApproval::check_cover`, which the service's `Authorize` applies
+/// again.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn covering_standing<'a>(
     standing: &'a [StandingApproval],
     body: &LeaseBody,
@@ -574,6 +629,7 @@ pub(crate) fn covering_standing<'a>(
     request: &RequestEnvelope,
     principal_id: Option<&str>,
     remote: bool,
+    pinned: Option<&PinnedProgram>,
     now_ms: u64,
 ) -> Option<&'a StandingApproval> {
     if remote || !op.needs_approval() {
@@ -589,7 +645,7 @@ pub(crate) fn covering_standing<'a>(
         capability: &request.capability,
         operation: op.name(),
         paths: &paths,
-        program: run_program(op),
+        program: pinned,
         origin: None,
         now_ms,
     };

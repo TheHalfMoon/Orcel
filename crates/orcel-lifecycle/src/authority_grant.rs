@@ -21,7 +21,9 @@
 
 use crate::LifecycleError;
 use orcel_authority::client::AuthorityClient;
-use orcel_authority::core::standing::{StandingApproval, StandingScope, STANDING_OPERATIONS};
+use orcel_authority::core::standing::{
+    PinnedProgram, StandingApproval, StandingScope, STANDING_OPERATIONS,
+};
 use orcel_authority::lease::{BrowserFamily, LeaseScope, SignedLease, MAX_ORIGINS};
 use orcel_authority::protocol::{ClaimedOrigin, Request};
 use orcel_authority::{hex, sha256_hex, unhex, AuthorityError};
@@ -304,11 +306,24 @@ pub fn parse_operations(list: &str) -> Result<Vec<String>, LifecycleError> {
         .collect()
 }
 
+/// Review of #844: pins each `--program` as it is now (path, SHA-256 of its
+/// contents, file identity).
+pub fn pin_programs(paths: &[String]) -> Result<Vec<PinnedProgram>, LifecycleError> {
+    paths
+        .iter()
+        .map(|path| {
+            orcel_authority::core::standing::pin_program(path).map_err(|error| {
+                LifecycleError::usage(format!("--program {path}: {}", error.message))
+            })
+        })
+        .collect()
+}
+
 /// WP1-14: the lease and standing approval a standing grant asks for. The
 /// lease grants the filesystem and shell/process executors over `roots`;
 /// the standing approval covers `operations` inside `folders` (and, for a
-/// run, only `programs` when any are named). Validated here as the service
-/// validates it.
+/// run, only its pinned programs, which a run requires). Validated here as
+/// the service validates it.
 pub fn standing_request(
     client_ref: String,
     task: String,
@@ -759,7 +774,15 @@ mod tests {
                 operations: parse_operations(operations)?,
                 roots: folders.iter().map(|f| (*f).to_owned()).collect(),
                 origins: Vec::new(),
-                commands: programs.map(|list| list.into_iter().map(str::to_owned).collect()),
+                commands: programs
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|path| PinnedProgram {
+                        path: path.to_owned(),
+                        sha256: "ab".repeat(32),
+                        identity: "1-2".to_owned(),
+                    })
+                    .collect(),
                 minutes: None,
             })
         };
@@ -783,19 +806,26 @@ mod tests {
         // Unknown operations, folders outside the roots, an unidentified
         // client and Admin are refused before anything is sent.
         assert!(parse_operations("run,delete").is_err());
-        let outside = standing("run", &[r"E:\elsewhere"], None).and_then(|scope| {
+        let outside = standing("git_commit", &[r"E:\elsewhere"], None).and_then(|scope| {
             standing_request(client.clone(), "b".into(), roots.clone(), 30, scope)
         });
         assert!(outside.is_err());
-        let unidentified = standing("run", &[r"D:\work\repo"], None).and_then(|scope| {
+        let unidentified = standing("git_commit", &[r"D:\work\repo"], None).and_then(|scope| {
             standing_request("orcel-owner".into(), "b".into(), roots.clone(), 30, scope)
         });
         assert!(unidentified.is_err());
-        let admin = standing("run", &[r"D:\work\repo"], None).and_then(|mut scope| {
+        let admin = standing("git_commit", &[r"D:\work\repo"], None).and_then(|mut scope| {
             scope.executors = vec![ExecutorClass::Admin];
             standing_request(client.clone(), "b".into(), roots.clone(), 30, scope)
         });
         assert!(admin.is_err());
+        // Review of #844: a run needs pinned programs, and a program that
+        // cannot be read cannot be pinned.
+        let any_program = standing("run", &[r"D:\work\repo"], None).and_then(|scope| {
+            standing_request(client.clone(), "b".into(), roots.clone(), 30, scope)
+        });
+        assert!(any_program.is_err());
+        assert!(pin_programs(&[r"Z:\no\such\tool.exe".to_owned()]).is_err());
     }
 
     #[test]

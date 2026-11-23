@@ -62,15 +62,27 @@ satisfies all of these is that **a standing approval is issued with its lease, t
   exist; none of them can be named.
 - **Folders** (`roots`): 1 to 8, each inside the lease's roots; every path a covered dispatch names must lie inside
   one of them.
-- **Programs** (`commands`): optional, only with `run`; absolute `.exe` paths inside the folders. SG-000096's
-  "command patterns" are read as exact program paths: no wildcard, no argument pattern.
+- **Programs** (`commands`): required with `run` (1 to 8), none without it; absolute `.exe` paths inside the folders,
+  each **pinned** (review of #844 at `6b7324ce`): the owner CLI records, at grant, the SHA-256 of the program's
+  contents and its file identity (volume serial number and file index), and the service's box shows both. There is
+  no "any program in the folders": the folders lie inside the lease's roots, where `fc_fs_write` and `fc_fs_mkdir`
+  run without a prompt (the 2026-11-19 amendment), so a path alone would cover a program replaced or built there
+  later. SG-000096's "command patterns" are read as exact pinned programs: no wildcard, no argument pattern. This
+  changes spec 4.15's `commands: Option<Vec<String>>` into a list of pinned programs.
 - **Origins:** must be empty. High-impact browser actions keep their own approval in this slice (section 5).
 - **Expiry:** at most the lease's; `--standing-minutes` shortens it.
 
 The same rule, `StandingApproval::check_cover`, runs in orceld (to decide whether to ask) and in the service's
 `Authorize` (which decides): same lease, client and task, a named executor and operation, the operation's own
 capability (`fc.process` for `run`, `fc.git` for the Git changes), every path inside the folders, for a run its
-program among the action's paths and, when programs are named, among them; no origin; not expired.
+program among the action's paths and equal to a pinned one (same path, SHA-256 and file identity); no origin; not
+expired.
+
+The pin is checked three times: orceld pins the program again before it decides (a program it cannot read, or whose
+contents or file changed, is not covered, and the person is asked); the service compares orceld's pin (named in the
+`Authorize` claim) with the one granted; and `orceld fc-worker` hashes the program through the handle it holds
+without write or delete sharing until the start, and refuses (`TARGET_STALE`, nothing started) if the contents or
+file differ from the pin it was handed.
 
 ## 2. The indicator dependency: fail closed
 
@@ -91,6 +103,11 @@ indicator's `Heartbeat`. Spec 4.14's wider rule, that the service refuses every 
 heartbeat, is WP1-12's and is not applied here: it would stop all Full Control until the indicator exists. The
 heartbeat is disclosure only and proves nothing against a same-user agent (C-27 c); the gates are the owner CLI
 image, the observed unlock, the service's box and Windows Hello.
+
+**Note for WP1-12:** the `Heartbeat` that will turn standing approvals on must be accepted only from the indicator's
+own image (observed by the service, as it observes orceld's and the owner CLI's images, never claimed), and bound to
+the caller's user and logon session. Otherwise any same-user process could send heartbeats and make standing
+approvals usable with nothing shown on screen.
 
 ## 3. Service
 
@@ -121,14 +138,16 @@ image, the observed unlock, the service's box and Windows Hello.
   and looks for one that covers the operation for the chosen lease and the calling client
   (`covering_standing`); if one does, the person is not asked and `Authorize` names it; otherwise the person is asked
   through the Windows approval dialog, as before. A remote caller (the entry's own flag, now passed through
-  `fc_requests::dispatch`) and a request with no identified client are never covered. A refused standing
+  `fc_requests::dispatch`) and a request with no identified client are never covered. For a run, orceld pins the
+  program first and names that pin in the claim and in the worker request (`WorkerRequest.pinned`). A refused standing
   `Authorize` runs nothing and is not re-asked; an answer that does not name the same `standing_id` runs nothing
   either. Everything else (reads, lease-covered writes, desktop input, browser actions) is unchanged.
 - `fc.status` lists this client's standing approvals in effect (operations, folders, programs, expiry), so the agent
   can tell the person which actions will not ask.
 - `orcel full-control standing grant --client <cl-ref> --task <label> --root <path>... --operations <list>
   --folder <path>... [--program <exe>]... [--minutes <n>] [--standing-minutes <n>]`: the lease (filesystem and shells
-  over the roots) and the standing approval, checked locally as the service checks them, then the grant gate.
+  over the roots) and the standing approval, checked locally as the service checks them, then the grant gate. `run`
+  needs `--program`; each is pinned and printed before the intent is sent.
   `orcel full-control standing revoke [--id <sa-...>]` and `orcel full-control standing status` reach only this
   logon session's approvals. Without the installed service, `standing` is refused (the deprecated store never issues
   one).
@@ -142,6 +161,7 @@ image, the observed unlock, the service's box and Windows Hello.
 | A standing approval used or granted without disclosure | `INDICATOR_UNAVAILABLE` at `StandingBegin`, `StandingComplete` and `Authorize` without a live heartbeat; `in_effect` false | `standing_without_a_live_indicator_fails_closed`; `standing_survives_a_restart_only_as_its_lease_does_and_needs_the_indicator_again` |
 | Admin or Remote through a standing approval | Refused at grant and at `Authorize` | `standing_admin_remote_and_browser_are_refused` |
 | Browser actions through a standing approval | Origins refused; a browser lease cannot carry one; an `Authorize` with an origin is not covered | `standing_admin_remote_and_browser_are_refused`; `standing_covers_only_its_scope_client_and_task` |
+| A covered program replaced or rewritten inside the folders (lease-covered writes need no prompt), or a program built there later | Runs need pinned programs; orceld, the service and the worker each compare contents (SHA-256) and file identity; a mismatch asks per action, or (at the worker) starts nothing | `standing_program_pins_bind_contents_and_file`; `standing_covers_only_its_scope_client_and_task`; `standing_scope_must_fit_its_lease_and_one_identified_client`; `fc_dispatch_standing_covers_a_run_only_with_its_pinned_contents_and_file`; `fc_worker_tests::windows::fc_worker_a_standing_run_starts_only_its_pinned_program` |
 | Out-of-scope program, folder, operation, capability, executor | `check_cover` refuses, at the service and at orceld (which then asks) | `standing_covers_only_its_scope_client_and_task`; `full_control_dispatch_tests::fc_dispatch_standing_mismatches_ask_as_before` |
 | Another client, task or lease | Refused; the dispatcher asks | `standing_covers_only_its_scope_client_and_task`; `fc_dispatch_standing_mismatches_ask_as_before` |
 | A scope wider than its lease, or an unidentified client | Refused at grant and by the CLI | `standing_scope_must_fit_its_lease_and_one_identified_client`; `orcel-lifecycle` `standing_grant_requests_are_checked_as_the_service_checks_them` |
@@ -160,15 +180,19 @@ All of these wait for WP1-12 (no heartbeat exists, so the installed service refu
   Hello signs, Event Log 4101 has the `orcel-standing/1` entry beside the lease's;
 - `fc_process_run` and `fc_git_commit` through a real MCP client running without a prompt inside the approval, and
   asking outside it;
-- Win+L, Stop and `orcel full-control standing revoke` ending it on the installed service.
+- Win+L, Stop and `orcel full-control standing revoke` ending it on the installed service;
+- a pinned program rebuilt or replaced in its folder after the grant asking again through a real client.
 
 ## 7. Residuals
 
 1. **Nothing is in effect until WP1-12.** By design (section 2).
-2. **Arguments are not bound.** A covered run may pass any arguments to a named program, and a covered commit or
-   branch any message or name. Naming programs narrows a run; nothing narrows its arguments.
-3. **orceld's claims.** Which path is the program, and whether the caller is remote, are orceld's claims (orceld is
-   the configured trusted image, as for every `Authorize` claim); the service records them as session-asserted.
+2. **Arguments are not bound.** A covered run may pass any arguments to a pinned program, and a covered commit or
+   branch any message or name. Pinning narrows a run to exact bytes; nothing narrows its arguments, and a pinned
+   program that itself reads files (a compiler, a script interpreter) does whatever those files say.
+3. **orceld's claims.** Which path is the program, its pin at `Authorize`, and whether the caller is remote are
+   orceld's claims (orceld is the configured trusted image, as for every `Authorize` claim); the service records them
+   as session-asserted. The pin at grant is computed by the owner CLI, a same-user process: a program swapped before
+   the CLI reads it is pinned as swapped, which is why the box shows the hash and the CLI prints it.
 4. **Not signed.** A standing approval is held only by the service and named by id; orceld never presents it. Leases
    stay signed.
 5. **Not built here:** standing approvals for desktop input (SG-000095's per-action approval stays), for high-impact
@@ -180,15 +204,19 @@ All of these wait for WP1-12 (no heartbeat exists, so the installed service refu
 8. **Same-user agent (C-27).** Once granted, a standing approval is used by whatever process speaks as its client
    reference inside its scope: that is its purpose. Its scope, client, task and expiry are what the owner approved in
    the service's box.
+9. **An error asks nothing.** When orceld cannot list the standing approvals (`port.standing()` fails, for example
+   the service is unreachable), the dispatch is refused rather than falling back to the per-action prompt: the
+   service's `Authorize` would refuse anyway, so asking would only cost the person a prompt for nothing.
 
 ## 8. Tests
 
 At head (Windows, unelevated):
 
-- `cargo test -p orcel-authority`: 88 unit tests (8 `standing_`), 12 `console_harness` (1 for this slice), 7
+- `cargo test -p orcel-authority`: 89 unit tests (9 `standing_`), 12 `console_harness` (1 for this slice), 7
   `dispatch_jobs`, 11 `install_script`.
-- `cargo test -p orceld -- full_control_dispatch_ fc_requests_ fc_worker_ sg132`: 71 (4 new dispatcher tests);
-  `ob04_shadow_scan`, `ob07b_vault_scan`, `dependency_direction`.
+- `cargo test -p orceld -- full_control_dispatch_ fc_requests_ fc_worker_ sg132`: 73 (5 new dispatcher tests and
+  1 worker test with a real pinned program in a real job root); `ob04_shadow_scan`, `ob07b_vault_scan`,
+  `dependency_direction`.
 - `cargo test -p orcel-lifecycle` (`standing_grant_requests_are_checked_as_the_service_checks_them`) and
   `release_blocker_sweep`.
 - `cargo clippy -p orcel-authority -p orceld -p orcel-lifecycle --all-targets -- -D warnings`; `cargo fmt`.

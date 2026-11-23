@@ -10,7 +10,7 @@ use crate::full_control_dispatch::{
     run_in_worker as dispatch_worker, with_desktop_outcomes, Action, ActionApproval, AuthorityPort,
     BoundedExecution, Family, HostLauncher, JobGrant, Ticket, WorkerLauncher,
 };
-use orcel_authority::core::standing::StandingApproval;
+use orcel_authority::core::standing::{PinnedProgram, StandingApproval};
 use orcel_authority::lease::{
     BrowserFamily, GrantEvidence, LeaseBody, LeaseScope, ObservedRequester, LEASE_CONTRACT,
 };
@@ -284,6 +284,8 @@ pub(crate) struct FakeLauncher {
     service: FakePort,
     fails: Option<FailureCode>,
     pub(crate) runs: Cell<u32>,
+    /// The pinned program each run was handed (review of #844).
+    pub(crate) pinned: RefCell<Vec<Option<PinnedProgram>>>,
 }
 
 impl WorkerLauncher for FakeLauncher {
@@ -292,10 +294,12 @@ impl WorkerLauncher for FakeLauncher {
         job: &JobGrant,
         roots: &[String],
         op: &WorkerOp,
+        pinned: Option<&PinnedProgram>,
         confirm: &dyn Fn() -> Result<(), ProviderError>,
     ) -> Result<Value, ProviderError> {
         assert!(job.handle != 0 && job.id.starts_with("fcj-"));
         let _ = &self.service;
+        self.pinned.borrow_mut().push(pinned.cloned());
         confirm()?;
         self.runs.set(self.runs.get() + 1);
         assert_eq!(roots, [r"C:\work".to_owned()]);
@@ -339,6 +343,7 @@ pub(crate) fn launcher(service: &FakePort) -> FakeLauncher {
         service: service.clone(),
         fails: None,
         runs: Cell::new(0),
+        pinned: RefCell::new(Vec::new()),
     }
 }
 
@@ -1599,7 +1604,7 @@ fn standing_approval(lease: &LeaseBody) -> StandingApproval {
         operations: vec!["run".to_owned(), "git_commit".to_owned()],
         roots: vec![REPO.to_owned()],
         origins: Vec::new(),
-        commands: Some(vec![REPO_TOOL.to_owned()]),
+        commands: vec![test_pin(REPO_TOOL)],
         issued_at_ms: 1_000,
         expires_at_ms: 1_000 + 10 * 60_000,
     }
@@ -1644,7 +1649,22 @@ fn dispatch_as(
     remote: bool,
     now_ms: u64,
 ) -> Result<Value, ProviderError> {
-    dispatch_worker(
+    dispatch_pinned(port, approval, op, principal, remote, now_ms, &|path| {
+        Some(test_pin(path))
+    })
+}
+
+/// [`dispatch_as`] with `pinner` standing in for reading the program now.
+fn dispatch_pinned(
+    port: &FakePort,
+    approval: &FakeApproval,
+    op: &WorkerOp,
+    principal: Option<&str>,
+    remote: bool,
+    now_ms: u64,
+    pinner: &dyn Fn(&str) -> Option<PinnedProgram>,
+) -> Result<Value, ProviderError> {
+    crate::full_control_dispatch::run_in_worker_pinned(
         port,
         &launcher(port),
         approval,
@@ -1652,7 +1672,79 @@ fn dispatch_as(
         principal,
         remote,
         now_ms,
+        pinner,
     )
+}
+
+/// A program as pinned at grant (a fixed SHA-256 and file identity).
+fn test_pin(path: &str) -> PinnedProgram {
+    PinnedProgram {
+        path: path.to_owned(),
+        sha256: "ab".repeat(32),
+        identity: "0000000a-0000000000000001".to_owned(),
+    }
+}
+
+#[test]
+fn fc_dispatch_standing_covers_a_run_only_with_its_pinned_contents_and_file() {
+    let client = client();
+    let run = run_op(REPO_TOOL, REPO);
+    let cases: Vec<(&str, Option<PinnedProgram>)> = vec![
+        (
+            "rewritten since the grant",
+            Some(PinnedProgram {
+                sha256: "cd".repeat(32),
+                ..test_pin(REPO_TOOL)
+            }),
+        ),
+        (
+            "replaced by another file",
+            Some(PinnedProgram {
+                identity: "0000000a-0000000000000002".to_owned(),
+                ..test_pin(REPO_TOOL)
+            }),
+        ),
+        ("unreadable now", None),
+    ];
+    for (name, now) in cases {
+        let port = standing_port(|_| {});
+        let approval = FakeApproval::default();
+        dispatch_pinned(&port, &approval, &run, Some(&client), false, 5, &|_| {
+            now.clone()
+        })
+        .expect(name);
+        assert_eq!(approval.asked.borrow().len(), 1, "{name}: asked");
+        assert_eq!(last_named(&port), None, "{name}: not covered");
+    }
+    // Covered: the worker is handed the pin to check on the file it holds.
+    let port = standing_port(|_| {});
+    let launched = launcher(&port);
+    crate::full_control_dispatch::run_in_worker_pinned(
+        &port,
+        &launched,
+        &FakeApproval::default(),
+        &fc_request(&run),
+        Some(&client),
+        false,
+        5,
+        &|path| Some(test_pin(path)),
+    )
+    .expect("covered");
+    assert_eq!(*launched.pinned.borrow(), vec![Some(test_pin(REPO_TOOL))]);
+    // A commit is covered without a program, and the worker gets no pin.
+    let launched = launcher(&port);
+    crate::full_control_dispatch::run_in_worker_pinned(
+        &port,
+        &launched,
+        &FakeApproval::default(),
+        &fc_request(&commit_op(REPO)),
+        Some(&client),
+        false,
+        5,
+        &|_| None,
+    )
+    .expect("covered commit");
+    assert_eq!(*launched.pinned.borrow(), vec![None]);
 }
 
 /// The standing approval the last `Authorize` named.
@@ -1676,7 +1768,7 @@ fn fc_dispatch_standing_covers_a_matching_run_and_commit_without_asking() {
         last_named(&port),
         Some(StandingClaim {
             standing_id: format!("sa-{}", "5".repeat(32)),
-            program: Some(REPO_TOOL.to_owned()),
+            program: Some(test_pin(REPO_TOOL)),
         })
     );
     dispatch_as(&port, &approval, &commit_op(REPO), Some(&client), false, 5)
@@ -1808,6 +1900,7 @@ fn fc_dispatch_standing_never_covers_a_remote_or_unidentified_caller() {
         &request,
         Some(&client),
         true,
+        Some(&test_pin(REPO_TOOL)),
         5
     )
     .is_none());
@@ -1818,9 +1911,22 @@ fn fc_dispatch_standing_never_covers_a_remote_or_unidentified_caller() {
         &request,
         Some(&client),
         false,
+        Some(&test_pin(REPO_TOOL)),
         5
     )
     .is_some());
+    // A run with no pin (the program could not be read) is never covered.
+    assert!(crate::full_control_dispatch::covering_standing(
+        &standing,
+        &body,
+        &run,
+        &request,
+        Some(&client),
+        false,
+        None,
+        5
+    )
+    .is_none());
     let write = WorkerOp::WriteText {
         path: r"C:\work\repo\a.txt".to_owned(),
         text: "x".to_owned(),
@@ -1833,6 +1939,7 @@ fn fc_dispatch_standing_never_covers_a_remote_or_unidentified_caller() {
         &fc_request(&write),
         Some(&client),
         false,
+        None,
         5
     )
     .is_none());
@@ -1845,7 +1952,8 @@ fn fc_dispatch_standing_never_covers_a_remote_or_unidentified_caller() {
 #[test]
 fn fc_dispatch_a_refused_or_unconfirmed_standing_authorize_runs_nothing() {
     let client = client();
-    let run = run_op(REPO_TOOL, REPO);
+    // A covered commit (no program to pin).
+    let run = commit_op(REPO);
     // The service refuses (no live indicator, revoked meanwhile, ...).
     let port = standing_port(|_| {});
     port.with(|service| service.refuse_standing = Some(FailureCode::IndicatorUnavailable));

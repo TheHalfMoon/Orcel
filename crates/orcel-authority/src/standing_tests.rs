@@ -5,12 +5,23 @@
 //! standing request fails closed.
 
 use super::*;
-use crate::core::standing::{StandingApproval, StandingScope, INDICATOR_HEARTBEAT_MS};
+use crate::core::standing::{
+    pin_program, PinnedProgram, StandingApproval, StandingScope, INDICATOR_HEARTBEAT_MS,
+};
 use crate::protocol::StandingClaim;
 
 const TASK: &str = "build the repo";
 const REPO: &str = r"C:\work\repo";
 const TOOL: &str = r"C:\work\repo\tool.exe";
+
+/// A program pinned at grant (a fixed SHA-256 and file identity).
+fn pin(path: &str) -> PinnedProgram {
+    PinnedProgram {
+        path: path.to_owned(),
+        sha256: "ab".repeat(32),
+        identity: "0000000a-0000000000000001".to_owned(),
+    }
+}
 
 fn client_ref() -> String {
     format!("cl-{}", "a".repeat(32))
@@ -30,7 +41,7 @@ fn standing_scope() -> StandingScope {
         operations: vec!["run".to_owned(), "git_commit".to_owned()],
         roots: vec![REPO.to_owned()],
         origins: Vec::new(),
-        commands: Some(vec![TOOL.to_owned()]),
+        commands: vec![pin(TOOL)],
         minutes: None,
     }
 }
@@ -114,7 +125,7 @@ fn covered(
             job_ack: crate::core::dispatch_jobs::executor_runs_in_job(executor),
             standing: Some(StandingClaim {
                 standing_id: standing_id.to_owned(),
-                program: program.map(str::to_owned),
+                program: program.map(pin),
             }),
         },
     )
@@ -381,15 +392,20 @@ fn standing_scope_must_fit_its_lease_and_one_identified_client() -> Result<(), S
     };
     let codes = [
         refused(&|s| s.roots = vec![r"C:\elsewhere".to_owned()]),
-        refused(&|s| s.commands = Some(vec![r"C:\work\other\tool.exe".to_owned()])),
+        refused(&|s| s.commands = vec![pin(r"C:\work\other\tool.exe")]),
         refused(&|s| s.operations = vec!["git_commit".to_owned()]),
         refused(&|s| s.operations = vec!["write_text".to_owned()]),
         refused(&|s| s.operations.push("run".to_owned())),
         refused(&|s| s.minutes = Some(31)),
         refused(&|s| s.minutes = Some(0)),
         refused(&|s| s.roots = Vec::new()),
-        refused(&|s| s.commands = Some(vec![r"C:\work\repo\script.ps1".to_owned()])),
+        refused(&|s| s.commands = vec![pin(r"C:\work\repo\script.ps1")]),
         refused(&|s| s.executors = Vec::new()),
+        // Review of #844: a run never covers "any program in the folders",
+        // and a pin must be a real SHA-256 and file identity.
+        refused(&|s| s.commands = Vec::new()),
+        refused(&|s| s.commands[0].sha256 = "x".repeat(64)),
+        refused(&|s| s.commands[0].identity = String::new()),
     ];
     for (index, error) in codes.iter().enumerate() {
         assert!(error.is_some(), "case {index} was accepted");
@@ -512,25 +528,33 @@ fn standing_covers_only_its_scope_client_and_task() -> Result<(), String> {
             job_ack: true,
             standing: Some(StandingClaim {
                 standing_id: standing.id.clone(),
-                program: Some(TOOL.to_owned()),
+                program: Some(pin(TOOL)),
             }),
         },
     );
     assert_eq!(code(foreign), Some(FailureCode::LeaseInvalid));
-    // Without commands, any program inside its folders is covered.
-    ok(core.handle(&owner(), Request::Stop))?;
-    let mut any_program = standing_scope();
-    any_program.commands = None;
-    let (lease, standing, text) = grant_standing(&mut core, any_program)?;
-    assert!(text.contains("any program inside those folders"));
-    ok(covered(
-        &mut core,
-        &lease,
-        ExecutorClass::ShellProcess,
-        run_claims(other_program),
-        &standing.id,
-        Some(other_program),
-    ))?;
+    // Review of #844: the named program with other contents, or another
+    // file at its path (replaced since the grant), is not covered.
+    let mut rewritten = pin(TOOL);
+    rewritten.sha256 = "cd".repeat(32);
+    let mut replaced = pin(TOOL);
+    replaced.identity = "0000000a-0000000000000002".to_owned();
+    for changed in [rewritten, replaced] {
+        let refused = core.handle(
+            &orceld(),
+            Request::Authorize {
+                lease_id: lease.body.lease_id.clone(),
+                executor: ExecutorClass::ShellProcess,
+                claims: run_claims(TOOL),
+                job_ack: true,
+                standing: Some(StandingClaim {
+                    standing_id: standing.id.clone(),
+                    program: Some(changed),
+                }),
+            },
+        );
+        assert_eq!(code(refused), Some(FailureCode::CapabilityDenied));
+    }
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
@@ -720,6 +744,34 @@ fn standing_survives_a_restart_only_as_its_lease_does_and_needs_the_indicator_ag
     assert!(!serde_json::to_string(&without)
         .map_err(|e| e.to_string())?
         .contains("standing"));
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[test]
+fn standing_program_pins_bind_contents_and_file() -> Result<(), String> {
+    let dir = temp_dir("standing-pin")?;
+    let program = dir.join("tool.exe");
+    std::fs::write(&program, b"first build").map_err(|e| e.to_string())?;
+    let path = program.display().to_string();
+    let first = pin_program(&path).map_err(|e| e.to_string())?;
+    assert_eq!(first.sha256, sha256_hex(b"first build"));
+    assert!(!first.identity.is_empty());
+    assert_eq!(pin_program(&path).map_err(|e| e.to_string())?, first);
+    // Rewritten in place: the same file, other contents.
+    std::fs::write(&program, b"second build").map_err(|e| e.to_string())?;
+    let rewritten = pin_program(&path).map_err(|e| e.to_string())?;
+    assert_ne!(rewritten.sha256, first.sha256);
+    assert!(!first.matches(&rewritten));
+    // Replaced by another file with the first contents: another identity.
+    let other = dir.join("other.exe");
+    std::fs::write(&other, b"first build").map_err(|e| e.to_string())?;
+    std::fs::remove_file(&program).map_err(|e| e.to_string())?;
+    std::fs::rename(&other, &program).map_err(|e| e.to_string())?;
+    let replaced = pin_program(&path).map_err(|e| e.to_string())?;
+    assert_eq!(replaced.sha256, first.sha256);
+    assert!(!first.matches(&replaced));
+    assert!(pin_program(&dir.display().to_string()).is_err());
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }

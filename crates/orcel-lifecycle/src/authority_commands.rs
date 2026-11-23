@@ -245,6 +245,13 @@ fn standing_grant(args: &mut Args) -> Result<Output, LifecycleError> {
         None => None,
     };
     args.finish()?;
+    // Review of #844: each program is pinned now (its contents' SHA-256 and
+    // its file identity), shown here and in the service's box; a run is
+    // covered only while the program is still exactly that file.
+    let commands = authority_grant::pin_programs(&programs)?;
+    for pinned in &commands {
+        eprintln!("Pinned program: {}", pinned.describe());
+    }
     let request = authority_grant::standing_request(
         client_ref,
         task,
@@ -255,7 +262,7 @@ fn standing_grant(args: &mut Args) -> Result<Output, LifecycleError> {
             operations,
             roots: folders,
             origins: Vec::new(),
-            commands: (!programs.is_empty()).then_some(programs),
+            commands,
             minutes: standing_minutes,
         },
     )?;

@@ -76,14 +76,15 @@ pub struct AuthorizeClaims {
 /// WP1-14: the standing approval orceld names in place of a per-action
 /// approval (session-asserted, checked by the service against the approval
 /// it holds). `program` is the program a process run starts (absent for
-/// the Git operations), checked against the approval's `commands` when it
-/// names any.
+/// the Git operations) as orceld pinned it just now (path, SHA-256 of its
+/// contents, file identity), checked against the approval's pinned
+/// programs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StandingClaim {
     pub standing_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub program: Option<String>,
+    pub program: Option<crate::core::standing::PinnedProgram>,
 }
 
 /// WP1-10: how a dispatch the service authorized ended, as orceld reports

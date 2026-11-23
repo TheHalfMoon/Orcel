@@ -183,8 +183,8 @@ pub(crate) fn child_environment(
 pub(crate) struct ResolvedProgram {
     pub(crate) path: PathBuf,
     /// Opened without write or delete sharing: while it is held, the file
-    /// cannot be written, renamed, deleted or replaced. Kept, not read.
-    #[allow(dead_code)]
+    /// cannot be written, renamed, deleted or replaced. Read only to check a
+    /// standing approval's pinned contents (review of #844).
     pub(crate) held: std::fs::File,
     /// Volume serial and file index (device and inode elsewhere).
     pub(crate) identity: String,
@@ -445,9 +445,26 @@ pub(crate) fn run_program(
     timeout_ms: u64,
     max_output_bytes: usize,
     roots: &[String],
+    pinned: Option<&orcel_authority::core::standing::PinnedProgram>,
 ) -> Result<Value, ProviderError> {
     check_run_arguments(program, args, timeout_ms, max_output_bytes)?;
     let resolved = resolve_program(program, roots)?;
+    // Review of #844 (WP1-14): a run a standing approval covered starts only
+    // the file pinned at grant, with the pinned contents, checked through the
+    // handle held without write or delete sharing until the start.
+    if let Some(pinned) = pinned {
+        let now = orcel_authority::core::standing::pin_open_file(program, &resolved.held)
+            .map_err(|error| failure(FailureCode::TargetStale, error.message))?;
+        if now.sha256 != pinned.sha256
+            || now.identity != pinned.identity
+            || resolved.identity != pinned.identity
+        {
+            return Err(failure(
+                FailureCode::TargetStale,
+                "the program is not the one the standing approval pinned (its contents or file changed); nothing was started",
+            ));
+        }
+    }
     let folder = plain(&resolve_folder(cwd, roots)?);
     let mut command = Command::new(&resolved.path);
     command
