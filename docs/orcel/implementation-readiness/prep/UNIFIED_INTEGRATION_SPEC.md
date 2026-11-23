@@ -573,8 +573,9 @@ validate the ChatGPT tunnel integration where the client supports it." and "Full
 approvals for routine actions already authorized by the owner." The founder's architecture decision of the same day
 describes the tunnel forwarding "to Orcel's local, authenticated and owner-lease-authorized MCP service". The remote
 standing-approval coverage is derived from these words, not quoted from them, and shares the same pending founder
-confirmation as remote coverage: until it is given, only a lease issued by the authority service covers a remote
-caller; the alternative is an interim-store browser lease gated by the existing SG-000055 STRONG remote-session lease.
+confirmation as remote coverage: until it is given, no lease covers a remote caller (SG-000135 OB-09); the proposed
+rule admits only a lease issued by the authority service, and the alternative is an interim-store browser lease gated
+by the existing SG-000055 STRONG remote-session lease.
 
 ### 4.16 Sensitive web features (FD-UP-2 decided)
 

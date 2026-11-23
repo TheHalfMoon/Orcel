@@ -1403,9 +1403,33 @@ fn remote_client(connection: char) -> String {
 
 /// A remote caller's session (client `remote_client('b')`) over a scripted
 /// service reporting `lease`; `interim` makes the source the interim store.
+/// It checks the rules behind `REMOTE_LEASE_COVERAGE_CONFIRMED`; the shipped
+/// session is [`shipped_remote_scene`].
 fn remote_scene(lease: BrowserLease, interim: bool) -> Scene {
     let service = Rc::new(Scripted::default());
     service.interim.set(interim);
+    *service.view.borrow_mut() = Some(Ok(Some(view_of(vec![lease.clone()]))));
+    let access = FullAccess::new(
+        SESSION,
+        &client_ref(&remote_client('b')),
+        Some(TASK),
+        Box::new(Source(Rc::clone(&service))),
+        Box::new(NoSecrets),
+        Some((SID.into(), LOGON)),
+    )
+    .for_remote_caller()
+    .with_remote_coverage_for_tests();
+    Scene {
+        service,
+        access,
+        lease,
+    }
+}
+
+/// A remote caller's session exactly as orceld builds one: remote lease
+/// coverage pending founder confirmation.
+fn shipped_remote_scene(lease: BrowserLease) -> Scene {
+    let service = Rc::new(Scripted::default());
     *service.view.borrow_mut() = Some(Ok(Some(view_of(vec![lease.clone()]))));
     let access = FullAccess::new(
         SESSION,
@@ -1437,8 +1461,61 @@ fn lease_invalid_message(decision: &LeaseDecision) -> String {
     }
 }
 
-/// Routine remote actions under a service lease issued to this remote
-/// client are covered, confirmed against a fresh service read and admitted
+/// Until the founder confirms remote coverage, a service lease bound to the
+/// right remote client still covers nothing: every family asks, with no
+/// service read and nothing authorized; the status never calls it active.
+#[test]
+fn ob09_a_remote_session_is_never_covered_while_coverage_is_pending() {
+    let mut scene = shipped_remote_scene(remote_lease('b'));
+    for family in routine_families() {
+        for _ in 0..2 {
+            let decision = scene
+                .access
+                .decide(&query(family, Impact::Routine), &moment());
+            assert!(is_ask(&decision), "{family:?}: {decision:?}");
+        }
+    }
+    assert_eq!(scene.service.reads.get(), 0, "no service read");
+    assert!(scene.service.authorized.borrow().is_empty());
+    let status = scene.access.status(NOW + 1_000);
+    assert_eq!(status["lease_id"], scene.lease.lease_id);
+    assert_eq!(status["active"], false);
+
+    // The check right before dispatch refuses a use that was covered
+    // elsewhere (here: the rules behind the constant), nothing authorized.
+    let mut open = remote_scene(remote_lease('b'), false);
+    let used = covered(
+        open.access
+            .decide(&query(BrowserFamily::Click, Impact::Routine), &moment()),
+    );
+    let mut scene = shipped_remote_scene(remote_lease('b'));
+    let refused = scene.access.confirm(&used, &moment());
+    assert!(
+        matches!(&refused, Err(error) if error.code == FailureCode::CapabilityDenied
+            && error.message.contains("until the founder confirms")),
+        "{refused:?}"
+    );
+    assert_eq!(scene.service.reads.get(), 0, "no service read");
+    assert!(scene.service.authorized.borrow().is_empty());
+}
+
+/// Local coverage is unchanged by the remote rule: a local session's lease
+/// covers, confirms and shows as active.
+#[test]
+fn ob09_local_coverage_is_unchanged_while_remote_coverage_is_pending() {
+    let mut local = Scene::new();
+    let used = covered(
+        local
+            .access
+            .decide(&query(BrowserFamily::Click, Impact::Routine), &moment()),
+    );
+    assert!(local.access.confirm(&used, &moment()).is_ok());
+    assert_eq!(local.service.authorized.borrow().len(), 1);
+    assert_eq!(local.access.status(NOW + 1_000)["active"], true);
+}
+
+/// Behind `REMOTE_LEASE_COVERAGE_CONFIRMED`: routine remote actions under a
+/// service lease issued to this remote client are covered, confirmed against a fresh service read and admitted
 /// by the service's Authorize, exactly as locally.
 #[test]
 fn ob09_routine_remote_actions_under_this_clients_service_lease_are_covered() {

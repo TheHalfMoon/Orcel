@@ -38,15 +38,21 @@
 //! families can be leased, and a value that looks secret or holds a stored
 //! secret is never typed under a lease.
 //!
-//! SG-000135 OB-09 (founder-delegated, engineering-chosen (2026-11-22)): a
-//! remote `browser_full` caller's session (`FullAccess::for_remote_caller`)
-//! is covered only by a lease the installed SG-000132 authority service
-//! issued to that remote client (its `client_ref`, bound to the paired
-//! connection, the principal and the MCP session). A lease from any other
-//! issuer (the interim per-user full-control store) never covers a remote
-//! caller: it is refused `lease_invalid` (CAPABILITY_DENIED), nothing is
-//! sent, and later actions ask. High-impact and unclassified actions ask
-//! exactly as locally, on the owner's Windows dialog.
+//! SG-000135 OB-09: a remote `browser_full` caller's session
+//! (`FullAccess::for_remote_caller`) is never covered by a Full Access lease
+//! today ([`REMOTE_LEASE_COVERAGE_CONFIRMED`]): every consequential action
+//! asks on the owner's Windows dialog, and the lease decision and the check
+//! right before dispatch both stop there, before the service is read. The
+//! rules behind that constant are engineering-chosen 2026-11-22, inferred
+//! from the founder's general go-ahead on the next work item ("chose
+//! whatever you think better"); remote lease coverage and the spec 4.15 lift
+//! are PENDING FOUNDER CONFIRMATION. They are: only a lease the installed
+//! SG-000132 authority service issued to that remote client (its
+//! `client_ref`, bound to the paired connection, the principal and the MCP
+//! session) could cover it; a lease from any other issuer (the interim
+//! per-user full-control store) never does: it is refused `lease_invalid`
+//! (CAPABILITY_DENIED), nothing is sent, and later actions ask; high-impact
+//! and unclassified actions ask exactly as locally.
 
 use orcel_contracts::browser_impact::Impact;
 use orcel_contracts::{FailureCode, RequestEnvelope};
@@ -60,6 +66,20 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// The capability prefix of the owner's lease management shapes.
 pub(crate) const MANAGEMENT_PREFIX: &str = "browser.lease.";
+
+/// SG-000135 OB-09: whether the founder confirmed that a Full Access lease
+/// may cover a remote `browser_full` caller (and the spec 4.15 lift it
+/// needs). PENDING FOUNDER CONFIRMATION, so `false`: a remote session is
+/// never covered and every consequential action asks on the Windows dialog.
+/// A compile-time constant only: no environment variable, file or caller
+/// changes it. Turn it on only with the founder's recorded confirmation and
+/// the SG-000132 grant window, narrow default scope and Event Log scope
+/// record qualified.
+pub(crate) const REMOTE_LEASE_COVERAGE_CONFIRMED: bool = false;
+
+/// Why a remote session's action is never dispatched under a lease.
+const REMOTE_COVERAGE_PENDING: &str =
+    "a Full Access lease never covers a remote caller until the founder confirms remote coverage";
 
 /// The message prefix of every lease invalidation refusal.
 pub(crate) const LEASE_INVALID: &str = "lease_invalid";
@@ -422,6 +442,10 @@ pub(crate) struct FullAccess {
     /// SG-000135 OB-09: the session belongs to a remote caller, so only a
     /// lease the authority service issued to this client may cover it.
     remote: bool,
+    /// Tests only: check the rules behind
+    /// [`REMOTE_LEASE_COVERAGE_CONFIRMED`] as if it were set.
+    #[cfg(test)]
+    remote_coverage_for_tests: bool,
     /// SG-000135 SH-2: while set, no lease covers anything and every action
     /// asks (a mode switch's reopened pages always ask the owner).
     held: bool,
@@ -459,6 +483,8 @@ impl FullAccess {
             revocation_floor: 0,
             clock_floor: 0,
             remote: false,
+            #[cfg(test)]
+            remote_coverage_for_tests: false,
             held: false,
         }
     }
@@ -470,12 +496,30 @@ impl FullAccess {
         self.held = held;
     }
 
-    /// SG-000135 OB-09: this session belongs to a remote caller. Only a
+    /// SG-000135 OB-09: this session belongs to a remote caller: no lease
+    /// covers it ([`REMOTE_LEASE_COVERAGE_CONFIRMED`]). Behind that, only a
     /// lease the installed authority service issued to this client (its
-    /// `client_ref` and principal) may cover it; anything else is refused.
+    /// `client_ref` and principal) could.
     pub(crate) fn for_remote_caller(mut self) -> Self {
         self.remote = true;
         self
+    }
+
+    /// Tests only: the rules behind [`REMOTE_LEASE_COVERAGE_CONFIRMED`].
+    #[cfg(test)]
+    pub(crate) fn with_remote_coverage_for_tests(mut self) -> Self {
+        self.remote_coverage_for_tests = true;
+        self
+    }
+
+    /// SG-000135 OB-09: whether this session is a remote caller's while
+    /// remote lease coverage is not confirmed: no lease covers it.
+    fn remote_coverage_pending(&self) -> bool {
+        #[cfg(test)]
+        if self.remote_coverage_for_tests {
+            return false;
+        }
+        self.remote && !REMOTE_LEASE_COVERAGE_CONFIRMED
     }
 
     /// SG-000135 OB-09: why `lease` may not cover this remote caller's
@@ -602,6 +646,11 @@ impl FullAccess {
     /// Uses the cached lease when there is one (the service is read again
     /// in [`Self::confirm`]); otherwise reads the service once.
     pub(crate) fn decide(&mut self, query: &LeaseQuery<'_>, moment: &LeaseMoment) -> LeaseDecision {
+        // SG-000135 OB-09: no lease covers a remote caller's session until
+        // the founder confirms it; nothing is read or cached for one.
+        if self.remote_coverage_pending() {
+            return LeaseDecision::Ask;
+        }
         if let Some(reason) = self.pending.take() {
             return LeaseDecision::Refuse(lease_invalid(&reason));
         }
@@ -710,11 +759,15 @@ impl FullAccess {
         used: &LeaseUse,
         moment: &LeaseMoment,
     ) -> Result<(), ProviderError> {
-        let read = self.source.read();
         let refuse = |this: &mut Self, reason: &str| {
             this.kill(&used.lease_id);
             Err(lease_invalid(reason))
         };
+        // SG-000135 OB-09: the same rule as in `decide`, checked again.
+        if self.remote_coverage_pending() {
+            return refuse(self, REMOTE_COVERAGE_PENDING);
+        }
+        let read = self.source.read();
         let Some(interventions) = moment.interventions.as_ref() else {
             return refuse(self, "the takeover gate is not available");
         };
@@ -796,7 +849,7 @@ impl FullAccess {
 
     /// `browser_task_status`'s read-only view of this session's lease: its
     /// scope and expiry, never anything an agent could use to issue or
-    /// widen one.
+    /// widen one. A remote session's lease is never `active` (OB-09).
     pub(crate) fn status(&self, now_ms: u64) -> Value {
         let view = match self.source.read() {
             Ok(Some(view)) => view,
@@ -808,7 +861,8 @@ impl FullAccess {
             Some(lease) => {
                 let mut summary = lease_summary(lease, now_ms);
                 if let Value::Object(map) = &mut summary {
-                    let usable = !self.dead.contains(&lease.lease_id)
+                    let usable = !self.remote_coverage_pending()
+                        && !self.dead.contains(&lease.lease_id)
                         && map.get("active") == Some(&Value::Bool(true));
                     map.insert("active".into(), Value::Bool(usable));
                 }

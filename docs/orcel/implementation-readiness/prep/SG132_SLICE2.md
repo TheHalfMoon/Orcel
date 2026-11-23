@@ -168,7 +168,8 @@ lease. A Hello failure cancels the intent.
   [--task t] [--minutes N]`: one broker session, its client (`client_ref`, also the lease's principal, so
   `Authorize` binds it), exact canonical origins (1 to 16), families from `navigate, click, type, select, tabs`
   only (`read`, `scroll`, `download` are refused by the CLI, the service and orceld), at most 12 hours.
-  `orcel browser leases` and `orcel browser revoke <id>` list and revoke through the service.
+  `orcel browser leases` and `orcel browser revoke <id>` list and revoke through the service. A lease covers local
+  sessions only: orceld never uses one for a remote session (SG-000135 OB-09, pending founder confirmation).
 
 ## 4. OB-08 on the service
 

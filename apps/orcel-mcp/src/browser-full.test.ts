@@ -190,8 +190,7 @@ test("only local configuration selects the local browser_full profile; a remote 
     for (const transportKind of ["tunnel", "relay"] as const) {
       const context = { transportKind, providerKind: provider, toolSurfaceProfile: "browser_full" } as const;
       if (provider === "openai" && transportKind === "tunnel") {
-        // Engineering-chosen 2026-11-22 under the founder's delegation: only
-        // a ChatGPT tunnel set up for browser_full, and then the remote-safe
+        // Engineering-chosen 2026-11-22: only a ChatGPT tunnel set up for browser_full, and then the remote-safe
         // broker tools only. The relay never serves it.
         assert.deepEqual([...allowedToolsFor(context)].sort(), [...REMOTE_BROWSER_FULL_TOOLS].sort());
       } else {

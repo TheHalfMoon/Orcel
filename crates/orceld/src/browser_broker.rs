@@ -342,6 +342,31 @@ pub(crate) fn checked_baseline<W: SessionWorker>(
     })
 }
 
+/// SG-000135 SH-2: the check an action makes after it ran, for the end of a
+/// mode switch: an epoch that moved, or could not be verified, ends every
+/// session now. Returns what ended them, for the reply.
+pub(crate) fn epoch_ended<W: SessionWorker>(
+    broker: &mut Broker<W>,
+    seen: Option<u64>,
+) -> Option<String> {
+    broker
+        .check_epoch(seen)
+        .err()
+        .map(|error| refusal_text(&error))
+}
+
+/// A refusal as a mode switch's reply names it: its code and message.
+pub(crate) fn refusal_text(error: &ProviderError) -> String {
+    format!(
+        "{}: {}",
+        serde_json::to_value(&error.code)
+            .ok()
+            .and_then(|code| code.as_str().map(str::to_owned))
+            .unwrap_or_default(),
+        error.message
+    )
+}
+
 /// Why a session ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EndReason {
@@ -3460,6 +3485,30 @@ mod tests {
         }
         // The new epoch is the baseline from now on.
         assert!(broker.check_epoch(Some(4)).is_ok());
+    }
+
+    /// SG-000135 SH-2: a revoke that lands during a mode switch's last reopen
+    /// ends the new session at the end of the switch, not at the next action,
+    /// and the reply says why; an unverified epoch does the same; an unmoved
+    /// one changes nothing.
+    #[test]
+    fn sh2_a_revoke_during_the_last_reopen_ends_the_new_session() {
+        for (seen, code) in [
+            (Some(4), "TARGET_STALE: "),
+            (None, "APPROVAL_UNAVAILABLE: "),
+        ] {
+            let mut scene = Scene::new("sh2-last-reopen");
+            let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+            assert_eq!(checked_baseline(&mut broker, Some(3)).ok(), Some(3));
+            let id = scene.create(&mut broker, "client-a", "1").unwrap();
+            assert_eq!(epoch_ended(&mut broker, Some(3)), None);
+            assert!(broker.peek("client-a", &id).is_ok());
+            let ended = epoch_ended(&mut broker, seen).unwrap_or_default();
+            assert!(ended.starts_with(code), "{ended}");
+            assert!(ended.contains("every browser session ended"), "{ended}");
+            let refused = broker.session("client-a", &id).map(|_| ()).unwrap_err();
+            assert!(refused.message.contains("emergency_stop"));
+        }
     }
 
     /// The epoch is read once per action: a revoke that lands after the

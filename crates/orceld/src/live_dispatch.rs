@@ -2017,17 +2017,16 @@ mod full {
                         carried.push(entry(page, seq, true));
                     }
                     Err(error) => {
-                        stopped = Some(format!(
-                            "{}: {}",
-                            serde_json::to_value(&error.code)
-                                .ok()
-                                .and_then(|code| code.as_str().map(str::to_owned))
-                                .unwrap_or_default(),
-                            error.message
-                        ));
+                        stopped = Some(crate::browser_broker::refusal_text(&error));
                         carried.push(entry(Value::Null, Value::Null, false));
                     }
                 }
+            }
+            // As after any action: a revoke that landed during the last
+            // reopen ends every session now, the new one included, and the
+            // reply says so.
+            if let Some(ended) = crate::browser_broker::epoch_ended(broker, probe()) {
+                stopped = Some(ended);
             }
             let page_id = broker
                 .peek(client, &session_id)
@@ -2105,8 +2104,8 @@ mod full {
         // SG-000135 OB-08: the session's Full Access lease cache, over the
         // SG-000132 authority service; it covers nothing until the owner's
         // `orcel browser grant` has the service issue a lease.
-        // SG-000135 OB-09: a remote caller's session takes only a lease the
-        // installed service issued to that remote client.
+        // SG-000135 OB-09: no lease covers a remote caller's session until
+        // the founder confirms it (`REMOTE_LEASE_COVERAGE_CONFIRMED`).
         let access = crate::browser_lease::FullAccess::service_backed(session_id, client, task);
         browser.set_full_access(if remote {
             access.for_remote_caller()

@@ -304,6 +304,35 @@ fn install_configure_start_status_doctor_stop_restart_and_uninstall() {
     let status = json_ok(&orcel(&cli, &local, &["status", "--json"]));
     assert_eq!(status["runtime"]["state"], "not_running");
 
+    // SG-000135 OB-09: a setup that changes the profile revokes the old
+    // route's leases through the installed orceld (none here), and a revoke
+    // covers both profiles' connections.
+    let setup = |profile: &str| {
+        json_ok(&orcel(
+            &cli,
+            &local,
+            &[
+                "tunnel",
+                "setup",
+                "--client",
+                fake_tunnel.to_str().unwrap(),
+                "--tunnel-id",
+                TUNNEL_ID,
+                "--key-file",
+                key_file.to_str().unwrap(),
+                "--profile",
+                profile,
+                "--json",
+            ],
+        ))
+    };
+    for profile in ["browser_full", "core", "core"] {
+        let changed = setup(profile);
+        assert_eq!(changed["replaced_route_leases_revoked"], 0, "{changed}");
+    }
+    let revoked = json_ok(&orcel(&cli, &local, &["tunnel", "revoke", "--json"]));
+    assert_eq!(revoked["revoke"]["revoked"], 0, "{revoked}");
+
     // Restart, then uninstall stops the running instance first.
     let restarted = json_ok(&orcel(&cli, &local, &["start", "--json"]));
     assert_eq!(restarted["status"]["state"], "running");

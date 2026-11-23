@@ -14,8 +14,10 @@
 //! What changes for a remote caller is recorded here and in
 //! `browser_lease::FullAccess::for_remote_caller`: the session's receipts
 //! name the remote origin, a persistent Orcel-managed profile is never used
-//! remotely, and only a lease the installed SG-000132 authority service
-//! issued to this client may cover an action. Every approval the remote
+//! remotely, and no Full Access lease covers an action until the founder
+//! confirms remote coverage (`browser_lease::REMOTE_LEASE_COVERAGE_CONFIRMED`;
+//! behind it, only a lease the installed SG-000132 authority service issued
+//! to this client could). Every approval the remote
 //! request raises goes to the Windows dialog on the PC, marked remote
 //! (`OriginStamp`); nothing the remote caller sends can answer one.
 

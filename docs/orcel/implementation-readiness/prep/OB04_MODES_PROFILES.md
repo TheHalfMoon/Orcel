@@ -100,12 +100,12 @@ This is about Orcel's own calls. A page is a different matter: it gets no async 
 
 | Tool | Shape | Effect | Approval | Remote |
 |---|---|---|---|---|
-| `browser_session_create` (adds `mode`, `profile`) | `browser.session/create` | write | SOFT for a Visible window or a profile's first use in the MCP session; none otherwise | local only |
+| `browser_session_create` (adds `mode`, `profile`) | `browser.session/create` | write | SOFT for a Visible window or a profile's first use in the MCP session; none otherwise | local only in this packet; since OB-09, `orcel.execute` with an ephemeral profile only |
 | `browser_profiles` | `browser.session/profiles` | read | none | local only |
 | `browser_profile_create` | `browser.session/profile_create` | write | SOFT | local only |
 | `browser_profile_delete` | `browser.session/profile_delete` | destructive | SOFT | local only |
 
-The contract (`apps/orcel-mcp/src/tool_contract.ts`), orceld's profile gate (`BROWSER_FULL_SHAPES`), the host's exposure list (`BROWSER_FULL_MCP_TOOLS`, `BROWSER_FULL_TOOL_SHAPES`) and `docs/p16/TOOL_CONTRACT.md` list the same 15 broker tools; `browser-full.test.ts` checks that they agree. Remote mapping stays disabled: the profile gate refuses every broker shape for a remote request.
+The contract (`apps/orcel-mcp/src/tool_contract.ts`), orceld's profile gate (`BROWSER_FULL_SHAPES`), the host's exposure list (`BROWSER_FULL_MCP_TOOLS`, `BROWSER_FULL_TOOL_SHAPES`) and `docs/p16/TOOL_CONTRACT.md` list the same 15 broker tools; `browser-full.test.ts` checks that they agree. In this packet remote mapping was disabled. Since OB-09 (#836, #838; [`OB09_REMOTE_BROWSER_FULL.md`](OB09_REMOTE_BROWSER_FULL.md)) the profile gate admits the twelve remote-safe broker shapes for a `browser_full` ChatGPT tunnel holding the STRONG remote-session lease; the three profile shapes and a persistent profile named at create stay local-only.
 
 ## 5. browser_structured through the broker
 
@@ -183,7 +183,7 @@ Run after the security judge's fixes, 2026-11-18 (Edge 157, scripted consent):
 ## 8. Not proven here
 
 - **SH-1 as written.** The founder's 10-minute run, with a person typing and moving the mouse while a Shadow session fills a two-page form, has not run. The scripted run compares the desktop across a mission of about 20 seconds and marks the comparison inconclusive if the person gave input.
-- **SH-2.** A session's mode stays fixed for its life. Toggling Shadow mid-mission is implemented on `browser/sh2-mode-switch` as a move to a new session in the other mode (`browser_session_create {continue_from, mode}`), recorded in [`SH2_MODE_SWITCH.md`](SH2_MODE_SWITCH.md). It is not merged, and the founder run is pending.
+- **SH-2.** A session's mode stays fixed for its life. Toggling Shadow mid-mission is a move to a new session in the other mode (`browser_session_create {continue_from, mode}`), recorded in [`SH2_MODE_SWITCH.md`](SH2_MODE_SWITCH.md). It is merged (#842, 03c638e5), and the founder run is pending.
 - **FA-F with a person browsing.** The concurrent-session isolation is checked (two sessions, two profiles, no cookie crossing). The person's own browsing in another browser during two missions is the founder run.
 - **FA-E and FX-6 close in OB-08.** This branch provides the Shadow half and the two modes only. There is no lease, so every routine action still asks.
 - **Window z-order.** Windows decides where a new top-level window is placed. The run records whether the Visible window ended up above the foreground window, and Orcel never activates it. No `SW_SHOWNOACTIVATE`-style placement control exists through Playwright's launch, so "never above" cannot be promised beyond what the run shows.

@@ -16,6 +16,7 @@
 //! profile, so a core lease never covers it and its own lease needs its own
 //! STRONG `orcel tunnel allow`; a tunnel never serves both profiles.
 
+use crate::LifecycleError;
 use orcel_policy::remote_session::{
     REMOTE_PROFILE_BROWSER_FULL, REMOTE_PROFILE_CORE, REMOTE_SCOPES,
 };
@@ -110,6 +111,55 @@ pub fn remote_connection_id_for(tunnel_id: &str, profile: &str) -> Option<String
             tunnel_id,
         )),
         _ => None,
+    }
+}
+
+/// SG-000135 OB-09: every remote connection id `tunnel_id` derives, one per
+/// profile it may serve. Revoking a tunnel revokes all of them, so a lease
+/// left from the profile it served before never outlives the revoke.
+pub fn all_connections(tunnel_id: &str) -> Vec<String> {
+    TUNNEL_PROFILES
+        .iter()
+        .filter_map(|profile| remote_connection_id_for(tunnel_id, profile))
+        .collect()
+}
+
+/// SG-000135 OB-09: the connections `orcel tunnel setup` revokes: every one
+/// of the previous tunnel's when the tunnel id or the profile changes, none
+/// otherwise. `previous` is the previous tunnel id and profile.
+pub fn connections_revoked_by_setup(
+    previous: Option<(&str, &str)>,
+    tunnel_id: &str,
+    profile: &str,
+) -> Vec<String> {
+    match previous {
+        Some((old_id, old_profile)) if old_id != tunnel_id || old_profile != profile => {
+            all_connections(old_id)
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Revoke every connection with `revoke` (which returns how many leases it
+/// revoked), and add them up. A failure does not stop the rest; the first
+/// one is returned after every connection was tried.
+pub fn revoke_each(
+    connections: &[String],
+    mut revoke: impl FnMut(&str) -> Result<u64, LifecycleError>,
+) -> Result<u64, LifecycleError> {
+    let mut total = 0;
+    let mut failed = None;
+    for connection in connections {
+        match revoke(connection) {
+            Ok(count) => total += count,
+            Err(error) => {
+                failed.get_or_insert(error);
+            }
+        }
+    }
+    match failed {
+        Some(error) => Err(error),
+        None => Ok(total),
     }
 }
 
@@ -279,6 +329,129 @@ mod tests {
         let route = route(TUNNEL);
         for field in ["principal", "remoteConnectionId", "deviceId"] {
             assert_ne!(route[field], other[field], "{field}");
+        }
+    }
+
+    /// SG-000135 OB-09: a tunnel revoke reaches the core and browser_full
+    /// connections, and a failed one never keeps the other from being
+    /// revoked.
+    #[test]
+    fn ob09_a_tunnel_revoke_covers_both_derived_connections() {
+        let connections = all_connections(TUNNEL);
+        assert_eq!(
+            connections,
+            [
+                remote_connection_id(TUNNEL),
+                remote_connection_id_for(TUNNEL, "browser_full").unwrap()
+            ]
+        );
+        let mut seen = Vec::new();
+        let total = revoke_each(&connections, |connection| {
+            seen.push(connection.to_owned());
+            Ok(1)
+        })
+        .unwrap();
+        assert_eq!((total, seen), (2, connections.clone()));
+        let mut seen = Vec::new();
+        let failed = revoke_each(&connections, |connection| {
+            seen.push(connection.to_owned());
+            if seen.len() == 1 {
+                Err(LifecycleError::state("the first one failed"))
+            } else {
+                Ok(1)
+            }
+        })
+        .unwrap_err();
+        assert!(failed.message.contains("the first one failed"));
+        assert_eq!(seen, connections, "the second was still revoked");
+    }
+
+    /// SG-000135 OB-09: the leases both connections hold are revoked in the
+    /// store orceld keeps, and another tunnel's lease is not.
+    #[test]
+    fn ob09_the_revoke_ends_both_leases_and_no_other_tunnels() {
+        use orcel_policy::remote_session::{
+            build_lease, revoke_leases, GateEnvironment, LeaseRequest, ReadMode,
+            WorkstationBinding, WorkstationState,
+        };
+        let trust = |_: &str| Some(1);
+        let env = GateEnvironment {
+            now_ms: 1_000,
+            policy_revision: "rev",
+            workspace_set_digest: "digest",
+            workstation: WorkstationState::Unlocked(WorkstationBinding {
+                session_id: 1,
+                logon_id: 7,
+            }),
+            trust_revision: &trust,
+        };
+        let lease = |tunnel: &str, profile: &str| {
+            let route = route_for(tunnel, profile).unwrap();
+            let text = |name: &str| route[name].as_str().unwrap().to_owned();
+            let request = LeaseRequest {
+                principal: text("principal"),
+                remote_connection_id: text("remoteConnectionId"),
+                device_id: text("deviceId"),
+                device_epoch: DEVICE_EPOCH,
+                provider_kind: text("providerKind"),
+                client_profile_id: text("clientProfileId"),
+                client_profile_revision: CLIENT_PROFILE_REVISION,
+                tool_surface_profile: text("toolSurfaceProfile"),
+                scope_ceiling: vec!["orcel.read".into()],
+                workspace_ids: vec!["default".into()],
+                read_mode: ReadMode::Session,
+                duration_ms: 15 * 60 * 1000,
+                tunnel_id: (profile == "browser_full").then(|| tunnel.to_owned()),
+            };
+            build_lease(
+                &request,
+                format!("{tunnel}-{profile}"),
+                &env,
+                &["default".into()],
+            )
+            .unwrap()
+        };
+        let other = "tunnel_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
+        let mut leases = vec![
+            lease(TUNNEL, "core"),
+            lease(TUNNEL, "browser_full"),
+            lease(other, "core"),
+        ];
+        let total = revoke_each(&all_connections(TUNNEL), |connection| {
+            let (next, count) = revoke_leases(&leases, Some(connection));
+            leases = next;
+            Ok(count as u64)
+        })
+        .unwrap();
+        assert_eq!(total, 2);
+        let revoked: Vec<bool> = leases.iter().map(|lease| lease.revoked).collect();
+        assert_eq!(revoked, [true, true, false]);
+    }
+
+    /// SG-000135 OB-09: a setup that changes the profile or the tunnel id
+    /// revokes the previous route's leases; a first or an unchanged setup
+    /// revokes nothing.
+    #[test]
+    fn ob09_a_setup_that_changes_the_route_revokes_the_old_one() {
+        let other = "tunnel_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
+        let none: Vec<String> = Vec::new();
+        assert_eq!(connections_revoked_by_setup(None, TUNNEL, "core"), none);
+        for profile in TUNNEL_PROFILES {
+            assert_eq!(
+                connections_revoked_by_setup(Some((TUNNEL, profile)), TUNNEL, profile),
+                none
+            );
+            // The tunnel id changed: the old tunnel's routes.
+            assert_eq!(
+                connections_revoked_by_setup(Some((TUNNEL, profile)), other, profile),
+                all_connections(TUNNEL)
+            );
+        }
+        // Only the profile changed, either way.
+        for (old, new) in [("core", "browser_full"), ("browser_full", "core")] {
+            let revoked = connections_revoked_by_setup(Some((TUNNEL, old)), TUNNEL, new);
+            assert!(revoked.contains(&remote_connection_id_for(TUNNEL, old).unwrap()));
+            assert_eq!(revoked, all_connections(TUNNEL));
         }
     }
 

@@ -29,7 +29,8 @@ import {
  *   issued this session a Full Access lease, locally and with STRONG
  *   presence, that covers the action: a positively routine action of a
  *   leased family on a leased origin then runs without a prompt and its
- *   receipt names the lease. A submit, send, buy, publish or delete link, a
+ *   receipt names the lease (local sessions only: no lease covers a remote
+ *   caller, SG-000135 OB-09). A submit, send, buy, publish or delete link, a
  *   secret, payment or unnamed field, another origin, a check or an Enter
  *   still ask. No tool issues, widens or revokes a lease;
  *   `browser_task_status` reads its scope and expiry.
@@ -89,8 +90,8 @@ import {
  *   same profile with the same task label. The old session ends; the new
  *   one reopens its recorded pages as approved GET navigations, each
  *   asking even under a lease (exact URL only when nothing in it was
- *   redacted or token-like, else its path; no page after a sign-in or with
- *   a token-like path segment), and repeats no click, fill, submit or
+ *   redacted or token-like, a heuristic, else its path; no page after a
+ *   sign-in or with a token-like path segment), and repeats no click, fill, submit or
  *   download. Moving to
  *   Visible asks the owner first; a Full Access lease is not carried.
  *
@@ -235,7 +236,7 @@ export function browserExtractSchema(defaultWorkspace: string) {
 const DEV_ONLY = "Windows development builds only; other builds answer typed unavailable.";
 /** SG-000135 OB-08: what a Full Access lease changes for an approved tool. */
 const LEASE_NOTE =
-  "Under a Full Access lease the owner issued for this session, a routine action on a leased origin runs without a prompt and its receipt names the lease; anything else still asks.";
+  "Under a Full Access lease the owner issued for this local session, a routine action on a leased origin runs without a prompt and its receipt names the lease; anything else, and every consequential action of a remote session, still asks.";
 
 export function registerSessionBrokerTools(server: McpServer, kernel: KernelClient, defaultWorkspace: string): void {
   // Each tool forwards exactly its broker shape: the capability and

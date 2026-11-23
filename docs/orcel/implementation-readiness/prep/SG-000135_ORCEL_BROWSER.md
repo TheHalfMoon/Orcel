@@ -82,24 +82,29 @@ Dependencies:
 - **SG-000122 (closed).** For `browser_full`, this grain adds tabs, free typing with named keys, and clicks on any
   actionable node (not only links). Secret fields are still refused for filling and typing. Credentials go only
   through the browser's autofill vault or the person.
-- **SG-000079 (closed).** Its "no remote mapping" rule is lifted for `browser_full` only, by OB-09, under the
-  conditions recorded below (founder-delegated, engineering-chosen (2026-11-22)).
+- **SG-000079 (closed).** Its "no remote mapping" rule is lifted for `browser_full` only, by OB-09 (the
+  founder's directive of 2026-11-17 for a remote browser profile; tunnel only is an engineering choice).
 - **SG-000132 (active).** This grain adds an amendment entry. The Browser executor is enabled under its dispatcher,
   with a browser lease scope of profiles, origins, sessions, action families and expiry. Browser leases start on the
   existing Hello-gated full-control store and move into the authority service when WP1-10 lands. An interim lease
   ends at the move; it is never converted. This interim issuance is a grain decision, not a founder decision, and
-  waits for the OB-08 independent security judge. Remote coverage is founder-delegated, engineering-chosen (2026-11-22),
-  the conservative option: a remote `browser_full` Full Access lease is valid only when the installed SG-000132
-  authority service issued it and it is bound to the identified client (`client_ref`); the interim per-user
-  full-control store never covers a remote caller; the remote session must also hold the existing SG-000055 STRONG
+  waits for the OB-08 independent security judge. Remote coverage is engineering-chosen 2026-11-22,
+  inferred from the founder's general go-ahead on the next work item ("chose whatever you think better"); remote lease
+  coverage and the spec 4.15 lift are PENDING FOUNDER CONFIRMATION. Until then no Full Access lease covers a remote
+  session, and every consequential action asks. The proposed rule, built behind a constant that is off: a remote
+  `browser_full` Full Access lease is valid only when the installed SG-000132 authority service issued it and it is
+  bound to the identified client (`client_ref`); the interim per-user full-control store never covers a remote caller; the remote session must also hold the existing SG-000055 STRONG
   remote-session lease; high-impact actions (form submit or Enter in a form, submit, send, buy, publish or delete
   controls, uploads, payments, destructive actions) still ask per action exactly as locally, and anything not
-  positively classified routine asks.
+  positively classified routine asks. OB-09's original dependency stands: the SG-000132 grant window, narrow default
+  scope and Event Log scope record must be QUALIFIED before any lease covers a remote caller (#836 had relaxed it to
+  the service being installed; it is restored). The alternative, if the founder chooses it, is remote coverage on the
+  interim store, gated by the SG-000055 STRONG remote-session lease.
 - **Spec section 4.15.** It says a standing approval never covers remote callers. For the remote `browser_full`
-  profile only, and only for the identified client named in the lease, this grain lifts that rule. The lift is
+  profile only, and only for the identified client named in the lease, this grain would lift that rule. The lift is
   derived from the founder's words (the chat directive and the "owner-lease-authorized MCP service" of the
-  architecture decision), not quoted from them. It applies only to remote `browser_full` and only for the client named
-  in the lease (founder-delegated, engineering-chosen (2026-11-22); OB-09).
+  architecture decision), not quoted from them. It would apply only to remote `browser_full` and only for the client
+  named in the lease. It is PENDING FOUNDER CONFIRMATION together with remote coverage, and is not in effect.
 - **Routine versus high-impact.** The split is this grain's mapping of the founder's lists, not a founder quote.
   High-impact includes form submit and Enter in a form, clicks on submit, send, buy, publish or delete controls,
   uploads, payments, irreversible deletion and other destructive or high-risk actions. Until OB-08 records and
