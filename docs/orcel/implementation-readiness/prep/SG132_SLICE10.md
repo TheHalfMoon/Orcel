@@ -113,8 +113,8 @@ file differ from the pin it was handed.
 Up to #844 the folders were compared only as text and the worker was given the lease's roots, so Git climbing to the
 repository above, junctions, linked worktrees, a run's working folder through a junction and U+212A for `k` were
 covered; nine tests through the real worker showed it on `15cc5247` (section 8). The first fix (`c80ef149`) confined
-Git too, and its review found Git still leaving without a race (`extensions.refStorage`, a sparse checkout re-applied
-by a branch switch). So Git is no longer coverable, and those two are fixed in the provider for everyone (#849).
+Git too, and its review found that parsing cannot bound where Git goes. So Git is no longer coverable; what that
+review found is addressed in the shared provider (#849, SG132_SLICE4.md), as defence in depth and not as a boundary.
 For a run:
 
 - **Bound in the request.** The service's `Authorize` answer names the covering approval's folders

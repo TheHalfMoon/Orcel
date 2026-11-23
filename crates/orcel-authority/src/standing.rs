@@ -65,9 +65,8 @@ pub const STANDING_ID_PREFIX: &str = "sa-";
 pub const INDICATOR_HEARTBEAT_MS: u64 = 5_000;
 
 /// The operations a standing approval may name: a process run. Git changes
-/// always ask (review of #847): Git leaves the folders a repository reports
-/// in too many ways (reference backends, sparse checkouts, junctions, its own
-/// folder) for a folder bound to mean anything. Narrower than spec 4.15 and
+/// always ask (review of #847): parsing a repository cannot bound where Git
+/// goes, so a folder bound on it is not claimed. Narrower than spec 4.15 and
 /// the SG-000132 amendment of 2026-11-19, which admit them.
 pub const STANDING_OPERATIONS: [&str; 1] = ["run"];
 
