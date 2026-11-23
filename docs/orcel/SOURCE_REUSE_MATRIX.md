@@ -44,7 +44,7 @@ A reproducible future REA run needs exact registry bytes/integrity, source/build
 
 ## Admission checklist
 
-For each actual import: exact file/dependency diff, immutable revision and checksum, applicable licenses/NOTICE plus direct grants, purpose and retained APIs, removed telemetry/downloads/instructions, authority delta, bounded error/resource behavior, fixture tests, ownership and update plan. Run Graft when relevant to copied/adapted code, genuine Jev/Alibaba and manual exclusions, exact-head CI and native Windows qualification. This planning-only diff imports no donor code; Graft cannot establish product integration here.
+For each actual import: exact file/dependency diff, immutable revision and checksum, applicable licenses/NOTICE plus direct grants, purpose and retained APIs, removed telemetry/downloads/instructions, authority delta, bounded error/resource behavior, fixture tests, ownership and update plan. Run Graft when relevant to copied/adapted code, independent code review (from 2026-11-23, replacing Jev), Alibaba and manual exclusions, exact-head CI and native Windows qualification. This planning-only diff imports no donor code; Graft cannot establish product integration here.
 
 ## Private donor provenance
 

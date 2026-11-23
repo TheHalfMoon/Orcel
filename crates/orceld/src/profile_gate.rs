@@ -36,8 +36,9 @@
 //! (`apps/orcel-mcp/src/browser-full.test.ts`).
 //!
 //! SG-000135 OB-09 lifts SG-000079's "no remote mapping" for `browser_full`
-//! only (founder-delegated, engineering-chosen (2026-11-22)): a
-//! remote request may reach the remote-safe broker shapes
+//! only (the founder's 2026-11-17 directive of a remote browser profile;
+//! no Full Access lease covers a remote caller, founder decision
+//! 2026-11-23): a remote request may reach the remote-safe broker shapes
 //! (`REMOTE_BROWSER_FULL_SHAPES`) when its authenticated remote context
 //! names the `browser_full` tool-surface profile. The gate admits the shape
 //! only; the SG-000055 STRONG remote-session lease for that profile is

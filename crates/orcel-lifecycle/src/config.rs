@@ -306,6 +306,28 @@ pub fn store_runtime_key(layout: &Layout, key: &str) -> Result<(), LifecycleErro
     write_bytes_atomic(&layout.runtime_key_file(), key.as_bytes())
 }
 
+/// The runtime key file's bytes now, for putting them back: `None` only when
+/// there is no such file. Any other read error is an error, never an absent
+/// key: a rollback would then delete a key it could not read.
+pub fn read_runtime_key(path: &Path) -> Result<Option<Vec<u8>>, LifecycleError> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(LifecycleError::io(
+            "read the current runtime key (nothing was changed)",
+            error,
+        )),
+    }
+}
+
+/// Stores `key` and returns the previous key file's bytes. A current key that
+/// cannot be read refuses before anything is written.
+pub fn replace_runtime_key(layout: &Layout, key: &str) -> Result<Option<Vec<u8>>, LifecycleError> {
+    let previous = read_runtime_key(&layout.runtime_key_file())?;
+    store_runtime_key(layout, key)?;
+    Ok(previous)
+}
+
 /// Builds the closed `orcel-tunnel` configuration for the active version.
 pub fn tunnel_config(
     layout: &Layout,
@@ -366,6 +388,44 @@ mod tests {
         assert_eq!(ApprovalPreviews::parse("Sizes"), None);
     }
     use crate::test_support::temp_dir;
+
+    /// Only a missing key file is an absent key. A key that cannot be read
+    /// (here a folder at its path, on every OS) refuses, and replacing it
+    /// then changes nothing, so no rollback can delete it.
+    #[test]
+    fn an_unreadable_runtime_key_is_never_taken_as_absent() {
+        let dir = temp_dir("runtime-key-read");
+        let layout = Layout::new(&dir);
+        let path = layout.runtime_key_file();
+        assert_eq!(read_runtime_key(&path).unwrap(), None, "no folder yet");
+        std::fs::create_dir_all(layout.secrets_dir()).unwrap();
+        assert_eq!(read_runtime_key(&path).unwrap(), None);
+        std::fs::write(&path, b"old-key").unwrap();
+        assert_eq!(read_runtime_key(&path).unwrap().unwrap(), b"old-key");
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("inside"), b"kept").unwrap();
+        for refused in [
+            read_runtime_key(&path),
+            replace_runtime_key(&layout, "new-key"),
+        ] {
+            let error = refused.unwrap_err();
+            assert_eq!(error.kind, crate::ErrorKind::Io);
+            assert!(
+                error.message.contains("nothing was changed"),
+                "{}",
+                error.message
+            );
+        }
+        assert_eq!(std::fs::read(path.join("inside")).unwrap(), b"kept");
+        let left: Vec<_> = std::fs::read_dir(layout.secrets_dir())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(left, [path], "nothing else was written");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn ids_are_validated() {

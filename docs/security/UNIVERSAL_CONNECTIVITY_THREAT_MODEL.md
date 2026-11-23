@@ -476,7 +476,7 @@ Controls:
 - license review;
 - SBOM/provenance;
 - minimal dependency selection;
-- exact-head TypeSafe Jev, Alibaba Open Code Review, and manual review.
+- exact-head independent code review (from 2026-11-23; before that, TypeSafe Jev), Alibaba Open Code Review, and manual review.
 
 ### UC-T35 Relay operator impersonation
 
