@@ -877,7 +877,9 @@ pub(crate) fn verify_receipts(
                         // after a mode switch names it; when that session is
                         // in this file, it ended for the switch, in the other
                         // mode, with the last receipt named here, and no
-                        // other session continues it.
+                        // other session continues it. A session outside
+                        // this file is unverifiable: not checked, and never
+                        // counted as verified.
                         let link_to = &detail["continued_from"];
                         if !link_to.is_null() {
                             let from = link_to["session_id"].as_str().unwrap_or_default();

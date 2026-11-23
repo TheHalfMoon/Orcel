@@ -87,9 +87,11 @@ import {
  * - SG-000135 SH-2: `browser_session_create {continue_from, mode}` moves
  *   the task of an open session to a new session in the other mode, on the
  *   same profile with the same task label. The old session ends; the new
- *   one reopens its recorded pages as approved GET navigations (exact URL
- *   only when nothing in it was redacted and no sign-in was seen, else its
- *   path), and repeats no click, fill, submit or download. Moving to
+ *   one reopens its recorded pages as approved GET navigations, each
+ *   asking even under a lease (exact URL only when nothing in it was
+ *   redacted or token-like, else its path; no page after a sign-in or with
+ *   a token-like path segment), and repeats no click, fill, submit or
+ *   download. Moving to
  *   Visible asks the owner first; a Full Access lease is not carried.
  *
  * Only a Windows development build reaches a real browser; every other

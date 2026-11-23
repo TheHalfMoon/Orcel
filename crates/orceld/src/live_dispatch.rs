@@ -1007,14 +1007,19 @@ mod full {
                         },
                     }
                 };
+                // A reopened page always asks the owner: the session's lease
+                // is held for it, even if one was granted meanwhile.
                 let outcome =
                     crate::browser_broker::checked_baseline(broker, probe()).and_then(|baseline| {
                         let session = broker.session(client, &session_id)?;
                         session.begin_action()?;
                         let current = || probe() == Some(baseline);
-                        run_recorded(
+                        session.worker.hold_full_access(true);
+                        let result = run_recorded(
                             workspace, approval, request, session, &action, baseline, &current,
-                        )
+                        );
+                        session.worker.hold_full_access(false);
+                        result
                     });
                 match outcome {
                     Ok(done) => {

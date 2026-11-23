@@ -25,10 +25,12 @@
 //!   ordinary approved GET navigation in the new session, each with its own
 //!   intent and receipt. Nothing else is replayed: no click, fill, select,
 //!   submit, Enter or download. A tab's URL is carried exactly only when the
-//!   agent could read it in full (nothing redacted, no sign-in seen) and no
-//!   query or fragment value looks like a token; otherwise only its scheme, host and path (`agent_url::bare`), so a
-//!   query that held what a person typed, or a token, is never sent again.
-//!   A tab that is not an https page is not carried.
+//!   agent could read it in full (nothing redacted) and no query or
+//!   fragment value looks like a token; otherwise only its scheme, host and
+//!   path (`agent_url::bare`), so a query that held a token is never sent
+//!   again. No tab is carried once the session showed a sign-in page, nor a
+//!   tab whose path has a token-like segment (a possible single-use link),
+//!   nor one that is not an https page.
 
 use crate::browser_broker::SessionMode;
 use crate::browser_remote::Caller;
@@ -131,15 +133,20 @@ pub(crate) struct SwitchPlan {
 /// The URL a tab carries, and how much of it, or `None` when the tab is not
 /// carried (not an https page).
 pub(crate) fn carry_url(committed: &str, sign_in_seen: bool) -> Option<(String, CarryKind)> {
-    if !committed.starts_with("https://") {
+    // After a sign-in any URL may hold what the person typed or a one-time
+    // link, and a token-like path segment may be a single-use link: never
+    // reopened automatically.
+    if !committed.starts_with("https://")
+        || sign_in_seen
+        || crate::agent_url::token_like_path(committed)
+    {
         return None;
     }
     let bare = crate::agent_url::bare(committed);
     if bare.is_empty() {
         return None;
     }
-    if !sign_in_seen
-        && crate::agent_url::agent_url(committed, false) == committed
+    if crate::agent_url::agent_url(committed, false) == committed
         && crate::agent_url::no_token_values(committed)
     {
         Some((committed.to_owned(), CarryKind::Exact))
@@ -315,13 +322,22 @@ mod tests {
                 assert!(!carried.contains(secret), "{url} carried {carried}");
             }
         }
-        // After a sign-in, every URL loses its query and fragment, even one
-        // whose values look harmless (a GET sign-in form put what the person
-        // typed there).
+        // After a sign-in, no tab is carried at all (a URL may hold what
+        // the person typed, or be a one-time link).
         assert_eq!(
-            carry_url("https://fixture.test/home?lang=en&q=hello#top", true),
-            Some(("https://fixture.test/home".to_owned(), CarryKind::PathOnly))
+            carry_url("https://fixture.test/home?lang=en#top", true),
+            None
         );
+        assert_eq!(carry_url("https://fixture.test/", true), None);
+        // A token-like path segment may be a single-use link: not carried,
+        // with or without a query.
+        for url in [
+            "https://fixture.test/reset/3f9a8b7c6d5e4f3a2b1c",
+            "https://fixture.test/verify/eyJhbGciOiJIUzI1NiJ9?x=1",
+            "https://fixture.test/magic-link-login-token/a",
+        ] {
+            assert_eq!(carry_url(url, false), None, "{url}");
+        }
         // Not an https page: not carried.
         for url in [
             "about:blank",

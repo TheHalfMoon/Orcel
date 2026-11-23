@@ -1234,6 +1234,16 @@ impl LiveBrowser {
         self.full_access = Some(access);
     }
 
+    /// SG-000135 SH-2: hold (or release) the session's Full Access lease, so
+    /// every action asks the owner while held (a mode switch's reopened
+    /// pages). A browser without a lease is unchanged.
+    #[cfg(feature = "live-browser-dev")]
+    pub(crate) fn hold_full_access(&mut self, held: bool) {
+        if let Some(access) = self.full_access.as_mut() {
+            access.hold(held);
+        }
+    }
+
     /// SG-000135 OB-08: the session's lease status, read-only (scope and
     /// expiry), for `browser_task_status`.
     pub(crate) fn full_access_status(&self) -> Option<serde_json::Value> {

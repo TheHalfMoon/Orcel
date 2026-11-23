@@ -269,6 +269,16 @@ pub(crate) fn no_token_values(url: &str) -> bool {
         })
 }
 
+/// SG-000135 SH-2: whether any path segment of `url` is token-like (a
+/// single-use link's token, a long id): such a page is never reopened
+/// automatically.
+pub(crate) fn token_like_path(url: &str) -> bool {
+    match split(url) {
+        Some(parts) => parts.path.split('/').any(token_like),
+        None => true,
+    }
+}
+
 /// A tab's URL as a tab report shows it: scheme, host and path, without
 /// userinfo, query or fragment (OB-03). Ported from `sanitize_url` in
 /// vercel-labs/agent-browser cli/src/native/tab_binding.rs (see
