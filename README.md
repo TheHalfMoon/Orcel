@@ -145,7 +145,7 @@ Neither changes nor deletes the earlier folder. Once a decision is recorded, it 
 3. Configure the tunnel:
    `orcel tunnel setup --client C:\path\to\tunnel-client.exe --tunnel-id tunnel_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`
    You are prompted for the runtime key without echo (or pass `--key-file <path>`). The key is stored only in the protected local folder, passed to the tunnel client by file reference, and never printed or logged.
-   Development builds only (SG-000135 OB-09, not yet verified with ChatGPT): `--profile browser_full` sets this tunnel up for the remote Orcel Browser tools instead of the core profile. A tunnel serves one profile. A `browser_full` tunnel has its own remote connection, its own `orcel tunnel allow` lease and no core tools. Every consequential browser action still asks you on this PC unless you issued a Full Access lease with `orcel browser grant`.
+   Development builds only (SG-000135 OB-09, not yet verified with ChatGPT): `--profile browser_full` sets this tunnel up for the remote Orcel Browser tools instead of the core profile. A tunnel serves one profile. A `browser_full` tunnel has its own remote connection, its own `orcel tunnel allow` lease and no core tools. Each page open, click, fill, selection and new tab with a URL asks you on this PC (reads, Shadow sessions, blank tabs and closing do not): a Full Access lease (`orcel browser grant`) covers local sessions only, and a remote session's client reference is refused. Changing the tunnel id or the profile ends the previous route's session leases.
 
 ## Connect ChatGPT
 
@@ -205,7 +205,7 @@ Mistral Vibe Code HTTP mode and generic Streamable HTTP clients connect to the p
 | `orcel stop` | Stops the tunnel client and everything it started, and confirms they exited |
 | `orcel workspace list` | Workspaces and their trust state |
 | `orcel tunnel show` | Tunnel configuration (never the key) |
-| `orcel tunnel allow` / `orcel tunnel revoke` | Allow or end one finite ChatGPT tunnel session (Windows Hello) |
+| `orcel tunnel allow` / `orcel tunnel revoke` | Allow one finite ChatGPT tunnel session (Windows Hello), or end the tunnel's session leases (both profiles) |
 | `orcel help` | All commands |
 
 ## Diagnose problems

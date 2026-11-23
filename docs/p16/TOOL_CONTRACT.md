@@ -127,12 +127,12 @@ Locally it holds 60 tools: `desktop_structured` plus the Orcel Browser Session B
 which orceld's broker maps onto the existing live host actions. Under this profile `browser_click`, `browser_fill`,
 `browser_select` and `browser_verify` are the broker tools listed here; `browser_structured` keeps its own forms.
 
-Remotely (SG-000135 OB-09, engineering-chosen 2026-11-22 under the founder's delegation), only a ChatGPT Secure MCP Tunnel
+Remotely (SG-000135 OB-09; tunnel only is engineering-chosen 2026-11-22), only a ChatGPT Secure MCP Tunnel
 the owner set up on the PC for `browser_full` serves the 12 broker tools with remote scopes below (providers: openai),
 never a core tool; a tunnel serves one profile, and the relay serves `core` only. orceld still requires the SG-000055
 STRONG remote-session lease for that profile, asks the owner on
-the Windows dialog for every consequential action outside a Full Access lease the authority service issued to that
-client, and keeps the persistent profile tools local-only.
+the Windows dialog for each open, click, fill, select and new tab with a URL (a Full Access lease covers local sessions only, founder
+decision 2026-11-23), and keeps the persistent profile tools local-only.
 
 | Tool | Kernel shape | Effect | Approval | Remote | R | D | I | O | Output bound |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
