@@ -49,7 +49,7 @@
 //! per-action approval; nothing here approves or grants anything.
 
 use orcel_authority::core::dispatch_jobs::is_job_id;
-use orcel_authority::core::standing::{Cover, PinnedProgram, StandingApproval};
+use orcel_authority::core::standing::{same_program, Cover, PinnedProgram, StandingApproval};
 use orcel_authority::lease::{check_dispatch_path, path_within_roots, LeaseBody, LeaseScope};
 use orcel_authority::protocol::{AuthorizeClaims, DispatchOutcome, StandingClaim};
 use orcel_contracts::{ExecutorClass, FailureCode, RequestEnvelope};
@@ -561,7 +561,18 @@ pub(crate) fn run_in_worker_pinned(
         // pinned at grant; a program that cannot be pinned now is not.
         if !remote {
             let standing = port.standing()?;
-            let pinned = run_program(&op).and_then(pinner);
+            // Re-review of #844: hash only a program some approval in
+            // effect pins at this path; any other run is asked, unread.
+            let pinned = run_program(&op)
+                .filter(|program| {
+                    standing.iter().any(|approval| {
+                        approval
+                            .commands
+                            .iter()
+                            .any(|pin| same_program(&pin.path, program))
+                    })
+                })
+                .and_then(pinner);
             let runs = run_program(&op).is_some();
             if !runs || pinned.is_some() {
                 if let Some(covering) = covering_standing(

@@ -70,6 +70,15 @@ pub const STANDING_OPERATIONS: [&str; 5] = [
     "git_branch_create",
 ];
 
+/// The largest program that is pinned (hashed); a larger one is never
+/// covered by a standing approval.
+pub const MAX_PINNED_PROGRAM_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Whether a program of `length` bytes is pinned at all.
+pub fn pin_size_allowed(length: u64) -> bool {
+    length <= MAX_PINNED_PROGRAM_BYTES
+}
+
 /// The most programs a standing approval may name.
 pub const MAX_STANDING_COMMANDS: usize = 8;
 
@@ -191,14 +200,29 @@ pub fn pin_open_file(path: &str, file: &std::fs::File) -> Result<PinnedProgram, 
     let failed = |error: std::io::Error| {
         AuthorityError::invalid(format!("read the program to pin it: {error}"))
     };
+    // Re-review of #844: a program larger than the cap is never hashed (or
+    // covered); the person is asked instead.
+    let length = file.metadata().map_err(failed)?.len();
+    if !pin_size_allowed(length) {
+        return Err(AuthorityError::invalid(
+            "the program is larger than 512 MiB, so it is not pinned; its runs ask each time",
+        ));
+    }
     let mut reader = file;
     reader.seek(SeekFrom::Start(0)).map_err(failed)?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 64 * 1024];
+    let mut total: u64 = 0;
     loop {
         let read = reader.read(&mut buffer).map_err(failed)?;
         if read == 0 {
             break;
+        }
+        total = total.saturating_add(read as u64);
+        if total > MAX_PINNED_PROGRAM_BYTES {
+            return Err(AuthorityError::invalid(
+                "the program grew past 512 MiB while it was read, so it is not pinned",
+            ));
         }
         hasher.update(&buffer[..read]);
     }
@@ -226,6 +250,22 @@ pub fn pin_program(path: &str) -> Result<PinnedProgram, AuthorityError> {
         return Err(AuthorityError::invalid("the program is not a file"));
     }
     pin_open_file(path, &file)
+}
+
+/// The pin the owner CLI records at grant: the program's real path
+/// (resolved, so the box shows the file links and junctions lead to, without
+/// the `\\?\` prefix; a network path is refused), then [`pin_program`].
+pub fn pin_program_for_grant(path: &str) -> Result<PinnedProgram, AuthorityError> {
+    let real = std::fs::canonicalize(path)
+        .map_err(|error| AuthorityError::invalid(format!("resolve the program: {error}")))?;
+    let text = real.display().to_string();
+    if text.starts_with(r"\\?\UNC\") {
+        return Err(AuthorityError::invalid(
+            "a program on a network share is not pinned",
+        ));
+    }
+    let plain = text.strip_prefix(r"\\?\").unwrap_or(&text);
+    pin_program(plain)
 }
 
 /// What the owner asks a standing approval to cover (`StandingBegin`).

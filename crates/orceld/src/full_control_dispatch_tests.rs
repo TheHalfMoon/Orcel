@@ -1716,6 +1716,28 @@ fn fc_dispatch_standing_covers_a_run_only_with_its_pinned_contents_and_file() {
         assert_eq!(approval.asked.borrow().len(), 1, "{name}: asked");
         assert_eq!(last_named(&port), None, "{name}: not covered");
     }
+    // Re-review of #844: a program no approval in effect pins is never read
+    // or hashed (asked unread), and neither is a remote caller's.
+    let read = Cell::new(0u32);
+    for (program, remote) in [(r"C:\work\repo\other.exe", false), (REPO_TOOL, true)] {
+        let port = standing_port(|_| {});
+        let approval = FakeApproval::default();
+        dispatch_pinned(
+            &port,
+            &approval,
+            &run_op(program, REPO),
+            Some(&client),
+            remote,
+            5,
+            &|path| {
+                read.set(read.get() + 1);
+                Some(test_pin(path))
+            },
+        )
+        .expect("asked");
+        assert_eq!(approval.asked.borrow().len(), 1);
+    }
+    assert_eq!(read.get(), 0, "nothing was hashed");
     // Covered: the worker is handed the pin to check on the file it holds.
     let port = standing_port(|_| {});
     let launched = launcher(&port);

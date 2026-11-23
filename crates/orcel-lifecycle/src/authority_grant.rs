@@ -312,7 +312,7 @@ pub fn pin_programs(paths: &[String]) -> Result<Vec<PinnedProgram>, LifecycleErr
     paths
         .iter()
         .map(|path| {
-            orcel_authority::core::standing::pin_program(path).map_err(|error| {
+            orcel_authority::core::standing::pin_program_for_grant(path).map_err(|error| {
                 LifecycleError::usage(format!("--program {path}: {}", error.message))
             })
         })

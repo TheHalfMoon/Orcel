@@ -772,6 +772,20 @@ fn standing_program_pins_bind_contents_and_file() -> Result<(), String> {
     assert_eq!(replaced.sha256, first.sha256);
     assert!(!first.matches(&replaced));
     assert!(pin_program(&dir.display().to_string()).is_err());
+    // Re-review of #844: a program over 512 MiB is never hashed or pinned,
+    // and the grant pins the program's real path, without the `\\?\`
+    // prefix.
+    assert!(crate::core::standing::pin_size_allowed(
+        crate::core::standing::MAX_PINNED_PROGRAM_BYTES
+    ));
+    assert!(!crate::core::standing::pin_size_allowed(
+        crate::core::standing::MAX_PINNED_PROGRAM_BYTES + 1
+    ));
+    let for_grant =
+        crate::core::standing::pin_program_for_grant(&path).map_err(|e| e.to_string())?;
+    assert!(!for_grant.path.starts_with(r"\\?\"));
+    assert!(for_grant.path.to_ascii_lowercase().ends_with("tool.exe"));
+    assert_eq!(for_grant.sha256, replaced.sha256);
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }

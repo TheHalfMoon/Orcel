@@ -78,8 +78,14 @@ capability (`fc.process` for `run`, `fc.git` for the Git changes), every path in
 program among the action's paths and equal to a pinned one (same path, SHA-256 and file identity); no origin; not
 expired.
 
-The pin is checked three times: orceld pins the program again before it decides (a program it cannot read, or whose
-contents or file changed, is not covered, and the person is asked); the service compares orceld's pin (named in the
+The grant pins the program's real path (resolved through links and junctions, without the `\\?\` prefix; a network
+path is refused), so the box shows the file that runs. A program over 512 MiB is never hashed or pinned
+(`MAX_PINNED_PROGRAM_BYTES`), so its runs ask each time.
+
+The pin is checked three times: orceld first compares the run's program path with the paths the approvals in effect
+pin, and reads and hashes the program only when one does (otherwise, and for a remote caller, the person is asked
+without the program being read); it then pins the program again before it decides (a program it cannot read, or
+whose contents or file changed, is not covered, and the person is asked); the service compares orceld's pin (named in the
 `Authorize` claim) with the one granted; and `orceld fc-worker` hashes the program through the handle it holds
 without write or delete sharing until the start, and refuses (`TARGET_STALE`, nothing started) if the contents or
 file differ from the pin it was handed.
@@ -212,7 +218,7 @@ All of these wait for WP1-12 (no heartbeat exists, so the installed service refu
 
 At head (Windows, unelevated):
 
-- `cargo test -p orcel-authority`: 89 unit tests (9 `standing_`), 12 `console_harness` (1 for this slice), 7
+- `cargo test -p orcel-authority`: 89 unit tests (9 `standing_`, the pin test with the size cap and the real path), 12 `console_harness` (1 for this slice), 7
   `dispatch_jobs`, 11 `install_script`.
 - `cargo test -p orceld -- full_control_dispatch_ fc_requests_ fc_worker_ sg132`: 73 (5 new dispatcher tests and
   1 worker test with a real pinned program in a real job root); `ob04_shadow_scan`, `ob07b_vault_scan`,
