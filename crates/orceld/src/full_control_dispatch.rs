@@ -582,7 +582,8 @@ pub(crate) fn run_in_worker_pinned(
         // service checks it again. Otherwise the person is asked. Review of
         // #844: a run is covered only by its program's contents and file as
         // pinned at grant; a program that cannot be pinned now is not.
-        if !remote {
+        // Review of #847: only a run is ever covered.
+        if !remote && run_program(&op).is_some() {
             let standing = port.standing()?;
             // Re-review of #844: hash only a program some approval in
             // effect pins at this path; any other run is asked, unread.
@@ -596,8 +597,7 @@ pub(crate) fn run_in_worker_pinned(
                     })
                 })
                 .and_then(pinner);
-            let runs = run_program(&op).is_some();
-            if !runs || pinned.is_some() {
+            if pinned.is_some() {
                 if let Some(covering) = covering_standing(
                     &standing,
                     body,
@@ -633,13 +633,18 @@ pub(crate) fn run_in_worker_pinned(
         ));
     };
     let confirm = || port.dispatch_active(&grant.authorization_id);
-    let covered = grant
-        .standing_roots
-        .clone()
-        .map(|roots| crate::fc_worker::CoveredBy {
-            roots,
-            program: covered_pin.borrow().clone(),
-        });
+    let covered = match (grant.standing_roots.clone(), covered_pin.borrow().clone()) {
+        (Some(roots), Some(program)) => Some(crate::fc_worker::CoveredBy { roots, program }),
+        (None, None) => None,
+        // Never a covered dispatch in the lease's whole roots.
+        _ => {
+            let refused = Err(unavailable(
+                "a dispatch a standing approval covered names its folders and its program",
+            ));
+            record_outcome(port, &ticket, &refused);
+            return refused;
+        }
+    };
     let result = launcher.run(job, &grant.roots, &op, covered.as_ref(), &confirm);
     record_outcome(port, &ticket, &result);
     result
@@ -675,7 +680,9 @@ pub(crate) fn covering_standing<'a>(
     pinned: Option<&PinnedProgram>,
     now_ms: u64,
 ) -> Option<&'a StandingApproval> {
-    if remote || !op.needs_approval() {
+    // Review of #847: only a run; every Git change asks, whatever a standing
+    // approval names.
+    if remote || run_program(op).is_none() {
         return None;
     }
     let principal = principal_id?;

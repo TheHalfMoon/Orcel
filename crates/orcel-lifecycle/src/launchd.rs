@@ -17,10 +17,11 @@
 //! install's `logs` folder: standard error goes to that file and the shell
 //! then becomes `orceld`, as `StandardError=journal` keeps it off the socket
 //! on Linux. The file is created 0600, and one already there (0644 from an
-//! earlier version) is made 0600 at each start. A log that is a link, a
-//! folder, a FIFO or anything else but a plain file is never opened: that
-//! start's standard error goes to `/dev/null` instead, and orceld still
-//! starts. The
+//! earlier version) is made 0600 at each start, when it is the user's own.
+//! When the name is a link, a folder, a FIFO or anything else but a plain
+//! file as the script checks it, that start's standard error goes to
+//! `/dev/null` instead and orceld still starts (the check is of the name,
+//! just before the open; see below). The
 //! script sets the umask itself because the plist's `Umask` key did not take
 //! effect on the hosted runner (the log came out 0644); the key stays as well.
 //! Like `UMask=0077` on Linux, it applies to everything orceld creates.

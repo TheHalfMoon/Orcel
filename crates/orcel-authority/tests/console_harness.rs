@@ -498,7 +498,7 @@ fn standing_requests_over_the_pipe_fail_closed() {
         task: "t".into(),
         standing: StandingScope {
             executors: vec![ExecutorClass::ShellProcess],
-            operations: vec!["git_commit".into()],
+            operations: vec!["run".into()],
             roots: vec![r"C:\work\repo".into()],
             origins: Vec::new(),
             commands: Vec::new(),

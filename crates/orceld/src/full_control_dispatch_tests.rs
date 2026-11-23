@@ -310,7 +310,7 @@ impl WorkerLauncher for FakeLauncher {
         let _ = &self.service;
         self.pinned
             .borrow_mut()
-            .push(covered.and_then(|covered| covered.program.clone()));
+            .push(covered.map(|covered| covered.program.clone()));
         self.covered_in
             .borrow_mut()
             .push(covered.map(|covered| covered.roots.clone()));
@@ -1616,7 +1616,12 @@ fn standing_approval(lease: &LeaseBody) -> StandingApproval {
         principal_id: lease.principal_id.clone(),
         task: lease.task.clone(),
         executors: vec![ExecutorClass::ShellProcess],
-        operations: vec!["run".to_owned(), "git_commit".to_owned()],
+        // Git is never covered, whatever an approval names (review of #847).
+        operations: vec![
+            "run".to_owned(),
+            "git_commit".to_owned(),
+            "git_add".to_owned(),
+        ],
         roots: vec![REPO.to_owned()],
         origins: Vec::new(),
         commands: vec![test_pin(REPO_TOOL)],
@@ -1773,20 +1778,23 @@ fn fc_dispatch_standing_covers_a_run_only_with_its_pinned_contents_and_file() {
         *launched.covered_in.borrow(),
         vec![Some(vec![REPO.to_owned()])]
     );
-    // A commit is covered without a program, and the worker gets no pin.
+    // A commit is asked, and the worker gets no cover.
     let launched = launcher(&port);
+    let approval = FakeApproval::default();
     crate::full_control_dispatch::run_in_worker_pinned(
         &port,
         &launched,
-        &FakeApproval::default(),
+        &approval,
         &fc_request(&commit_op(REPO)),
         Some(&client),
         false,
         5,
-        &|_| None,
+        &|path| Some(test_pin(path)),
     )
-    .expect("covered commit");
+    .expect("asked commit");
+    assert_eq!(approval.asked.borrow().len(), 1);
     assert_eq!(*launched.pinned.borrow(), vec![None]);
+    assert_eq!(*launched.covered_in.borrow(), vec![None]);
 }
 
 /// The standing approval the last `Authorize` named.
@@ -1800,7 +1808,7 @@ fn last_named(port: &FakePort) -> Option<StandingClaim> {
 }
 
 #[test]
-fn fc_dispatch_standing_covers_a_matching_run_and_commit_without_asking() {
+fn fc_dispatch_standing_covers_a_matching_run_without_asking_and_no_commit() {
     let port = standing_port(|_| {});
     let approval = FakeApproval::default();
     let client = client();
@@ -1813,21 +1821,17 @@ fn fc_dispatch_standing_covers_a_matching_run_and_commit_without_asking() {
             program: Some(test_pin(REPO_TOOL)),
         })
     );
-    dispatch_as(&port, &approval, &commit_op(REPO), Some(&client), false, 5)
-        .expect("covered commit");
-    assert_eq!(
-        last_named(&port).map(|claim| claim.program),
-        Some(None),
-        "a commit names no program"
-    );
     assert!(approval.asked.borrow().is_empty(), "nothing was asked");
+    dispatch_as(&port, &approval, &commit_op(REPO), Some(&client), false, 5).expect("asked commit");
+    assert_eq!(last_named(&port), None, "a commit is never covered");
+    assert_eq!(approval.asked.borrow().len(), 1, "it was asked");
     // Each covered dispatch still had its own audit-first Authorize.
     assert_eq!(port.0.borrow().authorized.len(), 2);
     // fc.status shows the agent what will not ask.
     let status = crate::fc_requests::status(&port, &client, 5).expect("status");
     assert_eq!(
         status["standing"][0]["operations"],
-        json!(["run", "git_commit"])
+        json!(["run", "git_commit", "git_add"])
     );
     assert_eq!(status["standing"][0]["folders"], json!([REPO]));
 }
@@ -1850,7 +1854,7 @@ fn fc_dispatch_standing_mismatches_ask_as_before() {
             5,
         ),
         (
-            "an operation not named",
+            "a Git change, though named",
             standing_port(|_| {}),
             WorkerOp::GitAdd {
                 repository: REPO.to_owned(),
@@ -1994,14 +1998,13 @@ fn fc_dispatch_standing_never_covers_a_remote_or_unidentified_caller() {
 #[test]
 fn fc_dispatch_a_refused_or_unconfirmed_standing_authorize_runs_nothing() {
     let client = client();
-    // A covered commit (no program to pin).
-    let run = commit_op(REPO);
+    let run = run_op(REPO_TOOL, REPO);
     // The service refuses (no live indicator, revoked meanwhile, ...).
     let port = standing_port(|_| {});
     port.with(|service| service.refuse_standing = Some(FailureCode::IndicatorUnavailable));
     let approval = FakeApproval::default();
     let launched = launcher(&port);
-    let refused = dispatch_worker(
+    let refused = crate::full_control_dispatch::run_in_worker_pinned(
         &port,
         &launched,
         &approval,
@@ -2009,6 +2012,7 @@ fn fc_dispatch_a_refused_or_unconfirmed_standing_authorize_runs_nothing() {
         Some(&client),
         false,
         5,
+        &|path| Some(test_pin(path)),
     );
     assert_eq!(code(refused), Some(FailureCode::IndicatorUnavailable));
     assert_eq!(launched.runs.get(), 0);
@@ -2034,14 +2038,15 @@ fn fc_dispatch_a_refused_or_unconfirmed_standing_authorize_runs_nothing() {
             }))
         });
         let launched = launcher(&port);
-        let refused = dispatch_worker(
+        let refused = crate::full_control_dispatch::run_in_worker_pinned(
             &port,
             &launched,
             &approval,
-            &fc_request(&commit_op(REPO)),
+            &fc_request(&run),
             Some(&client),
             false,
             5,
+            &|path| Some(test_pin(path)),
         );
         assert_eq!(code(refused), Some(FailureCode::AuthorityUnavailable));
         assert_eq!(launched.runs.get(), 0);

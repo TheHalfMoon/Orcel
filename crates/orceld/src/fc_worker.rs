@@ -304,10 +304,9 @@ pub(crate) struct CoveredBy {
     /// real folders now ([`exec::standing_folders`]), in place of the
     /// lease's roots: what its paths resolve to, not only their text.
     pub roots: Vec<String>,
-    /// For a run, the program as pinned at grant; the worker starts it only
-    /// if the file it holds open is that file with those contents.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub program: Option<PinnedProgram>,
+    /// The program as pinned at grant; the worker starts it only if the file
+    /// it holds open is that file with those contents.
+    pub program: PinnedProgram,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -844,10 +843,10 @@ pub(crate) fn perform(op: &WorkerOp, roots: &[String]) -> Result<Value, Provider
     perform_covered(op, roots, None)
 }
 
-/// [`perform`]; an operation a standing approval covered (review of #844)
-/// stays inside that approval's real folders, and a run starts only the
-/// pinned program. `covered` on an operation that asks nothing, a pin on
-/// anything but a run, or a covered run without one refuses.
+/// [`perform`]; a run a standing approval covered (review of #844) stays
+/// inside that approval's real folders and starts only the pinned program.
+/// `covered` on any other operation refuses (review of #847: no Git change
+/// is ever covered).
 pub(crate) fn perform_covered(
     op: &WorkerOp,
     roots: &[String],
@@ -856,10 +855,10 @@ pub(crate) fn perform_covered(
     let Some(covered) = covered else {
         return act(op, roots, false, None);
     };
-    if !op.needs_approval() || covered.program.is_some() != matches!(op, WorkerOp::Run { .. }) {
+    if !matches!(op, WorkerOp::Run { .. }) {
         return Err(failure(
             FailureCode::InvalidRequest,
-            "a standing approval covers a run with its pinned program, or a git change without one",
+            "a standing approval covers only a run",
         ));
     }
     let folders = exec::standing_folders(&covered.roots, roots)?;
@@ -867,7 +866,7 @@ pub(crate) fn perform_covered(
         .iter()
         .map(|folder| exec::hold_folder(Path::new(folder)))
         .collect::<Result<Vec<_>, _>>()?;
-    act(op, &folders, true, covered.program.as_ref())
+    act(op, &folders, true, Some(&covered.program))
 }
 
 /// One operation inside `roots`: the lease's, or a covering standing
@@ -1045,14 +1044,11 @@ fn act(
             pinned,
         ),
         WorkerOp::GitStatus { repository } => {
-            exec::run_git(repository, exec::GitAction::Status, roots, covered)
+            exec::run_git(repository, exec::GitAction::Status, roots)
         }
-        WorkerOp::GitDiff { repository, staged } => exec::run_git(
-            repository,
-            exec::GitAction::Diff { staged: *staged },
-            roots,
-            covered,
-        ),
+        WorkerOp::GitDiff { repository, staged } => {
+            exec::run_git(repository, exec::GitAction::Diff { staged: *staged }, roots)
+        }
         WorkerOp::GitLog {
             repository,
             max_count,
@@ -1062,32 +1058,20 @@ fn act(
                 max_count: *max_count,
             },
             roots,
-            covered,
         ),
         WorkerOp::GitAdd { repository, paths } => {
-            exec::run_git(repository, exec::GitAction::Add { paths }, roots, covered)
+            exec::run_git(repository, exec::GitAction::Add { paths }, roots)
         }
-        WorkerOp::GitUnstage { repository, paths } => exec::run_git(
-            repository,
-            exec::GitAction::Unstage { paths },
-            roots,
-            covered,
-        ),
+        WorkerOp::GitUnstage { repository, paths } => {
+            exec::run_git(repository, exec::GitAction::Unstage { paths }, roots)
+        }
         WorkerOp::GitCommit {
             repository,
             message,
-        } => exec::run_git(
-            repository,
-            exec::GitAction::Commit { message },
-            roots,
-            covered,
-        ),
-        WorkerOp::GitBranchCreate { repository, branch } => exec::run_git(
-            repository,
-            exec::GitAction::BranchCreate { branch },
-            roots,
-            covered,
-        ),
+        } => exec::run_git(repository, exec::GitAction::Commit { message }, roots),
+        WorkerOp::GitBranchCreate { repository, branch } => {
+            exec::run_git(repository, exec::GitAction::BranchCreate { branch }, roots)
+        }
     }
 }
 

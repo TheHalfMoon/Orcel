@@ -1,6 +1,11 @@
 //! WP1-14: standing approvals (spec 4.15, founder decision FD-UP-10;
 //! SG132_SLICE10.md).
 //!
+//! Nothing can be granted today (reviews of #844 and #847): Git changes are
+//! never covered, and `run`, the only operation left, is refused under every
+//! lease that can be granted ([`StandingScope::validate`]). Both only reduce
+//! authority and await the founder (SG132_SLICE10.md).
+//!
 //! A standing approval lets one identified client skip the per-action
 //! approval of the operations it names, for one declared task, inside its
 //! folders, until it ends. It is bound to one Full User lease and to that
@@ -59,22 +64,35 @@ pub const STANDING_ID_PREFIX: &str = "sa-";
 /// heartbeat.
 pub const INDICATOR_HEARTBEAT_MS: u64 = 5_000;
 
-/// The operations a standing approval may name: the ones that otherwise ask
-/// a fresh per-action approval on every call (SG-000096 A3, the SG-000132
-/// amendment of 2026-11-19): a process run and the four Git changes.
-pub const STANDING_OPERATIONS: [&str; 5] = [
-    "run",
-    "git_add",
-    "git_unstage",
-    "git_commit",
-    "git_branch_create",
-];
+/// The operations a standing approval may name: a process run. Git changes
+/// always ask (review of #847): Git leaves the folders a repository reports
+/// in too many ways (reference backends, sparse checkouts, junctions, its own
+/// folder) for a folder bound to mean anything. Narrower than spec 4.15 and
+/// the SG-000132 amendment of 2026-11-19, which admit them.
+pub const STANDING_OPERATIONS: [&str; 1] = ["run"];
 
 /// Why a standing approval does not cover `run` under a lease whose file
 /// writes ask nothing. A lease with roots has the filesystem executor today
 /// (`LeaseScope::validate`), so no `run` can be issued until the decision
 /// SG132_SLICE10.md residual 2 records.
 const RUN_NEEDS_READ_ONLY_FOLDERS: &str = "a standing approval does not cover run under a lease with the filesystem executor: file writes in its folders ask nothing, and pinning a program does not pin the files it loads or its arguments; each run keeps its own approval";
+
+// TEST SEAM: lifts the refusal above for one test thread, so the gate and
+// the rules of a covered run are tested while no lease can carry one.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static RUN_REFUSAL_LIFTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+fn run_refusal_lifted_for_test() -> bool {
+    RUN_REFUSAL_LIFTED.with(std::cell::Cell::get)
+}
+
+#[cfg(not(test))]
+fn run_refusal_lifted_for_test() -> bool {
+    false
+}
 
 /// The largest program that is pinned (hashed); a larger one is never
 /// covered by a standing approval.
@@ -95,7 +113,6 @@ pub const MAX_STANDING_RECORDS: usize = 64;
 pub fn operation_capability(operation: &str) -> Option<&'static str> {
     match operation {
         "run" => Some("fc.process"),
-        "git_add" | "git_unstage" | "git_commit" | "git_branch_create" => Some("fc.git"),
         _ => None,
     }
 }
@@ -282,7 +299,7 @@ pub fn pin_program_for_grant(path: &str) -> Result<PinnedProgram, AuthorityError
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StandingScope {
-    /// `shell_process` only in this slice (process runs and Git changes);
+    /// `shell_process` only in this slice (process runs);
     /// never `admin` or `remote`.
     pub executors: Vec<ExecutorClass>,
     /// Some of [`STANDING_OPERATIONS`].
@@ -361,7 +378,7 @@ impl StandingScope {
         for (index, executor) in self.executors.iter().enumerate() {
             if *executor != ExecutorClass::ShellProcess {
                 return Err(invalid(&format!(
-                    "a standing approval covers the shell_process executor only (process runs and Git changes), not {}",
+                    "a standing approval covers the shell_process executor only (process runs), not {}",
                     executor_name(*executor)
                 )));
             }
@@ -380,7 +397,7 @@ impl StandingScope {
         for (index, operation) in self.operations.iter().enumerate() {
             if !STANDING_OPERATIONS.contains(&operation.as_str()) {
                 return Err(invalid(
-                    "a standing approval names only run, git_add, git_unstage, git_commit or git_branch_create",
+                    "a standing approval covers only run; file changes follow the lease and every Git change keeps its own approval",
                 ));
             }
             if self.operations[..index].contains(operation) {
@@ -441,7 +458,10 @@ impl StandingScope {
         // beside the program (a configuration, `._pth`, `.local`) and into
         // whatever it reads, without a prompt, so a covered run would be
         // code the agent chose. Refused; each run keeps its own approval.
-        if runs && lease_executors.contains(&ExecutorClass::Filesystem) {
+        if runs
+            && lease_executors.contains(&ExecutorClass::Filesystem)
+            && !run_refusal_lifted_for_test()
+        {
             return Err(AuthorityError::denied(RUN_NEEDS_READ_ONLY_FOLDERS));
         }
         Ok(())
@@ -659,17 +679,6 @@ impl AuthorityCore {
             logon_session_id: caller.logon_session_id,
             at_ms: now,
         });
-    }
-
-    /// TEST SEAM: replaces an issued standing approval's fields, for the
-    /// rules of a covered `run`, which no grant issues today.
-    #[cfg(test)]
-    pub(crate) fn replace_standing_for_test(&mut self, approval: &StandingApproval) {
-        for record in &mut self.state.standing {
-            if record.approval.id == approval.id {
-                record.approval = approval.clone();
-            }
-        }
     }
 
     /// Why a standing record is not in force now (`None` when it is).
@@ -976,7 +985,7 @@ impl AuthorityCore {
 pub(super) fn confirmation_paragraph(scope: &StandingScope, lease_minutes: u64) -> String {
     let minutes = scope.minutes.unwrap_or(lease_minutes);
     format!(
-        "STANDING APPROVAL: while it lasts, Orcel does NOT ask you before each of these actions by this client for this task:\n{}\nA program is covered only while its own file's contents (SHA-256) and identity match what is shown here; if either changes, Orcel asks again. Nothing else it loads or reads is checked: not DLLs, .local, configuration, manifest, ._pth or pyvenv.cfg files beside it, and not its arguments. Files in the folders can change without a prompt while the lease lasts.\nStanding approval expires: {minutes} minutes after approval (never after the lease)\nIt never covers Admin, remote callers, browser actions or another client, and it ends with Stop, locking the PC, sign-out, revoke or the lease's end.",
+        "STANDING APPROVAL: while it lasts, Orcel does NOT ask you before each of these actions by this client for this task:\n{}\nA program is covered only while its own file's contents (SHA-256) and identity match what is shown here; if either changes, Orcel asks again. Nothing else it loads or reads is checked: not DLLs, .local, configuration, manifest, ._pth or pyvenv.cfg files beside it, and not its arguments. Files in the folders can change without a prompt while the lease lasts.\nStanding approval expires: {minutes} minutes after approval (never after the lease)\nIt never covers Admin, remote callers, browser actions, Git changes or another client, and it ends with Stop, locking the PC, sign-out, revoke or the lease's end.",
         scope.describe()
     )
 }

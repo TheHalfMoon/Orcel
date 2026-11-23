@@ -7,6 +7,7 @@
 use super::*;
 use crate::core::standing::{
     pin_program, PinnedProgram, StandingApproval, StandingScope, INDICATOR_HEARTBEAT_MS,
+    RUN_REFUSAL_LIFTED,
 };
 use crate::protocol::StandingClaim;
 use serde_json::json;
@@ -55,10 +56,13 @@ fn shells_only() -> LeaseScope {
     }
 }
 
+/// `run` is refused under every lease that can be granted today (review of
+/// #847, its own test); the other tests lift that to test the rest.
 fn standing_scope() -> StandingScope {
+    RUN_REFUSAL_LIFTED.with(|lifted| lifted.set(true));
     StandingScope {
         executors: vec![ExecutorClass::ShellProcess],
-        operations: vec!["run".to_owned(), "git_commit".to_owned()],
+        operations: vec!["run".to_owned()],
         roots: vec![REPO.to_owned()],
         origins: Vec::new(),
         commands: vec![pin(TOOL)],
@@ -77,29 +81,19 @@ fn standing_begin_with(scope: LeaseScope, principal: &str, standing: StandingSco
     }
 }
 
-/// What can be granted of `standing` today: no `run` under a lease whose
-/// file writes ask nothing (review of #847).
-fn issuable(mut standing: StandingScope) -> StandingScope {
-    standing.operations.retain(|operation| operation != "run");
-    standing.commands.clear();
-    standing
-}
-
 fn standing_begin(standing: StandingScope) -> Request {
-    standing_begin_with(lease_scope(), &client_ref(), issuable(standing))
+    standing_begin_with(lease_scope(), &client_ref(), standing)
 }
 
 /// The whole gate: a live indicator, the intent, the observed unlock, Yes
 /// in the service's box, then the Hello signature over its challenge.
-/// Returns the lease, the standing approval and the confirmation text. The
-/// `run` a scope names cannot be granted ([`issuable`]); it is added to the
-/// issued record by a test seam, so the rules of a covered run are tested.
+/// Returns the lease, the standing approval and the confirmation text.
 fn grant_standing(
     core: &mut AuthorityCore,
     standing: StandingScope,
 ) -> Result<(SignedLease, StandingApproval, String), String> {
     core.indicator_heartbeat_for_test(&owner());
-    let begun = ok(core.handle(&owner(), standing_begin(standing.clone())))?;
+    let begun = ok(core.handle(&owner(), standing_begin(standing)))?;
     let id = str_of(&begun, "intent_id")?;
     let one_time = str_of(&begun, "code")?;
     let (challenge, text) = confirm_yes(core, &owner(), &id)?;
@@ -112,13 +106,8 @@ fn grant_standing(
         },
     ))?;
     let lease = serde_json::from_value(done["lease"].clone()).map_err(|e| e.to_string())?;
-    let mut issued: StandingApproval =
-        serde_json::from_value(done["standing"].clone()).map_err(|e| e.to_string())?;
-    assert!(issued.commands.is_empty());
-    issued.operations = standing.operations;
-    issued.commands = standing.commands;
-    core.replace_standing_for_test(&issued);
-    Ok((lease, issued, text))
+    let standing = serde_json::from_value(done["standing"].clone()).map_err(|e| e.to_string())?;
+    Ok((lease, standing, text))
 }
 
 fn run_claims(program: &str) -> AuthorizeClaims {
@@ -276,8 +265,9 @@ fn standing_is_issued_with_its_lease_through_the_owner_gate() -> Result<(), Stri
         "STANDING APPROVAL",
         &client_ref(),
         TASK,
-        "operations [git_commit]",
+        "operations [run]",
         REPO,
+        TOOL,
         "Standing approval expires: 30 minutes",
         &one_time,
     ] {
@@ -461,18 +451,36 @@ fn standing_scope_must_fit_its_lease_and_one_identified_client() -> Result<(), S
         .validate(&shells_only(), &client_ref(), 30)
         .is_ok());
     // Review of #847: never `run` under a lease whose file writes ask
-    // nothing; the Git changes are still granted.
+    // nothing; nothing is recorded.
+    let scope = standing_scope();
+    RUN_REFUSAL_LIFTED.with(|lifted| lifted.set(false));
     assert_eq!(
         code(core.handle(
             &owner(),
-            standing_begin_with(lease_scope(), &client_ref(), standing_scope())
+            standing_begin_with(lease_scope(), &client_ref(), scope.clone())
         )),
         Some(FailureCode::CapabilityDenied)
     );
+    assert!(scope.validate(&shells_only(), &client_ref(), 30).is_ok());
     assert!(core.sessions_awaiting_unlock().is_empty());
-    assert!(issuable(standing_scope())
-        .validate(&lease_scope(), &client_ref(), 30)
-        .is_ok());
+    // Nor any Git change, under any lease.
+    for operation in ["git_add", "git_unstage", "git_commit", "git_branch_create"] {
+        for commands in [Vec::new(), vec![pin(TOOL)]] {
+            let mut git = scope.clone();
+            git.operations = vec![operation.to_owned()];
+            git.commands = commands.clone();
+            assert!(git.validate(&shells_only(), &client_ref(), 30).is_err());
+            git.operations.push("run".to_owned());
+            assert!(git.validate(&shells_only(), &client_ref(), 30).is_err());
+            assert_eq!(
+                code(core.handle(
+                    &owner(),
+                    standing_begin_with(lease_scope(), &client_ref(), git)
+                )),
+                Some(FailureCode::InvalidRequest)
+            );
+        }
+    }
     // And no lease with folders is without those writes today.
     assert!(shells_only().validate().is_err());
     let _ = std::fs::remove_dir_all(&dir);
@@ -485,7 +493,7 @@ fn standing_covers_only_its_scope_client_and_task() -> Result<(), String> {
     let events = Events::default();
     let mut core = open_enrolled(&dir, &events)?;
     let (lease, standing, _) = grant_standing(&mut core, standing_scope())?;
-    // Covered: the named program in its folder, and a commit there.
+    // Covered: the named program in its folder.
     let run = ok(covered(
         &mut core,
         &lease,
@@ -495,15 +503,6 @@ fn standing_covers_only_its_scope_client_and_task() -> Result<(), String> {
         Some(TOOL),
     ))?;
     assert_eq!(run["standing_id"], Value::String(standing.id.clone()));
-    let commit = ok(covered(
-        &mut core,
-        &lease,
-        ExecutorClass::ShellProcess,
-        git_claims("git_commit", REPO),
-        &standing.id,
-        None,
-    ))?;
-    assert_eq!(commit["standing_id"], Value::String(standing.id.clone()));
     assert!(audit_text(&dir)?.contains(&format!("\"standing_id\":\"{}\"", standing.id)));
     // Not covered: another program, a folder outside, another operation, a
     // capability that does not match, another client, another task, a
@@ -527,6 +526,11 @@ fn standing_covers_only_its_scope_client_and_task() -> Result<(), String> {
         (
             ExecutorClass::ShellProcess,
             git_claims("git_commit", outside),
+            None,
+        ),
+        (
+            ExecutorClass::ShellProcess,
+            git_claims("git_commit", REPO),
             None,
         ),
         (
@@ -657,8 +661,8 @@ fn standing_expiry_ends_it_and_the_lease_stays() -> Result<(), String> {
     Ok(())
 }
 
-/// One covered commit, authorized with a live indicator; the answer.
-fn covered_commit(
+/// One covered run, authorized with a live indicator; the answer.
+fn covered_run(
     core: &mut AuthorityCore,
     lease: &SignedLease,
     standing_id: &str,
@@ -668,9 +672,9 @@ fn covered_commit(
         core,
         lease,
         ExecutorClass::ShellProcess,
-        git_claims("git_commit", REPO),
+        run_claims(TOOL),
         standing_id,
-        None,
+        Some(TOOL),
     ))
 }
 
@@ -692,12 +696,12 @@ fn standing_ended_before_the_resume_stops_the_dispatch() -> Result<(), String> {
     let mut core = open_enrolled(&dir, &events)?;
     let (lease, standing, _) = grant_standing(&mut core, standing_scope())?;
     // In force: the answer names the folders, and the dispatch resumes.
-    let first = covered_commit(&mut core, &lease, &standing.id)?;
+    let first = covered_run(&mut core, &lease, &standing.id)?;
     assert_eq!(first["standing_roots"], json!([REPO]));
     assert_eq!(ack_as(&mut core, &orceld(), &first), None);
     assert_eq!(active(&mut core, &first)?, None);
     // No live indicator any more: not resumed.
-    let second = covered_commit(&mut core, &lease, &standing.id)?;
+    let second = covered_run(&mut core, &lease, &standing.id)?;
     assert_eq!(ack_as(&mut core, &orceld(), &second), None);
     advance(INDICATOR_HEARTBEAT_MS);
     assert_eq!(
@@ -705,7 +709,7 @@ fn standing_ended_before_the_resume_stops_the_dispatch() -> Result<(), String> {
         Some(FailureCode::IndicatorUnavailable)
     );
     // Revoked: not resumed, and neither job is left.
-    let third = covered_commit(&mut core, &lease, &standing.id)?;
+    let third = covered_run(&mut core, &lease, &standing.id)?;
     assert_eq!(ack_as(&mut core, &orceld(), &third), None);
     ok(core.handle(
         &other_process(),
@@ -732,7 +736,7 @@ fn standing_ended_before_the_resume_stops_the_dispatch() -> Result<(), String> {
     short.minutes = Some(5);
     let (lease, standing, _) = grant_standing(&mut core, short)?;
     advance(5 * 60_000 - 1_000);
-    let fourth = covered_commit(&mut core, &lease, &standing.id)?;
+    let fourth = covered_run(&mut core, &lease, &standing.id)?;
     assert_eq!(ack_as(&mut core, &orceld(), &fourth), None);
     advance(1_000);
     let job = str_of(&fourth, "job_id")?;
@@ -758,7 +762,7 @@ fn standing_revoke_and_expiry_end_its_running_jobs_only() -> Result<(), String> 
         if expiry {
             advance(5 * 60_000 - 1_000);
         }
-        let running = covered_commit(&mut core, &lease, &standing.id)?;
+        let running = covered_run(&mut core, &lease, &standing.id)?;
         ack_and_confirm(&mut core, &running)?;
         // The same operation, approved per action, under the same lease.
         let asked = ok(core.handle(
@@ -766,7 +770,7 @@ fn standing_revoke_and_expiry_end_its_running_jobs_only() -> Result<(), String> 
             Request::Authorize {
                 lease_id: lease.body.lease_id.clone(),
                 executor: ExecutorClass::ShellProcess,
-                claims: git_claims("git_commit", REPO),
+                claims: run_claims(TOOL),
                 job_ack: true,
                 standing: None,
             },

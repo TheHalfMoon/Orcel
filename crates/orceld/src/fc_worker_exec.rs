@@ -413,92 +413,27 @@ pub(crate) fn hold_folder(folder: &Path) -> Result<std::fs::File, ProviderError>
     std::fs::File::open(folder).map_err(|error| io_failure("hold the folder", &error))
 }
 
-/// The most entries of a repository's own folders a covered operation
-/// checks; a larger one is not covered.
-const MAX_GIT_FOLDER_ENTRIES: usize = 20_000;
-
-/// Review of #844: Git's own folder (or common folder) `dir` of a covered
-/// repository holds no link or junction, and no file with more than one name
-/// outside `objects`: Git would write refs, logs, objects or its message
-/// file through it, outside the standing folders. Of its `objects` (Git
-/// writes new files there and never into an existing one; local clones
-/// hard-link them), `modules` and `lfs` (not used: no submodule, no filter)
-/// only the direct entries are checked.
-fn check_git_folder(dir: &Path) -> Result<(), ProviderError> {
-    let mut left = MAX_GIT_FOLDER_ENTRIES;
-    let mut pending = vec![(dir.to_path_buf(), false)];
-    while let Some((folder, shallow)) = pending.pop() {
-        let entries = std::fs::read_dir(&folder)
-            .map_err(|error| io_failure("list the repository's Git folder", &error))?;
-        for entry in entries {
-            let entry =
-                entry.map_err(|error| io_failure("read an entry of the Git folder", &error))?;
-            left = left.checked_sub(1).ok_or_else(|| {
-                failure(
-                    FailureCode::OutputLimit,
-                    "the repository's Git folder has too many entries to check for a standing approval",
-                )
-            })?;
-            let kind = entry
-                .file_type()
-                .map_err(|error| io_failure("read an entry of the Git folder", &error))?;
-            if kind.is_symlink() {
-                return Err(failure(
-                    FailureCode::PathEscape,
-                    "the repository's Git folder holds a link or junction; a standing approval does not cover it",
-                ));
-            }
-            if shallow {
-                continue;
-            }
-            if kind.is_dir() {
-                let name = entry.file_name();
-                let shallow = folder == dir
-                    && ["objects", "modules", "lfs"]
-                        .iter()
-                        .any(|known| name.eq_ignore_ascii_case(known));
-                pending.push((entry.path(), shallow));
-            } else {
-                let file = std::fs::File::open(entry.path())
-                    .map_err(|error| io_failure("open a file of the Git folder", &error))?;
-                refuse_hard_links(&file)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Review of #844: a repository path a covered operation stages, unstages
-/// or commits, link-free from the top level down, so it names what lies in
-/// the standing folder and nothing beyond it. `contents`: the file itself is
-/// read now (a stage), so one with more than one name is refused too. What
-/// does not exist (a staged deletion) has nothing to follow.
-fn check_staged_path(top_level: &Path, path: &str, contents: bool) -> Result<(), ProviderError> {
-    let mut at = top_level.to_path_buf();
-    for part in path.split(['/', '\\']) {
-        if part.is_empty() || part == "." || part == ".." || part.contains(':') {
-            return Err(failure(
-                FailureCode::PathEscape,
-                "a staged path is not a plain path inside the repository",
-            ));
-        }
-        at.push(part);
-        match std::fs::symlink_metadata(&at) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(failure(
-                    FailureCode::PathEscape,
-                    "a staged path leads through a link or junction; a standing approval does not cover it",
-                ));
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(io_failure("inspect a staged path", &error)),
-        }
-    }
-    if contents && at.is_file() {
-        let file =
-            std::fs::File::open(&at).map_err(|error| io_failure("open a path to stage", &error))?;
-        refuse_hard_links(&file)?;
+/// Review of #847: the folder `held` is open on is not a reparse point now.
+/// Holding it keeps it and the folders above it from being renamed, and a
+/// folder that holds another cannot become a junction; an empty one can.
+pub(crate) fn still_a_folder(held: &std::fs::File) -> Result<(), ProviderError> {
+    let metadata = held
+        .metadata()
+        .map_err(|error| io_failure("read the held folder", &error))?;
+    #[cfg(windows)]
+    let reparse = {
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_attributes()
+            & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+            != 0
+    };
+    #[cfg(not(windows))]
+    let reparse = false;
+    if reparse || !metadata.is_dir() {
+        return Err(failure(
+            FailureCode::PathRaceDetected,
+            "the working folder became a link or junction after its checks; nothing was run",
+        ));
     }
     Ok(())
 }
@@ -633,7 +568,7 @@ pub(crate) fn run_program(
         }
     }
     let folder = plain(&resolve_folder(cwd, roots)?);
-    let _held = if covered {
+    let held = if covered {
         Some(hold_folder(&folder)?)
     } else {
         None
@@ -657,6 +592,11 @@ pub(crate) fn run_program(
     }
     // Review of #824: the program started is the one checked.
     resolved.reverify()?;
+    // Review of #847: and the held folder is still a folder (an empty one can
+    // be made a junction in place, without renaming it).
+    if let Some(held) = &held {
+        still_a_folder(held)?;
+    }
     let mut child = command
         .spawn()
         .map_err(|error| io_failure("start the program", &error))?;
@@ -829,19 +769,10 @@ pub(crate) enum GitAction<'a> {
 /// The git family: one structured operation on the repository at
 /// `repository`. A mutation reads the repository's state and acts only if
 /// it is still that state (the provider's own check).
-///
-/// `covered` (review of #844): a standing approval covered it, and `roots`
-/// are that approval's real folders ([`standing_folders`]). The repository's
-/// top level, Git folder and common folder then lie inside one of them (the
-/// provider's workspace root is that folder, so it never looks above it),
-/// `repository` is exactly the top level, Git's own folders hold no link
-/// ([`check_git_folder`]), and every path staged, unstaged or committed is
-/// link-free inside the top level ([`check_staged_path`]).
 pub(crate) fn run_git(
     repository: &str,
     action: GitAction<'_>,
     roots: &[String],
-    covered: bool,
 ) -> Result<Value, ProviderError> {
     if let GitAction::Log { max_count } = action {
         if max_count == 0 || max_count > MAX_GIT_LOG {
@@ -853,9 +784,6 @@ pub(crate) fn run_git(
     }
     let (provider, relative) = git_provider(repository, roots)?;
     let relative = relative.as_str();
-    if covered {
-        return run_git_covered(provider.only_at_top_level(), relative, action);
-    }
     let result = match action {
         GitAction::Status => provider.status(relative),
         GitAction::Diff { staged } => provider.diff(relative, staged),
@@ -874,58 +802,4 @@ pub(crate) fn run_git(
             .and_then(|state| provider.create_branch(relative, branch, &state)),
     };
     result.map_err(git_error)
-}
-
-/// [`run_git`] under a standing approval: the four changes it can name.
-fn run_git_covered(
-    provider: GitProvider,
-    relative: &str,
-    action: GitAction<'_>,
-) -> Result<Value, ProviderError> {
-    let place = provider.locate(relative).map_err(git_error)?;
-    let _held = (
-        hold_folder(&place.top_level)?,
-        hold_folder(&place.git_dir)?,
-        hold_folder(&place.common_dir)?,
-    );
-    check_git_folder(&place.git_dir)?;
-    if place.common_dir != place.git_dir {
-        check_git_folder(&place.common_dir)?;
-    }
-    let check = |paths: &[String], contents: bool| -> Result<(), ProviderError> {
-        paths
-            .iter()
-            .try_for_each(|path| check_staged_path(&place.top_level, path, contents))
-    };
-    match action {
-        GitAction::Add { paths } => {
-            check(paths, true)?;
-            let state = provider.path_state(relative, paths).map_err(git_error)?;
-            provider.stage(relative, paths, &state).map_err(git_error)
-        }
-        GitAction::Unstage { paths } => {
-            check(paths, false)?;
-            let state = provider.unstage_state(relative, paths).map_err(git_error)?;
-            provider.unstage(relative, paths, &state).map_err(git_error)
-        }
-        GitAction::Commit { message } => {
-            // The state first: the commit refuses an index that is no longer
-            // the one whose staged paths were checked.
-            let state = provider.staged_state(relative).map_err(git_error)?;
-            check(&provider.staged_paths(relative).map_err(git_error)?, false)?;
-            provider
-                .commit(relative, message, &state)
-                .map_err(git_error)
-        }
-        GitAction::BranchCreate { branch } => {
-            let state = provider.branch_state(relative).map_err(git_error)?;
-            provider
-                .create_branch(relative, branch, &state)
-                .map_err(git_error)
-        }
-        GitAction::Status | GitAction::Diff { .. } | GitAction::Log { .. } => Err(failure(
-            FailureCode::InvalidRequest,
-            "a standing approval covers no read",
-        )),
-    }
 }
