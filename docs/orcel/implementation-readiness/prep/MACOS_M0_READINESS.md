@@ -311,7 +311,7 @@ All are non-invasive to Windows: each edits only `cfg(target_os = "macos")` or `
      since the review of #852 a stderr that cannot be written no longer ends it.
    - Log size, checked at each start and not capped while `orceld` runs (#840, corrected after its review):
      `logs/orceld-agent.log` moves to `orceld-agent.log.1` (replacing an older one) once it is over 1 MiB. It is moved
-     both when the agent is written (install, update, rollback) and each time launchd starts `orceld`. When the agent is
+     both when the agent is written (install, update, rollback, restore and recovery) and each time launchd starts `orceld`. When the agent is
      written, a log that cannot be moved is noted in `logs/lifecycle.log` and nothing fails for it; links, hard links and
      foreign owners in the install are still refused by protect and verify. At a start, the size is checked again after
      the move: a log still over 1 MiB (the `.1` is a link, a folder, not a plain file or another name of the log, or the
@@ -323,7 +323,16 @@ All are non-invasive to Windows: each edits only `cfg(target_os = "macos")` or `
      with a fresh log holding one readiness line per connection. `launchd.rs` runs the script itself against a log that
      is missing, 0644, oversized, a link, a dangling link, a FIFO, a folder or one it cannot open, and a `.1` that is a
      folder, a link, a dangling link, a FIFO or another name of the log. Not run: a move that fails for another reason,
-     two starts at once, and a name that changes between the check and the open.
+     two starts at once, and a name that changes between the check and the open. macOS can be set to run `/bin/sh` as
+     bash (its default), dash or zsh (`/private/var/select/sh`); only the runner's `/bin/sh` has run the script.
+   - The install tree is in use while it is protected and verified: an agent is loaded by then, and a client can start
+     an `orceld` that writes state and moves its log. An entry that is gone, or is another one, when it is looked at
+     makes the whole tree be walked again, so what it was renamed to is checked; a tree that keeps changing is refused,
+     and any other error fails as before (`unix_install.rs`). Loading the agent only after the final verify was
+     considered and not done: a rollback has no marker, so a stop in between would leave a verified install whose agent
+     still starts the other version, and the agent of the version before is loaded anyway.
+   - Reload: an agent that is already loaded is unloaded and loaded again with the real `launchctl`, idle and with a
+     connection open, and answers afterwards (`MAC-M1-07-EVIDENCE reload`, required by the macOS step in CI).
    - `StandardErrorPath` instead of the shell was tried once on the hosted runner (#840, macOS 15.8.2 and 26.7.2), with no shell and the plist `Umask` 63. The socket stayed clean, the readiness line reached the file and the JSON answer came first. But the file was created 0644: `Umask` did not apply there either. There is also no point at which to bound the log when launchd starts `orceld`. The shell stays for the owner-only umask and the start-time bound. The experiment was removed after that run.
    - `MacosPlatform` writes the plist and loads it with `/bin/launchctl bootstrap gui/<uid>` whenever the active version changes. On install that is after the final verify. On update, rollback, restore and recovery it is right after the version switch, before that path's final verify, on a version folder whose payload was verified earlier on the same path. Uninstall unloads it with `bootout` and removes the plist and socket before the payload goes. The `Platform` hooks default to doing nothing, so Windows is unchanged.
    - Nothing loads it on a person's Mac today: only `MacosPlatform` does, and `host_platform()` does not return it until approval 1.

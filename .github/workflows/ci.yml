@@ -312,7 +312,9 @@ jobs:
       # uninstall; tamper, unlisted, link, hard link, permission and
       # admin-writable-ancestor refusals. MAC-M1-07: the per-user launchd
       # agent under a test label in gui/<uid>, two system.status answers
-      # through its socket, no lingering orceld, uninstall unloads it.
+      # through its socket, no lingering orceld, uninstall unloads it; an
+      # install with a log that cannot be moved aside; and an agent that is
+      # already loaded is loaded again, idle and with an open connection.
       # MAC-M1-08: `orcel emergency-revoke` with the real orceld beside orcel
       # fails closed headless, revokes nothing and is audited. Each test uses
       # its own HOME. The tests fail instead of skipping when the
@@ -330,7 +332,7 @@ jobs:
           node --version
           log="$RUNNER_TEMP/mac-m1.log"
           cargo test -p orcel-lifecycle --test macos_install --test macos_emergency_revoke -- --nocapture --test-threads=1 2>&1 | tee "$log"
-          for line in "MAC-M1-03-EVIDENCE install root=" "MAC-M1-03-EVIDENCE uninstall removed=" "MAC-M1-03-EVIDENCE refused tampered=true" "MAC-M1-03-EVIDENCE refused symlink=true" "MAC-M1-03-EVIDENCE refused group_writable_file=true" "MAC-M1-03-EVIDENCE refused admin_writable_ancestor=true" "MAC-M1-07-EVIDENCE agent loaded=true" "MAC-M1-07-EVIDENCE bootout loaded=false" "MAC-M1-08-EVIDENCE preactivation sibling_orceld_present=true refused=true" "MAC-M1-08-EVIDENCE installed_orceld code=APPROVAL_"; do
+          for line in "MAC-M1-03-EVIDENCE install root=" "MAC-M1-03-EVIDENCE uninstall removed=" "MAC-M1-03-EVIDENCE refused tampered=true" "MAC-M1-03-EVIDENCE refused symlink=true" "MAC-M1-03-EVIDENCE refused group_writable_file=true" "MAC-M1-03-EVIDENCE refused admin_writable_ancestor=true" "MAC-M1-07-EVIDENCE agent loaded=true" "MAC-M1-07-EVIDENCE bootout loaded=false" "MAC-M1-07-EVIDENCE unmovable_log install=ok noted=true answered=true" "MAC-M1-07-EVIDENCE reload reloads=2 answered_after=true open_connection=true" "MAC-M1-08-EVIDENCE preactivation sibling_orceld_present=true refused=true" "MAC-M1-08-EVIDENCE installed_orceld code=APPROVAL_"; do
             grep -q "$line" "$log" || { echo "::error::missing $line" >&2; exit 1; }
           done
       - name: Live clipboard roundtrip (macOS)

@@ -38,8 +38,9 @@
 //! The log's size is checked, not capped while it is written: when it is
 //! over [`MAX_STDERR_LOG`] it is moved to `orceld-agent.log.1` (replacing an
 //! older one), both when the agent is written ([`rotate_log`], at install,
-//! update and rollback, where a log that cannot be moved is noted in the
-//! lifecycle log and nothing fails for it) and by the shell each time launchd
+//! update, rollback, restore and recovery, where a log that cannot be moved is
+//! noted in the lifecycle log and nothing fails for it) and by the shell each
+//! time launchd
 //! starts `orceld`. The shell looks at the size again after the move. If the
 //! log is still over the limit (`orceld-agent.log.1` is a link, a folder or
 //! anything else but a plain file, or another name of the same file, or the
@@ -80,7 +81,9 @@ const MAX_SOCKET_PATH: usize = 103;
 /// a group: when that fails the shell goes on to the last command and becomes
 /// `orceld` with standard error in `/dev/null` (a failed redirection of `exec`
 /// itself would end the shell). `chmod`, `stat` and `mv` by absolute path;
-/// constant, with positional paths only.
+/// constant, with positional paths only. macOS can be set to run `/bin/sh` as
+/// bash (its default), dash or zsh; the script keeps to POSIX, and only the
+/// runner's `/bin/sh` has run it.
 const SHELL: &str = "/bin/sh";
 const SHELL_SCRIPT: &str = r#"umask 077; exec 2>/dev/null; plain() { [ ! -L "$1" ] && { [ ! -e "$1" ] || [ -f "$1" ]; }; }; big() { [ "$(/usr/bin/stat -f %z "$1")" -gt 1048576 ]; }; if plain "$1"; then /bin/chmod 600 "$1"; if big "$1"; then if plain "$1.1"; then /bin/mv -f "$1" "$1.1"; fi; if big "$1"; then set -- /dev/null; fi; fi; else set -- /dev/null; fi; { exec "$0"; } 2>>"$1"; exec "$0""#;
 /// The agent's standard error log inside the install's `logs` folder.
