@@ -229,6 +229,8 @@ impl GitProvider {
                     "the repository's Git data is outside the trusted workspace",
                 ));
             }
+            // Review of #847: its refs, logs and objects are its own.
+            repo_config::check_git_folder(&dir)?;
             seen += 1;
             common = Some(dir);
         }
@@ -253,13 +255,56 @@ impl GitProvider {
         }
         // Follow-up to #824: no untracked nested folder's `.git` may lead
         // Git to a share, a device, a link or out of the workspace.
-        nested::check_nested(
+        let links = nested::check_nested(
             &self.workspace_root,
             &repo,
             &mut |dirs| self.ignored_dirs(&repo, dirs),
             &mut |dirs| self.tracked_dirs(&repo, dirs),
         )?;
+        if cfg!(windows) {
+            self.refuse_tracked_behind_links(&repo, links)?;
+        }
         Ok(repo)
+    }
+
+    /// Review of #847: Git for Windows follows a junction as a folder, so a
+    /// tracked file behind one is read (a diff shows it), staged and written
+    /// outside the repository. No folder above a tracked entry, under the
+    /// name the index gives it (whatever its case, or a short name), is a
+    /// link or junction. `links`: the working tree has one somewhere, so an
+    /// index too large to check is refused. Elsewhere Git itself does not
+    /// follow a link.
+    fn refuse_tracked_behind_links(
+        &self,
+        repo: &Path,
+        links: bool,
+    ) -> Result<(), GitProviderError> {
+        let index = self.run_git(repo, &["ls-files", "-z"])?;
+        if index.stdout_truncated && links {
+            return Err(GitProviderError::new(
+                FailureCode::ProviderUnavailable,
+                "the working tree has links or junctions and Git's index exceeded its bound, so they cannot be checked",
+            ));
+        }
+        let mut checked = std::collections::BTreeSet::new();
+        for path in index.stdout.split('\0') {
+            let mut end = 0;
+            while let Some(at) = path[end..].find('/') {
+                end += at;
+                let folder = &path[..end];
+                end += 1;
+                if !checked.insert(folder) {
+                    continue;
+                }
+                if is_link(&repo.join(folder)) {
+                    return Err(GitProviderError::new(
+                        FailureCode::PathEscape,
+                        "a tracked folder is now a link or junction; Orcel does not run Git in the repository",
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Which of `dirs` (repository-relative, `/`-separated) the
@@ -403,6 +448,11 @@ impl GitProvider {
         all.extend_from_slice(args);
         run_plain_with(&self.program, ceiling, cwd, &all)
     }
+}
+
+/// Whether `path` itself is a link or junction.
+pub(crate) fn is_link(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
 }
 
 /// Lists the configuration Git applies to a command here, with the scope of each entry.

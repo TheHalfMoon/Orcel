@@ -676,6 +676,53 @@ mod imp {
     }
 }
 
+/// Whether `path` is a junction (a mount point reparse tag), which Git for
+/// Windows and other programs follow as an ordinary folder. A reparse point
+/// whose tag cannot be read counts as one.
+#[cfg(windows)]
+pub fn is_junction(path: &std::path::Path) -> bool {
+    use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{
+        FileAttributeTagInfo, GetFileInformationByHandleEx, FILE_ATTRIBUTE_TAG_INFO,
+    };
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+    const FILE_READ_ATTRIBUTES: u32 = 0x0080;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xA000_0003;
+    let reparse = std::fs::symlink_metadata(path)
+        .is_ok_and(|metadata| metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0);
+    if !reparse {
+        return false;
+    }
+    let Ok(file) = std::fs::OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+    else {
+        return true;
+    };
+    let mut info = FILE_ATTRIBUTE_TAG_INFO::default();
+    // SAFETY: an open handle and a live out-parameter of the class's size.
+    let read = unsafe {
+        GetFileInformationByHandleEx(
+            HANDLE(file.as_raw_handle()),
+            FileAttributeTagInfo,
+            (&mut info as *mut FILE_ATTRIBUTE_TAG_INFO).cast(),
+            std::mem::size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
+        )
+    };
+    read.is_err() || info.ReparseTag == IO_REPARSE_TAG_MOUNT_POINT
+}
+
+/// Junctions are a Windows reparse point.
+#[cfg(not(windows))]
+pub fn is_junction(_path: &std::path::Path) -> bool {
+    false
+}
+
 #[cfg(windows)]
 mod imp {
     use super::{io_error, PlatformError};

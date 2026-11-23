@@ -13,8 +13,9 @@
 //! So before any Git command that may walk (every operation resolves its
 //! repository first), the provider walks the working tree itself, the way
 //! Git would: from the repository root, skipping the repository's own
-//! `.git`, never following links or junctions, not descending into a
-//! folder the repository's exclude rules ignore unless the index tracks
+//! `.git`, never following links or junctions (Git for Windows does follow
+//! a junction, so one that is not ignored refuses the repository, review of
+//! #847), not descending into a folder the repository's exclude rules ignore unless the index tracks
 //! something under it (Git walks those), though an ignored folder's own
 //! `.git` is still checked (Git asks whether the ignored folder itself is
 //! a repository before it skips it). For each nested folder with a
@@ -185,18 +186,20 @@ fn check_nested_entry(root: &Path, folder: &Path, dot_git: &Path) -> Result<(), 
 
 /// The walk (see the module documentation). `ignored` answers which of the
 /// given repository-relative folders the exclude rules ignore; `tracked`
-/// which of them hold tracked entries.
+/// which of them hold tracked entries. Answers whether the walk met a link
+/// or junction (which it does not follow).
 pub(crate) fn check_nested(
     workspace_root: &Path,
     repo: &Path,
     ignored: &mut Lookup<'_>,
     tracked: &mut Lookup<'_>,
-) -> Result<(), GitProviderError> {
+) -> Result<bool, GitProviderError> {
+    let mut links = false;
     let mut level: Vec<(PathBuf, String)> = vec![(repo.to_path_buf(), String::new())];
     let mut seen = 0usize;
     for depth in 0..=MAX_DEPTH {
         if level.is_empty() {
-            return Ok(());
+            return Ok(links);
         }
         if depth == MAX_DEPTH {
             return Err(bounded(format!(
@@ -204,6 +207,7 @@ pub(crate) fn check_nested(
             )));
         }
         let mut children: Vec<(PathBuf, String)> = Vec::new();
+        let mut junctions: Vec<(PathBuf, String)> = Vec::new();
         for (folder, relative) in &level {
             let reader = std::fs::read_dir(folder)
                 .map_err(|error| escape(format!("list a working-tree folder: {error}")))?;
@@ -231,13 +235,18 @@ pub(crate) fn check_nested(
                 let file_type = entry
                     .file_type()
                     .map_err(|error| escape(format!("read an entry's type: {error}")))?;
-                if file_type.is_dir() && !file_type.is_symlink() {
-                    let child = if relative.is_empty() {
+                links |= file_type.is_symlink();
+                let child = || {
+                    if relative.is_empty() {
                         name.to_owned()
                     } else {
                         format!("{relative}/{name}")
-                    };
-                    subfolders.push((entry.path(), child));
+                    }
+                };
+                if file_type.is_symlink() && orcel_platform::paths::is_junction(&entry.path()) {
+                    junctions.push((entry.path(), child()));
+                } else if file_type.is_dir() && !file_type.is_symlink() {
+                    subfolders.push((entry.path(), child()));
                 }
             }
             if let Some(dot_git) = nested_git {
@@ -246,6 +255,22 @@ pub(crate) fn check_nested(
                 continue;
             }
             children.extend(subfolders);
+        }
+        // Review of #847: Git for Windows walks a junction as a folder. One
+        // the exclude rules do not ignore is refused; an ignored one is not
+        // walked, but its own `.git` is asked about, as below.
+        let names: Vec<String> = junctions.iter().map(|(_, name)| name.clone()).collect();
+        let ignored_junctions = ignored(&names)?;
+        for (folder, name) in &junctions {
+            if !ignored_junctions.contains(name) {
+                return Err(escape(format!(
+                    "{name} is a junction that is not ignored; Git would follow it, so Orcel does not run Git in the repository"
+                )));
+            }
+            let dot_git = folder.join(".git");
+            if std::fs::symlink_metadata(&dot_git).is_ok() {
+                check_nested_entry(workspace_root, folder, &dot_git)?;
+            }
         }
         let names: Vec<String> = children.iter().map(|(_, name)| name.clone()).collect();
         let ignored_now = ignored(&names)?;
@@ -269,5 +294,5 @@ pub(crate) fn check_nested(
         }
         level = walked;
     }
-    Ok(())
+    Ok(links)
 }

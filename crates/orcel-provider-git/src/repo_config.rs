@@ -30,6 +30,15 @@
 //! name. Submodules fail closed: a `.gitmodules` entry or a `modules`
 //! folder in the Git directory refuses the repository (a submodule's own
 //! configuration and filters are outside this gate).
+//!
+//! Review of #847: a repository extension can move what Git uses to another
+//! place while `rev-parse` still reports this repository
+//! (`extensions.refStorage = files://<another>/.git` moves HEAD, the refs
+//! and the reflogs), so only the extensions known here, with the values
+//! known here, are accepted ([`extension_allowed`]); any other, also one a
+//! later Git adds, refuses the repository. The parts of the Git folder Git
+//! writes through are not links or junctions ([`WRITTEN_THROUGH`],
+//! [`check_git_folder`]).
 
 use crate::GitProviderError;
 use orcel_contracts::FailureCode;
@@ -105,6 +114,40 @@ const REFUSED_CORE: &[&str] = &[
     "worktree",
 ];
 
+/// Whether a repository extension (`extensions.<name>`, lowercase) has a
+/// value known to keep everything Git uses where the gate looked. Values
+/// are compared as Git compares them; booleans as Git reads them.
+fn extension_allowed(name: &str, value: Option<&str>) -> bool {
+    let boolean = || match value {
+        // A key without `=` is true.
+        None => true,
+        Some(value) => ["true", "false", "yes", "no", "on", "off", "1", "0", ""]
+            .iter()
+            .any(|known| value.eq_ignore_ascii_case(known)),
+    };
+    match name {
+        // Ignored by Git.
+        "noop" => true,
+        // `config.worktree` beside `config` (the gate reads both), no
+        // pruning, and relative `gitdir` links (the gate resolves them).
+        "worktreeconfig" | "preciousobjects" | "relativeworktrees" => boolean(),
+        "objectformat" => matches!(value, Some("sha1" | "sha256")),
+        // Loose and packed refs in the Git folder, without a place
+        // (`files://...`); not reftable.
+        "refstorage" => value == Some("files"),
+        // A remote's name. Git fetches nothing for it: lazy fetching is off
+        // and no transport is allowed.
+        "partialclone" => value.is_some_and(|remote| {
+            !remote.is_empty()
+                && !remote.starts_with(['-', '.'])
+                && remote
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        }),
+        _ => false,
+    }
+}
+
 /// Why an entry is refused, or `None`.
 pub(crate) fn refusal(entry: &Entry) -> Option<String> {
     let key = match &entry.subsection {
@@ -126,6 +169,11 @@ pub(crate) fn refusal(entry: &Entry) -> Option<String> {
     if denied {
         return Some(format!(
             "the repository configuration sets {key}, which can make Git run a program, follow an include or use a transport; Orcel does not run Git in it"
+        ));
+    }
+    if section == "extensions" && (sub || !extension_allowed(name, entry.value.as_deref())) {
+        return Some(format!(
+            "the repository configuration sets {key} to a value that is not known to keep Git inside the repository; Orcel does not run Git in it"
         ));
     }
     if entry.value.as_deref().is_some_and(names_a_share_or_device) {
@@ -378,6 +426,69 @@ fn check_file(path: &Path, what: &str) -> Result<(), GitProviderError> {
     Ok(())
 }
 
+/// What Git writes (or replaces) in its folder, by name: none may be a link
+/// or a junction (review of #847).
+const WRITTEN_THROUGH: &[&str] = &[
+    "HEAD",
+    "ORIG_HEAD",
+    "FETCH_HEAD",
+    "COMMIT_EDITMSG",
+    "index",
+    "packed-refs",
+    "refs",
+    "logs",
+    "objects",
+    "worktrees",
+];
+
+/// The most entries of a Git folder's `refs`, `logs` and `objects` the gate
+/// looks at before it refuses.
+const MAX_GIT_FOLDER_ENTRIES: usize = 200_000;
+
+fn refuse_link(path: &Path) -> Result<(), GitProviderError> {
+    if std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        return Err(refused(
+            "a part of the repository's Git folder is a link or junction; Orcel does not run Git in it",
+        ));
+    }
+    Ok(())
+}
+
+/// Review of #847: nothing under a Git folder's `refs` and `logs`, and no
+/// direct entry of its `objects`, is a link or junction, so a ref, a reflog
+/// or an object is written in the Git folder and nowhere else.
+pub(crate) fn check_git_folder(dir: &Path) -> Result<(), GitProviderError> {
+    let mut left = MAX_GIT_FOLDER_ENTRIES;
+    let mut pending: Vec<(PathBuf, bool)> = ["refs", "logs", "objects"]
+        .iter()
+        .map(|name| (dir.join(name), *name != "objects"))
+        .collect();
+    while let Some((folder, deep)) = pending.pop() {
+        refuse_link(&folder)?;
+        let entries = match std::fs::read_dir(&folder) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(unreadable(format!("the Git folder: {error}"))),
+        };
+        for entry in entries {
+            let entry = entry.map_err(|error| unreadable(format!("the Git folder: {error}")))?;
+            left = left
+                .checked_sub(1)
+                .ok_or_else(|| unreadable("the Git folder has too many entries"))?;
+            let kind = entry
+                .file_type()
+                .map_err(|error| unreadable(format!("the Git folder: {error}")))?;
+            if kind.is_symlink() {
+                refuse_link(&entry.path())?;
+            }
+            if deep && kind.is_dir() {
+                pending.push((entry.path(), true));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The gate, before any Git command runs with `cwd` as its working folder
 /// inside `workspace_root` (both resolved): `cwd` is not inside a `.git`
 /// folder; the nearest `.git` from `cwd` up to the workspace root is a plain
@@ -435,6 +546,9 @@ pub(crate) fn check_repository(workspace_root: &Path, cwd: &Path) -> Result<(), 
                     folders.push(pointed_folder(&text, &git_dir, "commondir")?);
                 }
                 for dir in &folders {
+                    for name in WRITTEN_THROUGH {
+                        refuse_link(&dir.join(name))?;
+                    }
                     check_file(&dir.join("config"), "config")?;
                     check_file(&dir.join("config.worktree"), "config.worktree")?;
                 }

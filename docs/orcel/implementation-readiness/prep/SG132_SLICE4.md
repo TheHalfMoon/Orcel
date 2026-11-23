@@ -277,6 +277,28 @@ show it.
   60 s limit fails closed, as do the entry and depth caps. Residuals: very large working trees outside ignored
   folders are refused rather than walked. A same-user process could add a nested `.git` file between the walk and Git's own walk
   (the same TOCTOU class as the configuration gate).
+- **What Git follows out of a repository (review of #847; fixed in the provider, so for Safe mode too).** Four ways
+  Git itself left the repository while `rev-parse` still reported it, each reproduced with real Git before the fix:
+  (1) `extensions.refStorage = files://<another>/.git` moved HEAD, the refs and the reflogs to another repository,
+  for reads, commits and branches. The gate now accepts only `noop`, `worktreeConfig`, `preciousObjects` and
+  `relativeWorktrees` (booleans), `objectFormat` (`sha1`, `sha256`), `refStorage` (`files` exactly, so reftable
+  repositories are refused) and `partialClone` (a plain remote name), in `config` and `config.worktree`, whatever
+  their case; any other extension or value refuses the repository (`CAPABILITY_DENIED`).
+  (2) `git_branch_create` used `switch -c`, which re-applies a sparse checkout and wrote and deleted working tree
+  files, through a junction too. A branch is now made with `update-ref` (only if it does not exist) and
+  `symbolic-ref HEAD`; nothing is checked out. `add`, `restore --staged` and `commit` write no working tree file
+  (tested on the same repository). (3) A part of the Git folder that is a link or junction (`HEAD`, `index`, `refs`,
+  `logs`, `objects` and what is under the first two, and the like) sent refs, reflogs or objects elsewhere; refused.
+  (4) Git for Windows follows a junction as a folder: a diff showed a file outside the repository behind a tracked
+  folder, `status` listed names outside behind an untracked one, and `add` staged through both. A tracked folder that
+  is a link or junction, a junction that is not ignored, and a path to stage through any link are refused
+  (`PATH_ESCAPE`); an index over the output bound in a working tree with links is refused. Tests with real Git:
+  `orcel-provider-git/tests/review847_confinement.rs`. Full Control's `write_text` and `mkdir` refuse a Git directory
+  by its content (`HEAD` with `objects` and `refs`, or with `commondir`, or `config` beside two of the first three),
+  not only under the name `.git`, so a separate Git directory or a bare repository cannot be reconfigured:
+  `fc_worker_filesystem_never_writes_into_a_git_directory_by_content`. Left: a hard link to a file Git writes in place
+  (a reflog, `COMMIT_EDITMSG`), and a same-user process swapping a folder between the check and Git's use of it. A
+  branch creation that ends between its two commands leaves a branch HEAD does not name (reconciled as unknown).
 - **Approval binding.** The per-action approval binds the request (paths, message, branch), not the file contents
   staged at that moment (the Safe-mode git mutation binds that material); the worker's own state check still
   refuses a repository that changed between its read and its write.
