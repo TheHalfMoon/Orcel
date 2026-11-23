@@ -321,9 +321,9 @@ pub fn pin_programs(paths: &[String]) -> Result<Vec<PinnedProgram>, LifecycleErr
 
 /// WP1-14: the lease and standing approval a standing grant asks for. The
 /// lease grants the filesystem and shell/process executors over `roots`;
-/// the standing approval covers `operations` inside `folders` (and, for a
-/// run, only its pinned programs, which a run requires). Validated here as
-/// the service validates it.
+/// the standing approval covers `operations` inside `folders`. Validated
+/// here as the service validates it, which refuses `run` under such a lease
+/// (review of #847).
 pub fn standing_request(
     client_ref: String,
     task: String,
@@ -787,12 +787,7 @@ mod tests {
             })
         };
         let roots = vec![r"D:\work".to_owned()];
-        let ok = standing(
-            "run,git_commit",
-            &[r"D:\work\repo"],
-            Some(vec![r"D:\work\repo\tool.exe"]),
-        )
-        .and_then(|scope| {
+        let ok = standing("git_add,git_commit", &[r"D:\work\repo"], None).and_then(|scope| {
             standing_request(client.clone(), "build".to_owned(), roots.clone(), 30, scope)
         });
         let Ok(request) = ok else {
@@ -825,6 +820,17 @@ mod tests {
             standing_request(client.clone(), "b".into(), roots.clone(), 30, scope)
         });
         assert!(any_program.is_err());
+        // Review of #847: nor a pinned one, under a lease that writes its
+        // folder without a prompt.
+        let pinned = standing(
+            "run",
+            &[r"D:\work\repo"],
+            Some(vec![r"D:\work\repo\tool.exe"]),
+        )
+        .and_then(|scope| standing_request(client.clone(), "b".into(), roots.clone(), 30, scope));
+        assert!(pinned.err().is_some_and(|error| error
+            .to_string()
+            .contains("each run keeps its own approval")));
         assert!(pin_programs(&[r"Z:\no\such\tool.exe".to_owned()]).is_err());
     }
 

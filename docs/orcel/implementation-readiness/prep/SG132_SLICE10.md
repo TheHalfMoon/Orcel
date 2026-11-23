@@ -70,7 +70,8 @@ satisfies all of these is that **a standing approval is issued with its lease, t
   each **pinned** (review of #844 at `6b7324ce`): the owner CLI records, at grant, the SHA-256 of the program's
   contents and its file identity (volume serial number and file index), and the service's box shows both. A pin is of
   that one file, not of the code that runs: DLLs, a `.local`, a configuration or manifest, `._pth` or `pyvenv.cfg`
-  beside the program, and its arguments are not pinned, and the box says so (residual 2). There is
+  beside the program, and its arguments are not pinned, and the box says so. For that reason **`run` is refused at
+  grant today** (residual 2); what follows is how a covered run is held, tested through a seam. There is
   no "any program in the folders": the folders lie inside the lease's roots, where `fc_fs_write` and `fc_fs_mkdir`
   run without a prompt (the 2026-11-19 amendment), so a path alone would cover a program replaced or built there
   later. SG-000096's "command patterns" are read as exact pinned programs: no wildcard, no argument pattern. This
@@ -197,7 +198,7 @@ approvals usable with nothing shown on screen.
 - `orcel full-control standing grant --client <cl-ref> --task <label> --root <path>... --operations <list>
   --folder <path>... [--program <exe>]... [--minutes <n>] [--standing-minutes <n>]`: the lease (filesystem and shells
   over the roots) and the standing approval, checked locally as the service checks them, then the grant gate. `run`
-  needs `--program`; each is pinned and printed before the intent is sent.
+  needs `--program`, each pinned and printed first, and is then refused (residual 2).
   `orcel full-control standing revoke [--id <sa-...>]` and `orcel full-control standing status` reach only this
   logon session's approvals. Without the installed service, `standing` is refused (the deprecated store never issues
   one).
@@ -212,6 +213,7 @@ approvals usable with nothing shown on screen.
 | Admin or Remote through a standing approval | Refused at grant and at `Authorize` | `standing_admin_remote_and_browser_are_refused` |
 | Browser actions through a standing approval | Origins refused; a browser lease cannot carry one; an `Authorize` with an origin is not covered | `standing_admin_remote_and_browser_are_refused`; `standing_covers_only_its_scope_client_and_task` |
 | A covered program replaced or rewritten inside the folders (lease-covered writes need no prompt), or a program built there later | Runs need pinned programs; orceld, the service and the worker each compare contents (SHA-256) and file identity; a mismatch asks per action, or (at the worker) starts nothing | `standing_program_pins_bind_contents_and_file`; `standing_covers_only_its_scope_client_and_task`; `standing_scope_must_fit_its_lease_and_one_identified_client`; `fc_dispatch_standing_covers_a_run_only_with_its_pinned_contents_and_file`; `fc_worker_tests::windows::fc_worker_a_standing_run_starts_only_its_pinned_program` |
+| A covered run loading or reading what the agent wrote without a prompt | `run` refused at grant under a lease with the filesystem executor, by the service and the CLI | `standing_scope_must_fit_its_lease_and_one_identified_client`; `standing_grant_requests_are_checked_as_the_service_checks_them` |
 | A folder that is inside as text and outside on disk: Git climbing to the repository above, a junction (repository, working folder, staged path, Git's own folder, the standing folder itself), a linked worktree, a hard link, a Unicode case lookalike | The worker holds a covered operation to the approval's real folders (section 1.3); text compares ASCII case only | `fc_worker_tests::windows::fc_worker_standing_*` (12, through the real worker); `wp110_job_ids_and_dispatch_paths_are_checked_lexically` |
 | orceld trusts folders the service did not confirm | The `Authorize` answer must name exactly the listed folders | `fc_dispatch_a_refused_or_unconfirmed_standing_authorize_runs_nothing` |
 | A standing approval ended after `Authorize` | `DispatchActive` refuses; its running jobs end with it | `standing_ended_before_the_resume_stops_the_dispatch`; `standing_revoke_and_expiry_end_its_running_jobs_only` |
@@ -240,18 +242,19 @@ All of these wait for WP1-12 (no heartbeat exists, so the installed service refu
 ## 7. Residuals
 
 1. **Nothing is in effect until WP1-12.** By design (section 2).
-2. **A pin is of one file, not of the code that runs. TO BE DECIDED BEFORE WP1-12.** Pinned: the program file's
+2. **A pin is of one file, not of the code that runs, so `run` is refused at grant.** Pinned: the program file's
    contents and identity. Not pinned: DLLs beside the program or found through `PATH`, a `.local` folder or file, its
    configuration (`.config`, `.ini`) or manifest, `._pth` and `pyvenv.cfg` (they redirect a Python), anything it reads
-   (a build file, a script, a compiler's sources), and its arguments; a covered commit or branch takes any message or
-   name. Programs lie inside the standing folders and so inside the lease's roots, where `fc_fs_write` and
-   `fc_fs_mkdir` run without a prompt, so under one lease an agent can write such a file (`write_text` writes text; a
-   DLL needs a covered program that writes one) and then start the pinned program. Within its folders and time, a
-   covered `run` therefore amounts to running code the agent chose. Refusing a pinned program whose folder the lease
-   can write without a prompt was considered and not done: every lease `orcel full-control standing grant` asks for
-   covers file writes over all its roots, so it would refuse every `run`, which neither spec 4.15 nor SG-000096 says.
-   Options for the decision: such a refusal with a lease that separates write roots from program roots, pinning the
-   program's whole folder, or leaving `run` out of standing approvals. Until WP1-12 nothing can be in effect.
+   (a build file, a script, a compiler's sources), and its arguments. Where `fc_fs_write` and `fc_fs_mkdir` run without
+   a prompt, the agent can write such a file and then start the pinned program: a covered `run` would be code the agent
+   chose. So the service (and the CLI before it) refuses a standing approval that names `run` under a lease with the
+   filesystem executor (`CAPABILITY_DENIED`, "each run keeps its own approval"), in code and not by the indicator being
+   absent (review of #847). `LeaseScope::validate` gives every lease with roots that executor, so today no `run` can be
+   issued at all; the Git changes can, once the indicator exists. SG-000096 lists runs as coverable, so this is
+   narrower than the founder's record, **and the founder decides, before any `run` is issued**, between: a lease that
+   separates write roots from program roots (the rule then admits `run` where the agent cannot write), pinning a
+   program's whole folder, or leaving `run` out. Even then arguments, files planted before the grant and what the
+   program itself writes stay unpinned. A covered commit or branch takes any message or name.
 3. **orceld's claims.** Which path is the program, its pin at `Authorize`, and whether the caller is remote are
    orceld's claims (orceld is the configured trusted image, as for every `Authorize` claim); the service records them
    as session-asserted. The pin at grant is computed by the owner CLI, a same-user process: a program swapped before
@@ -305,7 +308,7 @@ At #844's head (Windows, unelevated):
 
 ## 9. Next steps
 
-1. Residual 2 decided, then WP1-12: the indicator and its `Heartbeat` (the Design session's visual design); then the
+1. Residual 2 decided (until then `run` stays refused); WP1-12: the indicator and its `Heartbeat` (the Design session's visual design); then the
    founder runs of section 6.
 2. The MCP descriptions of the asking tools once a standing approval can be in effect (residual 6).
 3. Founder decisions if wanted: argument patterns (residual 2), high-impact browser standing approvals, remote

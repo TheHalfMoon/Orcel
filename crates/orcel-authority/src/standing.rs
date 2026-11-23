@@ -70,6 +70,12 @@ pub const STANDING_OPERATIONS: [&str; 5] = [
     "git_branch_create",
 ];
 
+/// Why a standing approval does not cover `run` under a lease whose file
+/// writes ask nothing. A lease with roots has the filesystem executor today
+/// (`LeaseScope::validate`), so no `run` can be issued until the decision
+/// SG132_SLICE10.md residual 2 records.
+const RUN_NEEDS_READ_ONLY_FOLDERS: &str = "a standing approval does not cover run under a lease with the filesystem executor: file writes in its folders ask nothing, and pinning a program does not pin the files it loads or its arguments; each run keeps its own approval";
+
 /// The largest program that is pinned (hashed); a larger one is never
 /// covered by a standing approval.
 pub const MAX_PINNED_PROGRAM_BYTES: u64 = 512 * 1024 * 1024;
@@ -430,6 +436,14 @@ impl StandingScope {
                 ));
             }
         }
+        // Review of #847 (SG132_SLICE10.md residual 2): a pin is of one
+        // file. A lease with the filesystem executor lets its agent write
+        // beside the program (a configuration, `._pth`, `.local`) and into
+        // whatever it reads, without a prompt, so a covered run would be
+        // code the agent chose. Refused; each run keeps its own approval.
+        if runs && lease_executors.contains(&ExecutorClass::Filesystem) {
+            return Err(AuthorityError::denied(RUN_NEEDS_READ_ONLY_FOLDERS));
+        }
         Ok(())
     }
 
@@ -645,6 +659,17 @@ impl AuthorityCore {
             logon_session_id: caller.logon_session_id,
             at_ms: now,
         });
+    }
+
+    /// TEST SEAM: replaces an issued standing approval's fields, for the
+    /// rules of a covered `run`, which no grant issues today.
+    #[cfg(test)]
+    pub(crate) fn replace_standing_for_test(&mut self, approval: &StandingApproval) {
+        for record in &mut self.state.standing {
+            if record.approval.id == approval.id {
+                record.approval = approval.clone();
+            }
+        }
     }
 
     /// Why a standing record is not in force now (`None` when it is).

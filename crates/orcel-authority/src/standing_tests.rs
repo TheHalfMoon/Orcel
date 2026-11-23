@@ -46,6 +46,15 @@ fn lease_scope() -> LeaseScope {
     }
 }
 
+/// Shells without the filesystem executor (not a lease that can be granted).
+fn shells_only() -> LeaseScope {
+    LeaseScope::DesktopFullUser {
+        executors: vec![ExecutorClass::ShellProcess],
+        roots: vec![r"C:\work".to_owned()],
+        shells: true,
+    }
+}
+
 fn standing_scope() -> StandingScope {
     StandingScope {
         executors: vec![ExecutorClass::ShellProcess],
@@ -68,19 +77,29 @@ fn standing_begin_with(scope: LeaseScope, principal: &str, standing: StandingSco
     }
 }
 
+/// What can be granted of `standing` today: no `run` under a lease whose
+/// file writes ask nothing (review of #847).
+fn issuable(mut standing: StandingScope) -> StandingScope {
+    standing.operations.retain(|operation| operation != "run");
+    standing.commands.clear();
+    standing
+}
+
 fn standing_begin(standing: StandingScope) -> Request {
-    standing_begin_with(lease_scope(), &client_ref(), standing)
+    standing_begin_with(lease_scope(), &client_ref(), issuable(standing))
 }
 
 /// The whole gate: a live indicator, the intent, the observed unlock, Yes
 /// in the service's box, then the Hello signature over its challenge.
-/// Returns the lease, the standing approval and the confirmation text.
+/// Returns the lease, the standing approval and the confirmation text. The
+/// `run` a scope names cannot be granted ([`issuable`]); it is added to the
+/// issued record by a test seam, so the rules of a covered run are tested.
 fn grant_standing(
     core: &mut AuthorityCore,
     standing: StandingScope,
 ) -> Result<(SignedLease, StandingApproval, String), String> {
     core.indicator_heartbeat_for_test(&owner());
-    let begun = ok(core.handle(&owner(), standing_begin(standing)))?;
+    let begun = ok(core.handle(&owner(), standing_begin(standing.clone())))?;
     let id = str_of(&begun, "intent_id")?;
     let one_time = str_of(&begun, "code")?;
     let (challenge, text) = confirm_yes(core, &owner(), &id)?;
@@ -93,8 +112,13 @@ fn grant_standing(
         },
     ))?;
     let lease = serde_json::from_value(done["lease"].clone()).map_err(|e| e.to_string())?;
-    let standing = serde_json::from_value(done["standing"].clone()).map_err(|e| e.to_string())?;
-    Ok((lease, standing, text))
+    let mut issued: StandingApproval =
+        serde_json::from_value(done["standing"].clone()).map_err(|e| e.to_string())?;
+    assert!(issued.commands.is_empty());
+    issued.operations = standing.operations;
+    issued.commands = standing.commands;
+    core.replace_standing_for_test(&issued);
+    Ok((lease, issued, text))
 }
 
 fn run_claims(program: &str) -> AuthorizeClaims {
@@ -252,9 +276,8 @@ fn standing_is_issued_with_its_lease_through_the_owner_gate() -> Result<(), Stri
         "STANDING APPROVAL",
         &client_ref(),
         TASK,
-        "operations [run, git_commit]",
+        "operations [git_commit]",
         REPO,
-        TOOL,
         "Standing approval expires: 30 minutes",
         &one_time,
     ] {
@@ -399,7 +422,7 @@ fn standing_scope_must_fit_its_lease_and_one_identified_client() -> Result<(), S
     let refused = |change: &dyn Fn(&mut StandingScope)| {
         let mut scope = standing_scope();
         change(&mut scope);
-        scope.validate(&lease_scope(), &client_ref(), 30).err()
+        scope.validate(&shells_only(), &client_ref(), 30).err()
     };
     let codes = [
         refused(&|s| s.roots = vec![r"C:\elsewhere".to_owned()]),
@@ -435,8 +458,23 @@ fn standing_scope_must_fit_its_lease_and_one_identified_client() -> Result<(), S
         .validate(&no_shells, &client_ref(), 30)
         .is_err());
     assert!(standing_scope()
+        .validate(&shells_only(), &client_ref(), 30)
+        .is_ok());
+    // Review of #847: never `run` under a lease whose file writes ask
+    // nothing; the Git changes are still granted.
+    assert_eq!(
+        code(core.handle(
+            &owner(),
+            standing_begin_with(lease_scope(), &client_ref(), standing_scope())
+        )),
+        Some(FailureCode::CapabilityDenied)
+    );
+    assert!(core.sessions_awaiting_unlock().is_empty());
+    assert!(issuable(standing_scope())
         .validate(&lease_scope(), &client_ref(), 30)
         .is_ok());
+    // And no lease with folders is without those writes today.
+    assert!(shells_only().validate().is_err());
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
