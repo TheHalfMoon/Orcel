@@ -1337,9 +1337,6 @@ mod tests {
             authorized: Rc<Cell<usize>>,
         }
         impl LeaseSource for Source {
-            fn issuer(&self) -> crate::browser_lease::LeaseIssuer {
-                crate::browser_lease::LeaseIssuer::AuthorityService
-            }
             fn read(&self) -> Result<Option<AuthorityView>, ProviderError> {
                 Ok(Some(AuthorityView {
                     epoch: 5,

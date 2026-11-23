@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import {
-  capturePng,
+  capturePng as capture,
+  CENSUS_RESERVE_MS,
   checkCapture,
+  errorCode,
   fullPageClip,
   MASK_COLOR,
   MAX_SCREENSHOT_BYTES,
@@ -11,12 +16,23 @@ import {
   MAX_SCREENSHOT_PIECES,
   MAX_SCREENSHOT_WIDTH,
   pngSize,
+  runBounded,
   runExclusive,
+  SCREENSHOT_BUDGET_MS,
+  SCREENSHOT_TIMEOUT_MS,
+  ScreenshotBudget,
   ScreenshotError,
   SECRET_FIELD_SELECTOR,
+  tabSubject,
+  takeScreenshot,
   toBase64Pieces,
-  type ShotPage
+  type ShotFrame,
+  type ShotPage,
+  type ShotSubject
 } from "./screenshot.js";
+import { rememberSecretField, secretMemory } from "./secret-memory.js";
+
+const capturePng = (page: ShotPage, clip?: Parameters<typeof capture>[1]) => capture(page, clip, new ScreenshotBudget(SCREENSHOT_BUDGET_MS, () => {}));
 
 /// A PNG header (signature and IHDR) of the given size, padded.
 function png(width: number, height: number, padding = 0): Buffer {
@@ -237,4 +253,448 @@ test("OB-03: a capture during which a frame or a secret field appeared is refuse
   for (const part of ['[style*="text-security" i]', '[contenteditable]:not([contenteditable="false" i])', 'input[name*="pin" i]', 'input[name*="ssn" i]', 'input[name*="cc-" i]', 'input[id*="iban" i]']) {
     assert.ok(SECRET_FIELD_SELECTOR.split(", ").includes(part), part);
   }
+});
+
+/// A promise settled by hand, as a renderer that answers late (or never) does.
+function held<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: Error) => void } {
+  let resolve: (value: T) => void = () => {};
+  let reject: (error: Error) => void = () => {};
+  const promise = new Promise<T>((ok, fail) => {
+    resolve = ok;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
+const BOX = { x: 0, y: 0, width: 10, height: 10 };
+const still: ShotFrame = { locator: () => ({ all: async () => [{ boundingBox: async () => BOX }] }) };
+
+/// Run one screenshot as the worker does, within `ms`.
+async function shoot(page: ShotPage, ms: number): Promise<{ outcome: string; elapsed: number; reports: string[] }> {
+  const reports: string[] = [];
+  const began = performance.now();
+  const budget = new ScreenshotBudget(ms, (stage, code) => reports.push(`${stage}: ${code}`));
+  // The same object each time: a page is held by its identity.
+  const held = Object.assign(page, { url: () => "https://example.test/", isClosed: () => false });
+  const of: ShotSubject = { page: held, loading: () => false, active: () => true, metrics: () => Promise.reject(new Error("not asked for")) };
+  const outcome = await takeScreenshot(of, false, budget).then(
+    () => "picture",
+    (error: unknown) => {
+      assert.ok(error instanceof ScreenshotError, String(error));
+      return error.reason;
+    }
+  );
+  return { outcome, elapsed: performance.now() - began, reports };
+}
+
+const turns = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+test("#438: the whole screenshot's budget is above the capture and well under the host's deadline", () => {
+  const host = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../../crates/orcel-browser-host/src/worker_launch.rs"), "utf8");
+  const deadline = /pub const WORKER_SCREENSHOT_TIMEOUT: Duration = Duration::from_secs\((\d+)\);/.exec(host);
+  assert.ok(deadline, "WORKER_SCREENSHOT_TIMEOUT");
+  assert.ok(SCREENSHOT_BUDGET_MS + 4_000 <= Number(deadline[1]) * 1_000, `${SCREENSHOT_BUDGET_MS} ms vs ${deadline[1]} s`);
+  assert.ok(SCREENSHOT_BUDGET_MS >= SCREENSHOT_TIMEOUT_MS + CENSUS_RESERVE_MS);
+});
+
+test("#438: a field whose box never comes fails the screenshot on time, and the page stays held until it ends", async () => {
+  const box = held<typeof BOX>();
+  const timeouts: number[] = [];
+  let hang = true;
+  let captures = 0;
+  const field = { boundingBox: ({ timeout }: { timeout: number }) => (timeouts.push(timeout), hang ? box.promise : Promise.resolve(BOX)) };
+  const page: ShotPage = {
+    frames: () => [frame],
+    screenshot: async () => {
+      captures += 1;
+      return png(10, 10);
+    }
+  };
+  const frame: ShotFrame = { locator: () => ({ all: async () => [field] }) };
+  const first = await shoot(page, 500);
+  assert.equal(first.outcome, "failed");
+  assert.ok(first.elapsed < 5_000, `${first.elapsed} ms`);
+  assert.deepEqual(first.reports, ["census_before: budget"]);
+  // Finding the element is bounded by what is left of the budget.
+  assert.equal(timeouts.length, 1);
+  assert.ok((timeouts[0] as number) >= 1 && (timeouts[0] as number) <= 500, `${timeouts[0]}`);
+  // The stuck work still holds the page: the next one is not let in beside
+  // it, and is answered on time too.
+  hang = false;
+  const second = await shoot(page, 150);
+  assert.equal(second.outcome, "failed");
+  assert.deepEqual(second.reports, ["queue: budget"]);
+  assert.equal(timeouts.length, 1, "the queued screenshot touched nothing");
+  // The late answer is dropped: no capture follows it, nothing is reported
+  // again, and the page is free.
+  box.resolve(BOX);
+  await turns();
+  assert.equal(captures, 0);
+  assert.equal(first.reports.length, 1);
+  const third = await shoot(page, 5_000);
+  assert.equal(third.outcome, "picture");
+  assert.equal(captures, 1);
+});
+
+test("#438: no picture is returned when the fields cannot be read again after the capture", async () => {
+  const run = async (late: "resolve" | "reject") => {
+    const box = held<typeof BOX>();
+    let reads = 0;
+    const page: ShotPage = { frames: () => [frame], screenshot: async () => png(10, 10) };
+    const frame: ShotFrame = { locator: () => ({ all: async () => [{ boundingBox: () => (++reads === 1 ? Promise.resolve(BOX) : box.promise) }] }) };
+    const shot = await shoot(page, CENSUS_RESERVE_MS + 1_500);
+    assert.equal(shot.outcome, "failed");
+    assert.deepEqual(shot.reports, ["census_after: budget"]);
+    // Equal places, too late: the answer was already given.
+    if (late === "resolve") box.resolve(BOX);
+    else box.reject(new Error("closed"));
+    await turns();
+    assert.equal(shot.reports.length, 1);
+  };
+  await Promise.all([run("resolve"), run("reject")]);
+});
+
+test("#438: counting the fields has no timeout of its own, and is bounded too", async () => {
+  const page: ShotPage = {
+    frames: () => [{ locator: () => ({ all: () => new Promise(() => {}) }) }],
+    screenshot: async () => png(10, 10)
+  };
+  const shot = await shoot(page, 150);
+  assert.equal(shot.outcome, "failed");
+  assert.ok(shot.elapsed < 5_000, `${shot.elapsed} ms`);
+});
+
+test("#438: a capture that outlives the budget is dropped, and holds the page until it ends", async () => {
+  const picture = held<Buffer>();
+  const options: Array<Record<string, unknown>> = [];
+  let running = 0;
+  let most = 0;
+  let hang = true;
+  let counted = 0;
+  const frame: ShotFrame = { locator: () => ({ all: async () => ((counted += 1), []) }) };
+  const page: ShotPage = {
+    frames: () => [frame],
+    screenshot: async (asked) => {
+      options.push(asked);
+      running += 1;
+      most = Math.max(most, running);
+      try {
+        return hang ? await picture.promise : png(10, 10);
+      } finally {
+        running -= 1;
+      }
+    }
+  };
+  const first = await shoot(page, CENSUS_RESERVE_MS + 1_500);
+  assert.equal(first.outcome, "failed");
+  assert.deepEqual(first.reports, ["capture: budget"]);
+  // Playwright is told to end first, with time left to check its picture.
+  const timeout = options[0]?.timeout as number;
+  assert.ok(timeout >= 1 && timeout <= 1_500, `${timeout}`);
+  hang = false;
+  const second = shoot(page, 5_000);
+  await turns();
+  assert.equal(options.length, 1, "the second capture waits for the first to end");
+  picture.resolve(png(10, 10));
+  assert.equal((await second).outcome, "picture");
+  assert.equal(most, 1);
+  assert.equal(counted, 3, "the late capture was followed by no census");
+});
+
+test("#438: a screenshot whose turn comes after its budget does nothing, and lets the next one in", async () => {
+  const key = {};
+  const first = held<void>();
+  const running = runExclusive(key, () => first.promise);
+  let ran = false;
+  const budget = new ScreenshotBudget(100, () => {});
+  await assert.rejects(
+    runBounded(key, budget, async () => {
+      ran = true;
+    }),
+    ScreenshotError
+  );
+  first.resolve();
+  await running;
+  await turns();
+  assert.equal(ran, false);
+  assert.equal(await runBounded(key, new ScreenshotBudget(5_000, () => {}), async () => "free"), "free");
+});
+
+/// Let everything that can run now run, with timers mocked.
+const settle = async () => {
+  for (let n = 0; n < 3; n++) await new Promise((resolve) => setImmediate(resolve));
+};
+
+test("#438: the answer comes at the budget's end, to the millisecond", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const budget = new ScreenshotBudget(1_000, () => {}, () => 0);
+  let outcome = "pending";
+  budget.within(new Promise(() => {})).catch((error: ScreenshotError) => (outcome = error.reason));
+  t.mock.timers.tick(999);
+  await settle();
+  assert.equal(outcome, "pending");
+  t.mock.timers.tick(1);
+  await settle();
+  assert.equal(outcome, "failed");
+  // From then on the budget is over whatever a clock says (this one stands still).
+  assert.throws(() => budget.remaining(), ScreenshotError);
+  assert.throws(() => budget.enter("capture"), ScreenshotError);
+});
+
+test("#438: a screenshot that ended in time leaves no timer behind to report it failed", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const reports: string[] = [];
+  const budget = new ScreenshotBudget(1_000, (stage) => reports.push(stage), () => 0);
+  assert.equal(await budget.within(Promise.resolve("picture")), "picture");
+  t.mock.timers.tick(5_000);
+  await settle();
+  assert.deepEqual(reports, []);
+  assert.equal(budget.remaining(), 1_000);
+});
+
+/// The worker's active tab, as `takeScreenshot` sees it; every part can be replaced.
+function subject(parts: { [K in keyof ShotSubject]?: ShotSubject[K] } = {}, onPage: Partial<ShotSubject["page"]> = {}): ShotSubject {
+  return {
+    page: { frames: () => [still], screenshot: async () => png(10, 10), url: () => "https://example.test/", isClosed: () => false, ...onPage },
+    loading: () => false,
+    active: () => true,
+    metrics: () => Promise.reject(new Error("not asked for")),
+    ...parts
+  };
+}
+
+/// What one screenshot gives, and what it reported.
+async function taken(of: ShotSubject, fullPage = false): Promise<[string, ...string[]]> {
+  const reports: string[] = [];
+  const budget = new ScreenshotBudget(5_000, (stage, code) => reports.push(`${stage}: ${code}`));
+  const outcome = await takeScreenshot(of, fullPage, budget).then(
+    (shot) => `picture ${shot.url} ${shot.truncated}`,
+    (error: unknown) => {
+      assert.ok(error instanceof ScreenshotError, String(error));
+      return error.reason as string;
+    }
+  );
+  return [outcome, ...reports];
+}
+
+test("#438: a full page's metrics are a step of the screenshot: staged, typed, and their session let go of", async () => {
+  const seen: string[] = [];
+  const asking = (answer: () => Promise<unknown>) =>
+    subject(
+      {
+        metrics: async () => ({
+          send: (method) => (seen.push(method), answer()),
+          detach: async () => void seen.push("detach")
+        })
+      },
+      {
+        screenshot: async (options) => {
+          seen.push(`clip ${JSON.stringify(options.clip)}`);
+          return png(10, 10);
+        }
+      }
+    );
+  assert.deepEqual(await taken(asking(async () => ({ cssContentSize: { width: 800, height: 9_000 } })), true), ["picture https://example.test/ true"]);
+  assert.deepEqual(seen.splice(0), ["Page.getLayoutMetrics", "detach", `clip {"x":0,"y":0,"width":800,"height":${MAX_SCREENSHOT_HEIGHT}}`]);
+  // The command fails, or the session never opens: typed, one line, no capture.
+  assert.deepEqual(await taken(asking(() => Promise.reject(new Error("https://example.test/?q=secret"))), true), ["failed", "metrics: Error"]);
+  assert.deepEqual(seen.splice(0), ["Page.getLayoutMetrics", "detach"]);
+  assert.deepEqual(await taken(subject({ metrics: () => Promise.reject(new Error("closed")) }), true), ["failed", "metrics: Error"]);
+  // A viewport screenshot asks for none.
+  assert.deepEqual(await taken(asking(async () => ({}))), ["picture https://example.test/ false"]);
+  assert.deepEqual(seen.splice(0), ["clip undefined"]);
+});
+
+test("#438: the worker's screenshot takes the whole budget by default, its metrics included", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const write = t.mock.method(process.stderr, "write", () => true);
+  let outcome = "pending";
+  takeScreenshot(subject({ metrics: () => new Promise(() => {}) }), true).catch((error: ScreenshotError) => (outcome = error.reason));
+  t.mock.timers.tick(SCREENSHOT_BUDGET_MS - 100);
+  await settle();
+  assert.equal(outcome, "pending");
+  t.mock.timers.tick(200);
+  await settle();
+  write.mock.restore();
+  assert.equal(outcome, "failed");
+  assert.deepEqual(
+    write.mock.calls.map((call) => call.arguments[0] as unknown).filter((text) => String(text).startsWith("orcel-browser-worker:")),
+    ["orcel-browser-worker: screenshot failed at metrics: budget\n"]
+  );
+});
+
+test("#438: the capture waits for the metrics session to be let go of, and a detach that fails is no failure", async () => {
+  const detaching = held<void>();
+  let captured = false;
+  const of = subject(
+    { metrics: async () => ({ send: async () => ({}), detach: () => detaching.promise }) },
+    { screenshot: async () => ((captured = true), png(10, 10)) }
+  );
+  const shot = taken(of, true);
+  await turns();
+  assert.equal(captured, false);
+  detaching.reject(new Error("session closed"));
+  assert.deepEqual(await shot, ["picture https://example.test/ false"]);
+  assert.equal(captured, true);
+});
+
+test("OB-07b: a password field the page now shows in clear is masked and counted, by its remembered name", async () => {
+  const selectors: string[] = [];
+  const masks: unknown[] = [];
+  const locator = { all: async () => [] };
+  const frame: ShotFrame = { locator: (selector) => (selectors.push(selector), locator) };
+  const of = subject({}, { frames: () => [frame], screenshot: async (options) => (masks.push(options.mask), png(10, 10)) });
+  assert.deepEqual(await taken(of), ["picture https://example.test/ false"]);
+  rememberSecretField(secretMemory(of.page), undefined, "shown", undefined);
+  assert.deepEqual(await taken(of), ["picture https://example.test/ false"]);
+  assert.deepEqual(selectors, [SECRET_FIELD_SELECTOR, `${SECRET_FIELD_SELECTOR}, input[name="shown" i]`]);
+  // The locators of that selector are the ones Playwright masks.
+  assert.deepEqual(masks, [[locator], [locator]]);
+});
+
+test("#438: a census that failed in one frame starts no further read in another", async () => {
+  const box = held<typeof BOX>();
+  let reads = 0;
+  const slow: ShotFrame = { locator: () => ({ all: async () => [1, 2, 3].map(() => ({ boundingBox: () => ((reads += 1), box.promise) })) }) };
+  const broken: ShotFrame = { locator: () => ({ all: () => turns().then(() => Promise.reject(new Error("detached"))) }) };
+  const shot = await taken(subject({}, { frames: () => [slow, broken] }));
+  assert.deepEqual(shot, ["failed", "census_before: Error"]);
+  assert.equal(reads, 1);
+  box.resolve(BOX);
+  await turns();
+  assert.equal(reads, 1, "the read that was pending is that frame's last");
+});
+
+test("OB-03: the worker's tab is asked as it is now, not as it was", () => {
+  const tabs: { active: number | null } = { active: 3 };
+  let watch: { loading: boolean } | undefined;
+  const { page } = subject();
+  const session = { send: async () => ({}), detach: async () => {} };
+  const metrics = async () => session;
+  const of = tabSubject(page, 3, tabs, () => watch, metrics);
+  assert.equal(of.page, page);
+  assert.equal(of.metrics, metrics);
+  assert.deepEqual([of.loading(), of.active()], [false, true]);
+  watch = { loading: true };
+  assert.equal(of.loading(), true);
+  watch.loading = false;
+  assert.equal(of.loading(), false);
+  for (const active of [4, null]) {
+    tabs.active = active;
+    assert.equal(of.active(), false);
+  }
+});
+
+test("#438: what the metrics took is gone from the capture's time", async () => {
+  let now = 0;
+  const asked: unknown[] = [];
+  const of = subject(
+    {
+      metrics: async () => {
+        now += 8_000;
+        return { send: async () => ({}), detach: async () => {} };
+      }
+    },
+    { screenshot: async (options) => (asked.push(options.timeout), png(10, 10)) }
+  );
+  await takeScreenshot(of, true, new ScreenshotBudget(SCREENSHOT_BUDGET_MS, () => {}, () => now));
+  assert.deepEqual(asked, [6_000]);
+});
+
+test("OB-03: a screenshot that raced a navigation, a close or a tab change is refused", async () => {
+  assert.deepEqual(await taken(subject()), ["picture https://example.test/ false"]);
+  // Before anything is captured.
+  let captures = 0;
+  const counting = { screenshot: async () => ((captures += 1), png(10, 10)) };
+  assert.deepEqual(await taken(subject({}, { ...counting, isClosed: () => true })), ["failed"]);
+  assert.deepEqual(await taken(subject({ loading: () => true }, counting)), ["busy"]);
+  assert.equal(captures, 0);
+  // Each true only once the capture has run.
+  const racing = (what: "loading" | "closed" | "url" | "tab") => {
+    let captured = false;
+    const now = (kind: string) => captured && what === kind;
+    return subject(
+      { loading: () => now("loading"), active: () => !now("tab") },
+      {
+        isClosed: () => now("closed"),
+        url: () => (now("url") ? "https://example.test/other" : "https://example.test/"),
+        screenshot: async () => {
+          captured = true;
+          return png(10, 10);
+        }
+      }
+    );
+  };
+  for (const what of ["loading", "closed", "url", "tab"] as const) assert.deepEqual(await taken(racing(what)), ["busy"], what);
+});
+
+test("#438: a slow census is taken from the capture's time, which never becomes 0 (no timeout)", async () => {
+  let now = 0;
+  const run = async (censusMs: number) => {
+    now = 0;
+    const asked: unknown[] = [];
+    const budget = new ScreenshotBudget(SCREENSHOT_BUDGET_MS, () => {}, () => now);
+    const frame: ShotFrame = {
+      locator: () => ({
+        all: async () => {
+          if (asked.length === 0) now += censusMs;
+          return [];
+        }
+      })
+    };
+    const page: ShotPage = {
+      frames: () => [frame],
+      screenshot: async (options) => {
+        asked.push(options.timeout);
+        return png(10, 10);
+      }
+    };
+    const outcome = await capture(page, undefined, budget).then(
+      () => "picture",
+      (error: ScreenshotError) => error.reason
+    );
+    return [outcome, ...asked];
+  };
+  assert.deepEqual(await run(0), ["picture", SCREENSHOT_TIMEOUT_MS]);
+  assert.deepEqual(await run(8_000), ["picture", 6_000]);
+  assert.deepEqual(await run(SCREENSHOT_BUDGET_MS - CENSUS_RESERVE_MS - 1), ["picture", 1]);
+  assert.deepEqual(await run(SCREENSHOT_BUDGET_MS - CENSUS_RESERVE_MS), ["failed"]);
+  assert.deepEqual(await run(SCREENSHOT_BUDGET_MS), ["failed"]);
+});
+
+test("#438: work that ends after the deadline gives no picture even when the timer has not run", async () => {
+  let now = 0;
+  const budget = new ScreenshotBudget(1_000, () => {}, () => now);
+  const work = Promise.resolve("picture").then((value) => {
+    now = 1_000;
+    return value;
+  });
+  await assert.rejects(budget.within(work), (error: unknown) => error instanceof ScreenshotError && error.reason === "failed");
+});
+
+test("#438: a failed screenshot reports one closed code, never the error's message", async () => {
+  class TimeoutError extends Error {
+    override name = "TimeoutError";
+  }
+  const secret = "https://example.test/?q=secret";
+  const written: string[] = [];
+  const write = process.stderr.write;
+  process.stderr.write = ((text: string) => (written.push(text), true)) as typeof process.stderr.write;
+  try {
+    const failing = (page: ShotPage) => assert.rejects(takeScreenshot(subject({}, page), false), ScreenshotError);
+    const throwing = (error: unknown): ShotPage => ({ frames: () => [still], screenshot: () => Promise.reject(error) });
+    await failing(throwing(new TimeoutError(secret)));
+    await failing(throwing(Object.assign(new Error(secret), { name: secret })));
+    await failing(throwing(secret));
+    await failing({ frames: () => [{ locator: () => ({ all: () => Promise.reject(new Error(secret)) }) }], screenshot: async () => png(10, 10) });
+  } finally {
+    process.stderr.write = write;
+  }
+  assert.deepEqual(written, [
+    "orcel-browser-worker: screenshot failed at capture: TimeoutError\n",
+    "orcel-browser-worker: screenshot failed at capture: other\n",
+    "orcel-browser-worker: screenshot failed at capture: other\n",
+    "orcel-browser-worker: screenshot failed at census_before: Error\n"
+  ]);
+  assert.equal(errorCode(null), "other");
 });

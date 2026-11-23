@@ -741,16 +741,23 @@ fn the_live_browser_dev_feature_never_reaches_a_release_build() {
         // browser_structured golden tests in a live-browser-dev debug test
         // build. Admitted only while every line naming the feature is a
         // comment, the step's name, or exactly one of those two debug cargo
-        // calls; no release build, no other package and no other command.
+        // calls, each appearing exactly once; no release build, no other
+        // package and no other command.
+        const ADMITTED: [&str; 3] = [
+            "- name: browser_structured reply goldens (Windows, live-browser-dev)",
+            "cargo clippy -p orceld --features live-browser-dev --all-targets -- -D warnings || exit 1",
+            "out=$(cargo test -p orceld --features live-browser-dev --bin orceld -- --exact \\",
+        ];
+        let naming: Vec<&str> = text
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.contains("live-browser-dev") && !line.starts_with('#'))
+            .collect();
         let ci_goldens = relative == ".github/workflows/ci.yml"
-            && text.lines().filter(|line| line.contains("live-browser-dev")).all(|line| {
-                let line = line.trim();
-                !line.contains("--release")
-                    && (line.starts_with('#')
-                        || line == "- name: browser_structured reply goldens (Windows, live-browser-dev)"
-                        || line == "cargo clippy -p orceld --features live-browser-dev --all-targets -- -D warnings || exit 1"
-                        || line == "out=$(cargo test -p orceld --features live-browser-dev --bin orceld -- --exact \\")
-            });
+            && naming.len() == ADMITTED.len()
+            && ADMITTED
+                .iter()
+                .all(|line| naming.iter().filter(|found| found == &line).count() == 1);
         let allowed = ci_goldens
             || relative == "crates/orcel-browser-host/Cargo.toml"
             || (relative.starts_with("crates/orcel-browser-host/src/")
