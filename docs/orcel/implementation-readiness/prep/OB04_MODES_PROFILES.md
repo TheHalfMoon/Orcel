@@ -135,6 +135,8 @@ The approvals, the rules and the route are untouched. Each consequential action 
 
 They were captured on the thread-local slot in the first commit and pass unchanged in the second, where the scripted browser is the broker's structured worker.
 
+CI runs them on Windows in the `Rust / windows-latest` job, in the step "browser_structured reply goldens (Windows, live-browser-dev)". That step also lints orceld in that build, and it fails unless both golden tests ran and passed.
+
 **Residuals.**
 
 - If the broker's own state folder (`live/broker`) cannot be made a real directory, or the system has no randomness for an instance id, a structured request is now refused `PROVIDER_UNAVAILABLE` (or `INTERNAL_ERROR`) with the broker's message. Before, it could still have run.
