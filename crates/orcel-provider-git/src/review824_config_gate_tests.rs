@@ -6,8 +6,8 @@
 //! file or configuration value naming a network share is refused before
 //! Git could open it.
 
+use crate::GitProvider;
 use orcel_contracts::FailureCode;
-use orcel_provider_git::GitProvider;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;

@@ -22,6 +22,26 @@ process and git operations of this slice are WP1-15 executors running on WP1-10'
 that names the shell/process executor, only inside `orceld fc-worker` in that dispatch's service-made job, after
 the person's fresh approval of that exact action. No request capability or MCP tool reaches it yet (section 6).
 
+**Git is off (founder decision of 2026-11-23).** Git is off until it runs confined, inside an OS sandbox. What this
+document says about the seven git operations describes them as built and is what they go back to; until then:
+
+- One compiled constant decides (`crates/orcel-provider-git/src/confinement.rs`, `PROCESS_CONFINED = cfg!(test)`): it
+  holds only while `orcel-provider-git`'s own unit tests are compiled, never for a dependent crate or an integration
+  test. No environment variable, configuration, registry value, request field, policy or Cargo feature changes it.
+- `confinement::require()` is the first line of `GitProvider::new` and `GitProvider::with_program` and runs at every
+  place a Git process is started (`run_plain_full`, `run_fetch_raw`, `run_push_raw`, and both methods of
+  `HardenedPushTransport`). `WorkerOp::check_arguments` calls it for the git family, so `fc.git` refuses before a
+  lease is used, the person is asked or a worker starts; orceld's entry calls it for every Safe `git.*` request, local
+  or remote, before any remote-session lease, policy, approval or journal step.
+- Every operation answers `PROVIDER_UNAVAILABLE`, "Git is off until it runs confined". Tool names and schemas are
+  unchanged; the tools' descriptions say Git is off, and the app API reports `git` unavailable.
+- A Git change an earlier run left interrupted reconciles as unknown and is never retried.
+- Outside this switch: `fc.process` `run` and `process.spawn` start programs, not Git by their own rules (`run` refuses
+  Git by name and everything under a Git installation; `process.spawn` runs only programs the owner registered).
+- Tests: `orcel-provider-git`'s suites, with real Git, are that crate's unit tests now (the worker's own Git tests moved
+  there, `src/worker_operations_tests.rs`); `tests/off_until_confined.rs` checks the refusal as a dependent crate sees
+  it and that every place Git is started asks first; `crates/orceld/tests/git_off.rs` checks a real `orceld`.
+
 ## 1. The operations (`crates/orceld/src/fc_worker.rs`, `fc_worker_exec.rs`)
 
 `WorkerOp` gains one process operation and seven git operations. Every one is a closed JSON shape

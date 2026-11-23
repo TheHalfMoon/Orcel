@@ -1,5 +1,5 @@
+use crate::GitProvider;
 use orcel_contracts::FailureCode;
-use orcel_provider_git::GitProvider;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;

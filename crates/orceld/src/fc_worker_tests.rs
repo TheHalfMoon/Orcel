@@ -7,8 +7,8 @@
 //! never runs), a junction or a hard link out of the root. WP1-15
 //! (SG132_SLICE4.md): real programs started by the worker inside the job
 //! (a copy of this test binary as the program, driven by a mode file in
-//! its working folder, since its environment is scrubbed), and real Git
-//! against a repository whose hooks and configuration try to run programs.
+//! its working folder, since its environment is scrubbed), and the refusal
+//! of every git operation (Git is off until it runs confined).
 
 use crate::fc_worker::{serve, WorkerOp, WorkerReply, WorkerRequest, WORKER_CONTRACT};
 use orcel_contracts::FailureCode;
@@ -937,68 +937,6 @@ mod windows {
         )
     }
 
-    /// Review of #824: configuration that names programs (hooks defined in
-    /// configuration, which `core.hooksPath` and `--no-verify` do not turn
-    /// off, a hooks folder, transport, editor, pager, diff and signing
-    /// programs, credentials). The gate refuses the repository.
-    fn configure_programs(root: &Path, repo: &Path) -> Vec<PathBuf> {
-        let custom = repo.join("myhooks");
-        std::fs::create_dir_all(&custom).expect("custom hooks");
-        for name in ["pre-commit", "post-commit", "post-index-change"] {
-            std::fs::write(
-                custom.join(name),
-                format!(
-                    "#!/bin/sh\n{}\n",
-                    marker_command(root, &format!("custom-{name}"))
-                ),
-            )
-            .expect("hook");
-        }
-        setup_git(repo, &["config", "core.hooksPath", "myhooks"]);
-        let mut names = vec![
-            "custom-pre-commit".to_owned(),
-            "custom-post-commit".to_owned(),
-            "custom-post-index-change".to_owned(),
-        ];
-        for (index, event) in ["post-index-change", "reference-transaction", "post-commit"]
-            .iter()
-            .enumerate()
-        {
-            let name = format!("config-hook-{event}");
-            setup_git(
-                repo,
-                &[
-                    "config",
-                    &format!("hook.evil{index}.command"),
-                    &marker_command(root, &name),
-                ],
-            );
-            setup_git(repo, &["config", &format!("hook.evil{index}.event"), event]);
-            names.push(name);
-        }
-        for (key, name) in [
-            ("core.fsmonitor", "fsmonitor"),
-            ("core.pager", "pager"),
-            ("diff.external", "diff-external"),
-            ("gpg.program", "gpg"),
-            ("core.sshCommand", "ssh"),
-            ("core.askPass", "askpass"),
-            ("credential.helper", "credential"),
-            ("diff.evil.textconv", "textconv"),
-        ] {
-            setup_git(
-                repo,
-                &[
-                    "config",
-                    key,
-                    &format!("!sh -c \"{}\"", marker_command(root, name)),
-                ],
-            );
-            names.push(name.to_owned());
-        }
-        names.iter().map(|name| marker(root, name)).collect()
-    }
-
     /// A repository whose `.git/hooks`, filter drivers and attributes try
     /// to run programs that leave a marker file next to the repository;
     /// its configuration names no program the gate refuses (filters are
@@ -1069,18 +1007,9 @@ mod windows {
         (repo, markers)
     }
 
-    /// Review of #824 (high): a repository whose configuration defines
-    /// hooks (`hook.<name>.command` and `.event`, run by Git 2.36 and later
-    /// despite `core.hooksPath` and `--no-verify`) or names other programs
-    /// is refused before Git runs in it, for reads and mutations alike.
-    #[test]
-    fn fc_worker_git_refuses_a_repository_whose_configuration_runs_programs() {
-        let root = root();
-        let (repo, mut markers) = hostile_repository(&root);
-        markers.extend(configure_programs(&root, &repo));
-        let port = JobPort::new(&root);
-        let repository = repo.display().to_string();
-        for op in [
+    fn git_ops(repository: &str) -> Vec<WorkerOp> {
+        let repository = repository.to_owned();
+        vec![
             WorkerOp::GitStatus {
                 repository: repository.clone(),
             },
@@ -1096,63 +1025,74 @@ mod windows {
                 repository: repository.clone(),
                 paths: vec!["a.txt".to_owned()],
             },
-            WorkerOp::GitBranchCreate {
+            WorkerOp::GitUnstage {
                 repository: repository.clone(),
+                paths: vec!["a.txt".to_owned()],
+            },
+            WorkerOp::GitCommit {
+                repository: repository.clone(),
+                message: "first".to_owned(),
+            },
+            WorkerOp::GitBranchCreate {
+                repository,
                 branch: "topic".to_owned(),
             },
-        ] {
+        ]
+    }
+
+    /// Founder decision of 2026-11-23: Git is off until it runs confined.
+    /// The real worker refuses every git operation, also when orceld's own
+    /// check is passed by, and changes nothing. (The tests of what the
+    /// operations do, and refuse, with real Git moved to
+    /// `orcel-provider-git/src/worker_operations_tests.rs`.)
+    #[test]
+    fn fc_worker_refuses_every_git_operation_while_git_is_off() {
+        let root = root();
+        let (repo, markers) = hostile_repository(&root);
+        let files = |folder: &Path| {
+            ["index", "HEAD", "config"]
+                .map(|name| std::fs::read(folder.join(".git").join(name)).ok())
+        };
+        let before = files(&repo);
+        let port = JobPort::new(&root);
+        for op in git_ops(&repo.display().to_string()) {
+            let refused = run(&port, op.clone()).expect_err("off");
+            assert_eq!(refused.code, FailureCode::ProviderUnavailable, "{op:?}");
             assert_eq!(
-                run(&port, op.clone()).err().map(|e| e.code),
-                Some(FailureCode::CapabilityDenied),
+                refused.message,
+                orcel_provider_git::confinement::OFF_MESSAGE
+            );
+        }
+        assert_eq!(files(&repo), before);
+        assert!(!repo
+            .join(".git")
+            .join("refs")
+            .join("heads")
+            .join("topic")
+            .exists());
+        for marker in &markers {
+            assert!(!marker.exists(), "{} ran", marker.display());
+        }
+        assert!(port.held.borrow().is_empty(), "every job ended");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A repository outside the roots is refused as before.
+    #[test]
+    fn fc_worker_git_refuses_repositories_outside_the_roots() {
+        let root = root();
+        let roots = vec![root.display().to_string()];
+        let outside = root.with_extension("outside-repo");
+        std::fs::create_dir_all(&outside).expect("outside");
+        for op in git_ops(&outside.display().to_string()) {
+            assert_eq!(
+                perform(&op, &roots).err().map(|e| e.code),
+                Some(FailureCode::PathEscape),
                 "{op:?}"
             );
         }
-        for marker in &markers {
-            assert!(!marker.exists(), "{} ran", marker.display());
-        }
-        // Each refused key alone is enough.
-        setup_git(&repo, &["config", "--unset", "core.hooksPath"]);
-        for key in [
-            "core.fsmonitor",
-            "core.pager",
-            "diff.external",
-            "gpg.program",
-            "core.sshCommand",
-            "core.askPass",
-            "credential.helper",
-            "diff.evil.textconv",
-        ] {
-            setup_git(&repo, &["config", "--unset", key]);
-        }
-        for section in ["hook.evil1", "hook.evil2"] {
-            setup_git(&repo, &["config", "--remove-section", section]);
-        }
-        assert_eq!(
-            run(
-                &port,
-                WorkerOp::GitDiff {
-                    repository: repository.clone(),
-                    staged: false,
-                }
-            )
-            .err()
-            .map(|e| e.code),
-            Some(FailureCode::CapabilityDenied),
-            "one post-index-change hook in configuration"
-        );
-        setup_git(&repo, &["config", "--remove-section", "hook.evil0"]);
-        run(
-            &port,
-            WorkerOp::GitDiff {
-                repository,
-                staged: false,
-            },
-        )
-        .expect("the same repository without program keys");
-        for marker in &markers {
-            assert!(!marker.exists(), "{} ran", marker.display());
-        }
         let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
     }
 
     /// Review of #824: Full Control's filesystem operations never write
@@ -1272,203 +1212,6 @@ mod windows {
             }
         }
         let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn fc_worker_git_honors_no_hook_or_hostile_configuration() {
-        let root = root();
-        let (repo, markers) = hostile_repository(&root);
-        let port = JobPort::new(&root);
-        let repository = repo.display().to_string();
-        let status = run(
-            &port,
-            WorkerOp::GitStatus {
-                repository: repository.clone(),
-            },
-        )
-        .expect("status");
-        assert!(
-            status["porcelain_v2"]
-                .as_str()
-                .is_some_and(|text| text.contains("a.txt")),
-            "{status}"
-        );
-        run(
-            &port,
-            WorkerOp::GitAdd {
-                repository: repository.clone(),
-                paths: vec!["a.txt".to_owned(), ".gitattributes".to_owned()],
-            },
-        )
-        .expect("add");
-        let diff = run(
-            &port,
-            WorkerOp::GitDiff {
-                repository: repository.clone(),
-                staged: true,
-            },
-        )
-        .expect("diff");
-        assert!(
-            diff["diff"]
-                .as_str()
-                .is_some_and(|text| text.contains("+one")),
-            "{diff}"
-        );
-        let committed = run(
-            &port,
-            WorkerOp::GitCommit {
-                repository: repository.clone(),
-                message: "first".to_owned(),
-            },
-        )
-        .expect("commit with hooks and signing disabled");
-        assert_eq!(committed["branch"], "main");
-        run(
-            &port,
-            WorkerOp::GitBranchCreate {
-                repository: repository.clone(),
-                branch: "topic".to_owned(),
-            },
-        )
-        .expect("branch");
-        std::fs::write(repo.join("b.txt"), "two\n").expect("b");
-        run(
-            &port,
-            WorkerOp::GitAdd {
-                repository: repository.clone(),
-                paths: vec!["b.txt".to_owned()],
-            },
-        )
-        .expect("add b");
-        run(
-            &port,
-            WorkerOp::GitUnstage {
-                repository: repository.clone(),
-                paths: vec!["b.txt".to_owned()],
-            },
-        )
-        .expect("unstage b");
-        let log = run(
-            &port,
-            WorkerOp::GitLog {
-                repository: repository.clone(),
-                max_count: 5,
-            },
-        )
-        .expect("log");
-        assert_eq!(log["commits"][0]["subject"], "first");
-        // A file under a configured filter driver is refused, not filtered.
-        std::fs::write(repo.join("x.evil"), "x\n").expect("x");
-        let filtered = run(
-            &port,
-            WorkerOp::GitAdd {
-                repository: repository.clone(),
-                paths: vec!["x.evil".to_owned()],
-            },
-        );
-        assert!(filtered.is_err(), "{filtered:?}");
-        for marker in &markers {
-            assert!(!marker.exists(), "{} ran", marker.display());
-        }
-        assert!(port.held.borrow().is_empty(), "every job ended");
-        // Control: the same repository with plain Git does run its hook,
-        // so the absence above is the worker's hardening, not a dead hook.
-        let _ = std::process::Command::new(crate::fc_worker::exec::git_program().expect("Git"))
-            .args(["-c", "commit.gpgSign=false", "-c", "core.fsmonitor=false"])
-            .args(["commit", "-q", "--allow-empty", "-m", "control"])
-            .current_dir(&repo)
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .status();
-        assert!(
-            root.join("marker-pre-commit").exists(),
-            "plain Git runs the planted hook"
-        );
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn fc_worker_git_refuses_injected_options_and_repositories_outside_the_roots() {
-        let root = root();
-        let (repo, markers) = hostile_repository(&root);
-        let roots = vec![root.display().to_string()];
-        let repository = repo.display().to_string();
-        let code = |op: WorkerOp| perform(&op, &roots).err().map(|e| e.code);
-        // Options where a branch name or a path belongs.
-        for branch in ["-c core.sshCommand=evil", "--upload-pack=evil", "-f"] {
-            assert_eq!(
-                code(WorkerOp::GitBranchCreate {
-                    repository: repository.clone(),
-                    branch: branch.to_owned(),
-                }),
-                Some(FailureCode::InvalidRequest),
-                "{branch}"
-            );
-        }
-        for path in [
-            "--upload-pack=evil",
-            ":(glob)*",
-            "../outside.txt",
-            ".git/config",
-        ] {
-            assert!(
-                code(WorkerOp::GitAdd {
-                    repository: repository.clone(),
-                    paths: vec![path.to_owned()],
-                })
-                .is_some(),
-                "{path}"
-            );
-        }
-        // A commit message that looks like an option is only a message.
-        std::fs::write(repo.join("a.txt"), "one\n").expect("a");
-        perform(
-            &WorkerOp::GitAdd {
-                repository: repository.clone(),
-                paths: vec!["a.txt".to_owned()],
-            },
-            &roots,
-        )
-        .expect("add");
-        let committed = perform(
-            &WorkerOp::GitCommit {
-                repository: repository.clone(),
-                message: "--upload-pack=evil".to_owned(),
-            },
-            &roots,
-        )
-        .expect("commit");
-        assert_eq!(committed["branch"], "main");
-        // A repository outside the roots, or whose Git directory is
-        // outside them (a .git file pointing out), is refused.
-        let outside = root.with_extension("outside-repo");
-        std::fs::create_dir_all(&outside).expect("outside");
-        setup_git(&outside, &["init", "-q"]);
-        assert_eq!(
-            code(WorkerOp::GitStatus {
-                repository: outside.display().to_string(),
-            }),
-            Some(FailureCode::PathEscape)
-        );
-        let pointer = root.join("pointer");
-        std::fs::create_dir_all(&pointer).expect("pointer");
-        std::fs::write(
-            pointer.join(".git"),
-            format!("gitdir: {}\n", outside.join(".git").display()),
-        )
-        .expect(".git file");
-        assert_eq!(
-            code(WorkerOp::GitStatus {
-                repository: pointer.display().to_string(),
-            }),
-            Some(FailureCode::PathEscape)
-        );
-        for marker in &markers {
-            assert!(!marker.exists(), "{} ran", marker.display());
-        }
-        let _ = std::fs::remove_dir_all(&root);
-        let _ = std::fs::remove_dir_all(&outside);
     }
 
     /// SG132_SLICE5.md: a stand-in desktop input host launcher with the

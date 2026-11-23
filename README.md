@@ -74,21 +74,23 @@ Local MCP clients get the default `desktop_structured` profile: exactly the 59 t
 | Network | `web_fetch` | local approval per destination; public HTTPS only; local-only |
 | Web search (optional) | `web_search` | off until you enable a provider (`ORCEL_SEARCH_PROVIDERS_JSON`: self-hosted SearXNG, or your own Brave, Tavily, Exa or Serper key stored with `orcel search set-key`); local approval per query; results are untrusted data; local-only; a self-hosted SearXNG must be served on a public HTTPS name (private, loopback and LAN addresses are refused); not available through the ChatGPT tunnel |
 | Report task | `report_start`, `report_preview`, `report_commit`, `task_resume_summary` | start and preview read only; commit needs local approval of the exact file, creates it only (never overwrites) and is verified independently; after a reconnect, `task_resume_summary` reads what the session's own task did and what is unknown (read only, keyed fingerprints, never file text); local-only; not available through the ChatGPT tunnel |
-| Git (local) | `git_status`, `git_diff`, `git_log` | none (read-only) |
-| Git (local changes) | `git_branch_create`, `git_stage`, `git_unstage`, `git_commit` | local approval, bound to the exact repository state |
-| Git (network) | `git_fetch_preview`, `git_fetch`, `git_push_preview`, `git_push` | local approval; see limitations |
+| Git (local) | `git_status`, `git_diff`, `git_log` | off until Git runs confined: every call is refused (see limitations) |
+| Git (local changes) | `git_branch_create`, `git_stage`, `git_unstage`, `git_commit` | off until Git runs confined: every call is refused (see limitations) |
+| Git (network) | `git_fetch_preview`, `git_fetch`, `git_push_preview`, `git_push` | off until Git runs confined: every call is refused (see limitations) |
 | Processes | `process_spawn` | local approval; see limitations |
 | Full Control status | `fc_status` | none (read-only; shows this client's reference and the leases it can use); local-only |
-| Full Control reads | `fc_fs_stat`, `fc_fs_list`, `fc_fs_read`, `fc_git_status`, `fc_git_diff`, `fc_git_log` | none; each needs a Full Control lease from the Orcel authority service (granted with Windows Hello, for named folders, this client and a limited time); local-only |
+| Full Control reads | `fc_fs_stat`, `fc_fs_list`, `fc_fs_read` | none; each needs a Full Control lease from the Orcel authority service (granted with Windows Hello, for named folders, this client and a limited time); local-only |
 | Full Control file writes | `fc_fs_write`, `fc_fs_mkdir` | covered by the Full Control lease, no per-call approval (founder decision); never inside `.git` or Orcel's own state; local-only |
-| Full Control programs and Git changes | `fc_process_run`, `fc_git_stage`, `fc_git_unstage`, `fc_git_commit`, `fc_git_branch_create` | a Full Control lease that includes programs, and local approval on every call; local-only |
+| Full Control programs | `fc_process_run` | a Full Control lease that includes programs, and local approval on every call; local-only |
+| Full Control Git | `fc_git_status`, `fc_git_diff`, `fc_git_log`, `fc_git_stage`, `fc_git_unstage`, `fc_git_commit`, `fc_git_branch_create` | off until Git runs confined: every call is refused (see limitations); local-only |
 
 Everything else is denied. Remote clients (ChatGPT through the tunnel or relay, and other providers) see only the 26-tool `core` profile: every desktop, Full Control, clipboard, network, search and report task tool is local-only and cannot be reached remotely. The twelve live browser tools (open, navigate, observe, link click, download preview and download, and, from SG-000122, form fill, option select, checkbox or radio check, Enter, text wait and verify) are served only under the separate `browser_structured` profile of a Windows development build; release builds serve no browser automation.
 
 ### Current limitations
 
 - `process_spawn` on Windows launches only locally registered, hash-pinned native executables with constrained argv; adding or changing a registry entry requires Windows Hello on the machine.
-- `git_fetch` and `git_push` require destination policies that the current compatibility runtime does not configure yet, so they fail closed in an installed Orcel runtime.
+- Git is off until it runs confined (founder decision of 2026-11-23). Every `git_*` and `fc_git_*` tool keeps its name and schema and answers `PROVIDER_UNAVAILABLE`, "Git is off until it runs confined", before anything is asked and without starting Git. No setting turns it on.
+- When Git is on again, `git_fetch` and `git_push` still require destination policies that the current compatibility runtime does not configure yet, so they fail closed in an installed Orcel runtime.
 - Release binaries are not code-signed (there is no paid certificate under the project's zero-cost rule). Windows SmartScreen may warn; verify the archive with `SHA256SUMS.txt` and the GitHub build-provenance attestation.
 - Orcel runs only while you are signed in, because approvals appear on your desktop.
 

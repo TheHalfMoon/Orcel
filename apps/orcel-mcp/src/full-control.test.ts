@@ -276,3 +276,21 @@ test("fc: a browser profile does not list the Full Control tools", async () => {
     await server.close();
   }
 });
+
+/** Founder decision of 2026-11-23: Git is off until it runs confined. */
+test("git off: every Git tool keeps its name, and its description says Git is off first", async () => {
+  const { server, transport } = await session(refusingKernel([], "PROVIDER_UNAVAILABLE"), localTransportContext({}));
+  const listed = await transport.request(2, "tools/list", {});
+  const tools = (listed.result as { tools: Array<{ name: string; description?: string }> }).tools;
+  const git = tools.filter((tool) => /^(fc_)?git_/.test(tool.name));
+  assert.deepEqual(
+    git.map((tool) => tool.name).sort(),
+    Object.keys(TOOL_CONTRACT).filter((name) => TOOL_CONTRACT[name]?.capability.startsWith("git.") || TOOL_CONTRACT[name]?.capability === "fc.git").sort()
+  );
+  assert.equal(git.length, 18);
+  for (const tool of tools) {
+    const off = (tool.description ?? "").startsWith("Off: Git is off until it runs confined.");
+    assert.equal(off, git.includes(tool), tool.name);
+  }
+  await server.close();
+});

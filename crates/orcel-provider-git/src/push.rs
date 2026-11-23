@@ -910,6 +910,7 @@ pub struct HardenedPushTransport;
 
 impl PushTransport for HardenedPushTransport {
     fn query_remote_ref(&self, query: &RemoteQuery<'_>) -> Result<String, GitProviderError> {
+        crate::confinement::require()?;
         let argv = build_ls_remote_argv(
             query.url,
             query.hostname,
@@ -933,6 +934,7 @@ impl PushTransport for HardenedPushTransport {
     }
 
     fn send_push(&self, operation: &PushOperation<'_>) -> Result<(), GitProviderError> {
+        crate::confinement::require()?;
         let argv = build_push_argv(
             operation.url,
             operation.hostname,
@@ -1023,6 +1025,7 @@ fn run_push_raw(
     use std::thread;
     use std::time::Instant;
 
+    crate::confinement::require()?;
     let askpass = match credential.secret.as_ref() {
         Some(secret) => Some(ProtectedAskpass::create(secret)?),
         None => None,
