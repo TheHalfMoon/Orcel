@@ -819,8 +819,10 @@ fn refuse_hard_links(file: &std::fs::File) -> Result<(), ProviderError> {
 }
 
 /// Performs one operation inside `roots` (no pinned program: the run was
-/// approved per action). Tests drive the worker's operations through it.
-#[cfg(test)]
+/// approved per action). The Windows worker tests (`fc_worker_tests`'
+/// `windows` module) drive the worker's operations through it, so it exists
+/// only in Windows test builds.
+#[cfg(all(test, windows))]
 pub(crate) fn perform(op: &WorkerOp, roots: &[String]) -> Result<Value, ProviderError> {
     perform_pinned(op, roots, None)
 }
