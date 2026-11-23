@@ -28,7 +28,7 @@ founder approval of governance-sensitive merges), which this decision neither ad
 
 **Independent code review is a process rule, not enforced by a GitHub check**, and it is separate from the targeted security
 review. Whoever merges the pull request (today the coordinating engineering session) records both on the pull request
-before merging; the closing pull request of a grain carries them into `review_basis` in
+before merging, in comments; the closing pull request of a grain carries them into `review_basis` in
 `.specgrain/canonical-evidence.json`.
 
 **The ruleset does not enforce** the independent code review, the targeted security review, the negative and adversarial
@@ -62,6 +62,15 @@ left to the founder.
 - `.github/workflows/review-gates.yml`: the Jev job is removed. `permissions: contents: read` stays, because the OCR job
   uses it. The trigger now names `main` and adds `edited`, so a pull request moved to main from another base is
   checked again against main.
+  - GitHub sends `edited` for a title or description edit too, so such an edit runs the job again on the same head and
+    cancels a run in progress. Reviews are therefore recorded in comments, not by editing the description.
+  - The base the job reads is the event's `base.sha`, which is not read again if main moves. The check relies on the
+    ruleset's strict up-to-date rule to keep a run made against an older main from being enough to merge: the branch must
+    contain current main, and bringing it up to date is a new head and a new run. Without that rule a stale base would
+    stand.
+  - The job assumes this repository is public. It fetches the base, the head and the pull request's ref with no
+    credential kept (`persist-credentials: false`). In a private repository the fetch in the range step would fail, which
+    refuses, until it is given a credential, and that would need its own review.
 - **The range check**, `.github/scripts/check-review-range.mjs`. The Jev adapter also made deterministic refusals that no
   other required check made, so they now have their own step in the Alibaba OCR Delegation job, after the fork refusal
   and before the candidate checkout, with no Jev and no secret. The script and Git's attributes come from a checkout of
@@ -74,8 +83,12 @@ left to the founder.
     text file carried the name that decoding gives. A review of this change found it. Submodule links, and a NUL byte
     after the first 8,000 bytes, passed too.
   - **What still counts as text**: UTF-16 or another encoding without a NUL byte; invalid UTF-8 content; bidirectional
-    and other invisible characters; symbolic links (their target is the hunk); Git LFS pointers (the content they point
-    to is not in the diff). A reviewer has to look for these.
+    and other invisible characters; a lone carriage return inside a line; symbolic links (their target is the hunk); Git
+    LFS pointers (the content they point to is not in the diff); names that differ only in case or in Unicode
+    normalization (NFC and NFD twins), which some file systems treat as one; names with a backslash or a newline; and
+    names only a malformed tree can hold. The check reads the net diff of base and head, so a binary that one commit of a
+    pull request adds and a later one removes is not in it, and a merge commit keeps it in history. A reviewer has to
+    look for these.
   - Attributes: the hunks are read with none, so neither the base's nor the head's `.gitattributes` can hide content. The
     whitespace check uses the base's, because byte-exact fixtures need their rule (`cr-at-eol`); a merged
     `.gitattributes` change can therefore relax the whitespace check for later pull requests. Such a change is not gated
@@ -93,6 +106,20 @@ left to the founder.
 - `apps/orcel-mcp/src/review-process.test.ts`: the workflow holds the Alibaba job alone, with its fork refusal, no
   credential, no added condition, no tolerated failure, its order, its pins and the OCR checksum; no open grain requires
   Jev and each requires the eight items; grains closed before the decision keep their Jev requirement and evidence.
+- **Coverage gaps**, recorded and not closed here. Base control and review still apply to what they leave open.
+  - Found by the third review (LOW): the OCR step bodies are not pinned. `review-process.test.ts` still passed with a command
+    inserted in the install or delegation-spec step, without the spec step's HEAD test or its preview-range mismatch
+    refusal, and with the `concurrency` settings changed. The comments claim whole steps only for the fork refusal and the
+    range check.
+  - Verified by the recording session: the fork refusal, setup-node, both checkouts and the range step are compared whole;
+    the install, delegation-spec and upload steps and the `concurrency` block only in part or not at all. The test reads the
+    workflow as text: the range step's own shell lines are never run against a real event before they reach main.
+  - Mutations of the script, third review: 21 of 28 were caught. The 7 that survived are redundant or fail closed
+    (`--literal-pathspecs`, `--no-replace-objects`, numstat, `--ignore-submodules`, `--no-textconv`, `core.attributesFile`
+    and the raw status set).
+  - Mutations, recording session: 47 of the script and the workflow, chosen by the author; 4 survived, the tests were
+    tightened, and those 4 were then caught. The other 43 were not run again on the final tests. The review did not
+    reproduce this claim.
 - Checked and needing no change: the Governance step that validates `.specgrain` and the canonical evidence ledger never
   read a Jev field (it reads pull request, heads, CI runs and unresolved threads), and neither did any release sweep or
   closeout test, so old grains stay valid and a new grain needs no Jev evidence. `p20-architecture.test.ts` pins the Jev
@@ -114,7 +141,7 @@ so do its failures, among them:
 - #831 at `5905dc0e` (run 44536268283): `request_changes`, security / authorization, severity 2.49, confidence 0.49, on
   `prep/SG132_SLICE8.md`.
 - #847 at `c80ef149` (run 45134778880): `request_changes`, security / injection, severity 2.57, confidence 0.56, on
-  `prep/SG132_SLICE10.md`. #847's description says Jev blocked on it rightly, and the pull request was changed.
+  `prep/SG132_SLICE10.md`. Commit `f47c52c0` on that pull request says the finding is right and fixes it.
 
 Packet and program documents written while Jev was required (the P18 program, the `docs/p20/SG000096_T0*` packets, the
 SG-0000xx security notes, `P18_EXIT.md`, `P18_QUALIFICATION.md`, `RELEASE_SECURITY_REVIEW.md`, the activation drafts in
@@ -132,7 +159,9 @@ requirement for work not yet done, this decision supersedes the Jev part of it.
   `require_extra_approval_for_unattributed_changes` is true, and what it does for this repository's pull requests is not
   verified. A missing or careless review is visible only in the pull request's record.
 - **A required check's name is not bound to its workflow.** The ruleset's checks carry no `integration_id`, so any check or
-  status of that name counts. Binding them is a ruleset change, left to the founder.
+  status of that name counts. Setting one is a ruleset change, left to the founder, and would not close this: an
+  `integration_id` binds a check to the app that posts it, not to a workflow. A job of the same name in a workflow the
+  pull request itself adds or changes is posted by the same GitHub Actions app and would still count.
 - **D1 can be wrong in the dangerous direction.** D1-600M once called an authentication bypass low-risk. That is why it
   can never authorize anything.
 - **Review gates on one account.** Authors, reviewers and the merging session act through one GitHub account, so the

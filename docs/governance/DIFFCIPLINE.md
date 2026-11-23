@@ -144,7 +144,7 @@ act through one GitHub account, so GitHub could not tell one from another.
   output do not count.
 - The independent code review and the targeted security review are two separate reviews, each with its own record.
 - Who records them: whoever merges the pull request, before merging (today the coordinating engineering session).
-- Where: on the pull request, in its description or a comment, with the reviewer, the statement that they did not write
+- Where: in comments on the pull request (editing its title or description runs the review gates again), with the reviewer, the statement that they did not write
   the change, the exact head SHA, the files covered (the files Open Code Review excluded among them), every finding and
   how each was resolved. At grain closeout the closing pull request carries it into `review_basis` in
   `.specgrain/canonical-evidence.json`.
@@ -154,7 +154,9 @@ act through one GitHub account, so GitHub could not tell one from another.
 branch up to date with main; no deletion and no force-push of main; no bypass. `required_approving_review_count` is 0.
 `require_extra_approval_for_unattributed_changes` is true; what it does for this repository's pull requests is not verified.
 The required status checks carry no `integration_id`, so any check or commit status with one of those names counts,
-whoever posts it: an actor with push access could post one without running the job.
+whoever posts it: an actor with push access could post one without running the job. An `integration_id` would bind a check
+to the app that posts it, not to a workflow, so a same-named Actions job in the pull request itself would still count. The
+range check in Alibaba OCR Delegation relies on the up-to-date rule: it does not read a moved main again.
 
 **What nothing in the ruleset enforces**, so it holds only if people and sessions do it and record it:
 - the independent code review, and its record;
