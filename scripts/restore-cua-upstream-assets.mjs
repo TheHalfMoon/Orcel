@@ -10,7 +10,7 @@
 // `check-vendored-cua.mjs --upstream` proves those ids are the ones in the
 // pinned upstream trees, so the restored files are upstream's at the pin.
 // Nothing is committed: the files exist only in the CI checkout, and the
-// exact-diff review never sees them.
+// review range check never sees them.
 //
 // #423: every network read is bounded (FETCH_TIMEOUT_MS per attempt,
 // FETCH_ATTEMPTS attempts) and the blob id is computed in this process, with

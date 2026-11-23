@@ -283,6 +283,9 @@ Orcel downloads the official Alibaba OpenCodeReview v1.12.9 Linux release binary
 
 ### devagrawal09/jev-review
 
+Status:
+RETIRED 2026-11-23 (`docs/governance/2026-11-23-jev-retirement.md`). The entry below records the integration as it was until then; the workflow job and its adapter are removed.
+
 Pin:
 31f89602797fb7bea007f8a480bf368bf564954e
 

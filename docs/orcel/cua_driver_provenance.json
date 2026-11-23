@@ -317,7 +317,7 @@
           "path": "assets/Inter.ttf",
           "upstream_blob_sha": "047c92f6e2212473dc436020afed689527076d44",
           "upstream_mode": "100644",
-          "reason": "binary font (876,576 bytes); the exact-diff review refuses binary files"
+          "reason": "binary font (876,576 bytes); the Alibaba OCR Delegation range check (Jev until 2026-11-23) refuses binary files"
         },
         {
           "path": "assets/cua.default.cua-theme",
@@ -335,7 +335,7 @@
           "path": "tests/fixtures/motion_equivalence.json",
           "upstream_blob_sha": "2cfe677d0738fe2955d291639397248aec15006e",
           "upstream_mode": "100644",
-          "reason": "one 705,133-character JSON line; exceeds the exact-diff review slice budget"
+          "reason": "one 705,133-character JSON line; exceeds the 10,000-character line bound of the Alibaba OCR Delegation range check (Jev until 2026-11-23)"
         }
       ],
       "added_files": [
@@ -387,13 +387,13 @@
           "path": "fixtures/golden.json",
           "upstream_blob_sha": "6b0f36a568ff46a3cf5c159757e29fd4b0ca74db",
           "upstream_mode": "100644",
-          "reason": "one 855,400-character JSON line; exceeds the exact-diff review slice budget"
+          "reason": "one 855,400-character JSON line; exceeds the 10,000-character line bound of the Alibaba OCR Delegation range check (Jev until 2026-11-23)"
         },
         {
           "path": "tests/fixtures/motion_parity.json",
           "upstream_blob_sha": "7121f9e027f5ae97f7bc8064387b02e9ca83bee0",
           "upstream_mode": "100644",
-          "reason": "one 540,828-character JSON line; exceeds the exact-diff review slice budget"
+          "reason": "one 540,828-character JSON line; exceeds the 10,000-character line bound of the Alibaba OCR Delegation range check (Jev until 2026-11-23)"
         }
       ]
     },
@@ -440,13 +440,13 @@
           "path": "apps/cross-platform/tauri/src-tauri/icons/icon.ico",
           "upstream_blob_sha": "d1d851e27483bcbcaec8560ae668d0a5410735ef",
           "upstream_mode": "100644",
-          "reason": "binary icon (2,066 bytes); the exact-diff review refuses binary files, and Orcel CI does not build the Tauri host"
+          "reason": "binary icon (2,066 bytes); the Alibaba OCR Delegation range check (Jev until 2026-11-23) refuses binary files, and Orcel CI does not build the Tauri host"
         },
         {
           "path": "apps/cross-platform/tauri/src-tauri/icons/icon.png",
           "upstream_blob_sha": "4c5379663166c9c4fbb57a88ae98cc0a64120567",
           "upstream_mode": "100644",
-          "reason": "binary icon (2,044 bytes); the exact-diff review refuses binary files, and Orcel CI does not build the Tauri host"
+          "reason": "binary icon (2,044 bytes); the Alibaba OCR Delegation range check (Jev until 2026-11-23) refuses binary files, and Orcel CI does not build the Tauri host"
         }
       ]
     }

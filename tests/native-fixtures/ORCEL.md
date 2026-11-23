@@ -17,7 +17,8 @@ the `fixtures` entry of `docs/orcel/cua_driver_provenance.json`.
 
 ## Removed files
 
-The exact-diff review refuses binary files, so these two are not copied
+The range check of the required Alibaba OCR Delegation job (Jev until
+2026-11-23) refuses binary files, so these two are not copied
 (the same handling as P-05 in the native host's patch queue):
 
 - `apps/cross-platform/tauri/src-tauri/icons/icon.ico` (blob `d1d851e2`, 2,066 bytes)

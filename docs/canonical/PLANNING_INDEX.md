@@ -55,6 +55,7 @@ canonically.
 | `docs/canonical/PLANNING_INDEX.md` | This precedence and classification index. |
 | `docs/identity/ORCEL_RENAME.md` | Product identity and compatibility boundary. |
 | `docs/governance/DIFFCIPLINE.md` | Exact-diff execution discipline. |
+| `docs/governance/2026-11-23-jev-retirement.md` | Founder decision: Jev retired as a mandatory review, D1 optional; the retained review process. |
 | `.specgrain/specs/SG-000095.json` | Closed canonical: ORCEL-P20 local Full User desktop control. |
 | `.specgrain/specs/SG-000096.json` | Sole active ORCEL-P20 grain: local shell and process session qualification; this packet grants no executable authority itself. |
 | `docs/canonical/ORCEL_P20_UNIVERSAL_AGENT_RUNTIME_PLAN.md` | Active ORCEL-P20 reuse-first architecture, authority, implementation-order, and qualification plan. |

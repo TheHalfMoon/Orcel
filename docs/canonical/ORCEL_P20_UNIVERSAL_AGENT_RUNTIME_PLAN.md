@@ -453,7 +453,8 @@ Every P20 grain uses:
 - normal merge commits only;
 - no rebase, squash, force-push, or history rewrite;
 - exact-head CI and expected-head merge;
-- genuine TypeSafe Jev exact-diff semantic review;
+- independent code review of the exact head, recorded on the PR (from 2026-11-23; before that, genuine TypeSafe Jev exact-diff semantic review);
+- targeted security review for authority, permissions, filesystem boundaries, network or privilege, with negative and adversarial regression tests;
 - Alibaba Open Code Review exact-range review;
 - manual review of unsupported/excluded security-sensitive files;
 - zero unresolved blocking review threads;

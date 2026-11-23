@@ -95,6 +95,8 @@ The donor integration record (copied paths, commits, modifications, notices) is 
 
 Each slice runs the full review gates (CI, native Windows, Jev, OCR delegation, a PStack-role judge, Graft) and merges with a normal merge commit. No slice may add an MCP-facing tool before its approval policy is qualified.
 
+Note, 2026-11-23: Jev is retired as a mandatory review; future work follows `docs/governance/DIFFCIPLINE.md` section 10 (`docs/governance/2026-11-23-jev-retirement.md`).
+
 ## Open risks
 
 - Native `document.modelContext` needs an experimental flag in Edge 155, and SG-000074's argv allowlist does not include it. Discovery must therefore work without the flag (declarative forms, and pages that ship their own polyfill), or the flag must be admitted as a reviewed argv amendment.
