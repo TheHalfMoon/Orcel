@@ -190,7 +190,6 @@ fn link_then_unlink_with(
 
 /// Takes away `to`, the second name this process gave the file at `from`,
 /// unless `from` is that file no longer: then `to` may be its only name.
-#[cfg(any(test, not(windows)))]
 fn remove_spare_name(from: &Path, to: &Path) {
     let (Ok(from), Ok(named)) = (
         std::fs::symlink_metadata(from),
@@ -205,14 +204,107 @@ fn remove_spare_name(from: &Path, to: &Path) {
             return;
         }
     }
-    #[cfg(not(unix))]
-    let _ = (from, named);
+    #[cfg(windows)]
+    {
+        let _ = (from, named);
+        if !matches!(crate::acl::hard_link_count(to), Ok(2..)) {
+            return;
+        }
+    }
     let _ = std::fs::remove_file(to);
 }
 
-/// Makes the names in `path`'s directory durable, where the filesystem can.
-#[cfg(any(test, not(windows)))]
-fn sync_parent_dir(path: &Path) -> io::Result<()> {
+/// A file kept under a second name by [`keep_file_as`].
+#[must_use]
+#[derive(Debug)]
+pub struct KeptFile {
+    from: PathBuf,
+    to: PathBuf,
+    copied: bool,
+}
+
+impl KeptFile {
+    /// Takes the kept name away again, unless it may be the file's only one:
+    /// it stays when the file is no longer at the name it was kept from, and
+    /// so does a copy, which cannot be told from the only one.
+    pub fn remove_spare(self) {
+        if !self.copied {
+            remove_spare_name(&self.from, &self.to);
+        }
+    }
+}
+
+/// Keeps the regular file at `from` under the name `to` as well, durably,
+/// without moving it: as a hard link, or as a copy where the filesystem has
+/// none. Whatever is at `to` is never replaced or followed
+/// ([`io::ErrorKind::AlreadyExists`]). On an error nothing is kept, or at
+/// most a whole copy.
+pub fn keep_file_as(from: &Path, to: &Path) -> io::Result<KeptFile> {
+    keep_file_with(from, to, |from, to| std::fs::hard_link(from, to))
+}
+
+fn keep_file_with(
+    from: &Path,
+    to: &Path,
+    link: impl FnOnce(&Path, &Path) -> io::Result<()>,
+) -> io::Result<KeptFile> {
+    let copied = match link(from, to) {
+        Ok(()) => false,
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return Err(error),
+        Err(_) => {
+            copy_to_new(from, to)?;
+            true
+        }
+    };
+    let kept = KeptFile {
+        from: from.to_path_buf(),
+        to: to.to_path_buf(),
+        copied,
+    };
+    // The linked file's bytes may not be on disk yet. Flushing needs a write
+    // handle on Windows.
+    let flushed = OpenOptions::new()
+        .read(true)
+        .write(cfg!(windows))
+        .open(to)
+        .and_then(|file| file.sync_all())
+        .and_then(|()| sync_parent_dir(to));
+    match flushed {
+        Ok(()) => Ok(kept),
+        Err(error) => {
+            kept.remove_spare();
+            Err(error)
+        }
+    }
+}
+
+/// Copies `from` to `to`, which must not exist yet, owner-only on Unix. A
+/// partial copy is removed.
+fn copy_to_new(from: &Path, to: &Path) -> io::Result<()> {
+    let mut source = File::open(from)?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    owner_only(&mut options);
+    let mut copy = options.open(to)?;
+    let copied = io::copy(&mut source, &mut copy)
+        .and_then(|bytes| Ok((bytes, source.metadata()?.len())))
+        .and_then(|(bytes, length)| {
+            if bytes == length {
+                copy.sync_all()
+            } else {
+                Err(io::Error::other("the file changed while it was copied"))
+            }
+        });
+    drop(copy);
+    if copied.is_err() {
+        let _ = std::fs::remove_file(to);
+    }
+    copied
+}
+
+/// Makes the names in `path`'s directory durable, where the filesystem can
+/// (on Windows the filesystem's own journal orders them).
+pub fn sync_parent_dir(path: &Path) -> io::Result<()> {
     #[cfg(unix)]
     {
         let parent = path
@@ -549,20 +641,93 @@ mod tests {
         };
         assert!(link_then_unlink_with(&from, &to, |_| Ok(()), gone).is_err());
         assert_eq!(std::fs::read(&to).expect("to"), b"one");
-        #[cfg(unix)]
-        {
-            // Another file at the old name does not make the new one spare.
-            let to = dir.join("to-2");
-            std::fs::write(&from, b"two").expect("from");
-            let replaced = |from: &Path| {
-                std::fs::write(dir.join("other"), b"other").expect("other");
-                std::fs::rename(dir.join("other"), from).expect("replaced");
-                Err(io::Error::other("injected"))
-            };
-            assert!(link_then_unlink_with(&from, &to, |_| Ok(()), replaced).is_err());
-            assert_eq!(std::fs::read(&to).expect("to"), b"two");
-        }
+        // Another file at the old name does not make the new one spare.
+        let to = dir.join("to-2");
+        std::fs::write(&from, b"two").expect("from");
+        let replaced = |from: &Path| {
+            std::fs::write(dir.join("other"), b"other").expect("other");
+            std::fs::rename(dir.join("other"), from).expect("replaced");
+            Err(io::Error::other("injected"))
+        };
+        assert!(link_then_unlink_with(&from, &to, |_| Ok(()), replaced).is_err());
+        assert_eq!(std::fs::read(&to).expect("to"), b"two");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Both ways to keep a file: a hard link, and the copy a filesystem
+    /// without hard links gets.
+    fn keepers() -> [fn(&Path, &Path) -> io::Result<KeptFile>; 2] {
+        [keep_file_as, |from, to| {
+            keep_file_with(from, to, |_, _| Err(io::ErrorKind::Unsupported.into()))
+        }]
+    }
+
+    #[test]
+    fn a_file_is_kept_whole_and_where_it_is() {
+        for (index, keep) in keepers().iter().enumerate() {
+            let dir = sandbox(&format!("keep-{index}"));
+            let (from, to) = (dir.join("from"), dir.join("to"));
+            std::fs::write(&from, b"one").expect("from");
+            let kept = keep(&from, &to).expect("keep");
+            assert_eq!(kept.copied, index == 1);
+            assert_eq!(std::fs::read(&from).expect("from"), b"one");
+            assert_eq!(std::fs::read(&to).expect("to"), b"one");
+            // Replacing the file leaves the kept one, and it is then not spare.
+            std::fs::write(dir.join("new"), b"new").expect("new");
+            std::fs::rename(dir.join("new"), &from).expect("replace");
+            assert_eq!(std::fs::read(&to).expect("to"), b"one");
+            kept.remove_spare();
+            assert_eq!(std::fs::read(&to).expect("to"), b"one");
+            #[cfg(unix)]
+            if index == 1 {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = std::fs::metadata(&to).expect("meta").permissions().mode();
+                assert_eq!(mode & 0o777, 0o600);
+            }
+            // Where the file is still in place, a link can be taken away.
+            let spare = keep(&from, &dir.join("spare")).expect("keep");
+            spare.remove_spare();
+            assert_eq!(dir.join("spare").exists(), index == 1);
+            assert_eq!(std::fs::read(&from).expect("from"), b"new");
+            // Where it is gone, the kept one stays.
+            let only = keep(&from, &dir.join("only")).expect("keep");
+            std::fs::remove_file(&from).expect("gone");
+            only.remove_spare();
+            assert_eq!(std::fs::read(dir.join("only")).expect("only"), b"new");
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[test]
+    fn keeping_a_file_never_replaces_or_follows_what_is_there() {
+        for (index, keep) in keepers().iter().enumerate() {
+            let dir = sandbox(&format!("keep-taken-{index}"));
+            let (from, to) = (dir.join("from"), dir.join("to"));
+            std::fs::write(&from, b"new").expect("from");
+            std::fs::write(&to, b"kept").expect("to");
+            std::fs::create_dir(dir.join("folder")).expect("folder");
+            let mut targets = vec![to.clone()];
+            // A directory refuses a copy with another error on Windows.
+            if index == 0 || cfg!(unix) {
+                targets.push(dir.join("folder"));
+            }
+            #[cfg(unix)]
+            for (name, leads_to) in [("link", "to"), ("dangling", "nowhere")] {
+                std::os::unix::fs::symlink(dir.join(leads_to), dir.join(name)).expect("link");
+                targets.push(dir.join(name));
+            }
+            for target in targets {
+                let error = keep(&from, &target).expect_err("taken");
+                assert_eq!(error.kind(), io::ErrorKind::AlreadyExists, "keep {index}");
+            }
+            assert_eq!(std::fs::read(&to).expect("to"), b"kept");
+            assert!(!dir.join("nowhere").exists());
+            assert_eq!(std::fs::read(&from).expect("from"), b"new");
+            let missing = keep(&dir.join("missing"), &dir.join("none")).expect_err("missing");
+            assert_eq!(missing.kind(), io::ErrorKind::NotFound);
+            assert!(!dir.join("none").exists());
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 
     /// Only a directory that cannot be synced at all is let off.

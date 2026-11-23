@@ -13,7 +13,12 @@
 //! `previous_file_id: "none"` for a log's first file; its `prev_digest` is
 //! that head digest, or [`GENESIS_PREV_DIGEST`]. A file is replaced only by
 //! [`move_aside`], which keeps the old file and opens the new one linked to
-//! the old file's last verifiable record: never a clean slate.
+//! the old file's last verifiable record: never a clean slate. (After an
+//! owner reset, [`open_after_reset`] opens a first file that names it.) The
+//! old file gets its second name and the new one is whole on disk before one
+//! rename puts it in place: a crash at any point leaves the old file or the
+//! new one at the chain's path, never neither. At worst it leaves a second
+//! name of the old file and an unused `<chain>.recovering-*` file beside it.
 //!
 //! Appending takes an OS lock on `<chain>.lock` (several orcelds append to
 //! one file), brings this writer's view up to the file's end (verifying
@@ -50,7 +55,9 @@ use orcel_contracts::event::{
 use orcel_contracts::job::ExecutionState;
 use orcel_contracts::lease::DispatchAuthority;
 use orcel_contracts::Contract;
-use orcel_platform::files::{rename_no_replace, unique_token};
+use orcel_platform::files::{
+    keep_file_as, rename_no_replace, sync_parent_dir, unique_token, KeptFile,
+};
 use serde_json::{json, Value};
 use std::fmt;
 use std::fs::{File, OpenOptions};
@@ -577,6 +584,7 @@ pub(crate) mod forced {
     use std::collections::VecDeque;
 
     thread_local! {
+        static FAULT: Cell<Option<(&'static str, bool)>> = const { Cell::new(None) };
         static NOW_MS: Cell<Option<u64>> = const { Cell::new(None) };
         static ASIDE_TOKENS: RefCell<VecDeque<String>> = const { RefCell::new(VecDeque::new()) };
     }
@@ -587,6 +595,32 @@ pub(crate) mod forced {
 
     pub(super) fn aside_token() -> Option<String> {
         ASIDE_TOKENS.with_borrow_mut(VecDeque::pop_front)
+    }
+
+    /// What goes wrong at `step` of replacing a chain file, if anything.
+    pub(super) fn step(step: &'static str) -> std::io::Result<()> {
+        match FAULT.get() {
+            Some((at, true)) if at == step => std::panic::panic_any("crashed"),
+            Some((at, false)) if at == step => Err(std::io::ErrorKind::StorageFull.into()),
+            _ => Ok(()),
+        }
+    }
+
+    /// Makes one step fail, or (a panic, which nothing here handles) crash,
+    /// in this thread until dropped.
+    pub(crate) struct Fault(());
+
+    impl Fault {
+        pub(crate) fn at(step: &'static str, crash: bool) -> Self {
+            FAULT.set(Some((step, crash)));
+            Self(())
+        }
+    }
+
+    impl Drop for Fault {
+        fn drop(&mut self) {
+            FAULT.set(None);
+        }
     }
 
     /// Stops this thread's clock at `ms` until dropped.
@@ -625,11 +659,18 @@ fn aside_token() -> String {
     unique_token()
 }
 
-/// A fresh name beside `path` for a file moved aside, owned by the chain's
-/// registered store (`.quarantine-` siblings).
+/// Nothing outside tests; see [`forced::step`].
+fn step(_step: &'static str) -> io::Result<()> {
+    #[cfg(test)]
+    forced::step(_step)?;
+    Ok(())
+}
+
+/// A fresh name beside `path`, owned by the chain's registered store
+/// (`.quarantine-` and `.recovering-` siblings).
 fn aside_name(path: &Path, what: &str) -> String {
     format!(
-        "{}.quarantine-{what}{}-{}-{}",
+        "{}.{what}{}-{}-{}",
         path.file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default(),
@@ -661,10 +702,100 @@ fn keep_aside<T>(
     )))
 }
 
-/// Moves the chain at `path` to a fresh name beside it, never onto an
-/// existing file, and returns the name.
-fn move_to_aside(path: &Path, what: &str, action: &str) -> Result<String, ChainError> {
-    keep_aside(path, what, action, |to| rename_no_replace(path, to)).map(|(name, ())| name)
+/// Whether there is a chain file at `path`. Only a missing one is none: a
+/// link (wherever it leads), anything else that is not a regular file, and a
+/// path that cannot be inspected are errors.
+pub(crate) fn chain_file_exists(path: &Path) -> Result<bool, ChainError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(found) if found.is_file() => Ok(true),
+        Ok(_) => Err(ChainError::Io(
+            "the chain is a link or not a regular file; nothing was moved or opened".to_owned(),
+        )),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(io_error("inspect the chain", error)),
+    }
+}
+
+/// How [`replace_file`] opens the new file.
+struct Replacement<'a> {
+    log: &'a str,
+    link: Option<&'a ChainLink>,
+    reset: Option<Value>,
+    /// The kept name's part, what keeping it is called and why the old file
+    /// ended; `None` when there is no old file.
+    old: Option<(&'static str, &'static str, String)>,
+}
+
+/// Puts a new file with its opening record at `path`, under the chain's lock:
+/// keeps the old file, if any, under a fresh name, writes the new one whole
+/// beside it, and swaps it in with one rename. On an error before the swap
+/// everything is as it was (where the filesystem has no hard links, a whole
+/// copy of the old file stays). Returns the kept name and the new file's id.
+fn replace_file(
+    path: &Path,
+    replacement: Replacement<'_>,
+) -> Result<(Option<String>, String), ChainError> {
+    let (kept, moved) = match &replacement.old {
+        Some((what, action, stopped)) => {
+            let (name, kept) = keep_aside(path, what, action, |to| keep_file_as(path, to))?;
+            let moved = json!({"file": &name, "stopped": stopped});
+            (Some((name, kept)), Some(moved))
+        }
+        None => (None, None),
+    };
+    let swapped = step("kept")
+        .map_err(|error| io_error("open the new chain file", error))
+        .and_then(|()| write_and_swap(path, replacement, moved));
+    let (name, kept): (_, Option<KeptFile>) = kept.unzip();
+    let file_id = match swapped {
+        Ok(file_id) => file_id,
+        Err(error) => {
+            if let Some(kept) = kept {
+                kept.remove_spare();
+            }
+            return Err(error);
+        }
+    };
+    sync_parent_dir(path)
+        .map_err(|error| io_error("the new chain file is in place, but not synced", error))?;
+    Ok((name, file_id))
+}
+
+fn write_and_swap(
+    path: &Path,
+    replacement: Replacement<'_>,
+    moved: Option<Value>,
+) -> Result<String, ChainError> {
+    const ACTION: &str = "open the new chain file";
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let (name, _) = keep_aside(path, "recovering-", ACTION, |to| options.open(to))?;
+    let staged = path.with_file_name(name);
+    let has_old = replacement.old.is_some();
+    let swapped = ChainWriter::open(&staged, replacement.log)
+        .map_err(|error| io_error(ACTION, error))
+        .and_then(|writer| {
+            let mut cursor = Cursor::empty();
+            cursor.verified = true;
+            let Replacement { link, reset, .. } = replacement;
+            writer.open_file_if_empty(&mut cursor, link, moved, reset)?;
+            let swap = || {
+                step("staged")?;
+                if has_old {
+                    std::fs::rename(&staged, path)
+                } else {
+                    rename_no_replace(&staged, path)
+                }
+            };
+            swap().map_err(|error| io_error(ACTION, error))?;
+            Ok(cursor.file_id.unwrap_or_default())
+        });
+    if swapped.is_err() {
+        let _ = std::fs::remove_file(&staged);
+    }
+    swapped
 }
 
 impl ChainWriter {
@@ -1022,7 +1153,8 @@ impl ChainWriter {
         #[cfg(unix)]
         std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
         let action = "quarantine the torn tail";
-        let (name, mut kept) = keep_aside(&self.path, "", action, |to| options.open(to))?;
+        let (name, mut kept) =
+            keep_aside(&self.path, "quarantine-", action, |to| options.open(to))?;
         kept.write_all(bytes)
             .and_then(|()| kept.sync_all())
             .map_err(|error| io_error(action, error))?;
@@ -1179,6 +1311,7 @@ pub struct MovedAside {
 /// file held stays, and the gap is recorded.
 pub fn move_aside(path: &Path, log: &str) -> Result<MovedAside, ChainError> {
     let _lock = lock(&lock_path_of(path))?;
+    chain_file_exists(path)?;
     let file = File::open(path).map_err(|error| io_error("open the chain", error))?;
     let mut scanner = Scanner::new(BufReader::new(file));
     let mut stopped = "end".to_owned();
@@ -1204,20 +1337,25 @@ pub fn move_aside(path: &Path, log: &str) -> Result<MovedAside, ChainError> {
         previous_head_seq: scanner.next_seq.saturating_sub(1),
         previous_head_digest: scanner.head.clone(),
     });
-    let moved_to = move_to_aside(path, "moved-", "move the chain aside")?;
-    let writer = ChainWriter::open(path, log).map_err(|error| io_error("open the chain", error))?;
-    let mut cursor = Cursor::empty();
-    cursor.verified = true;
-    writer.open_file_if_empty(
-        &mut cursor,
-        link.as_ref(),
-        Some(json!({"file": moved_to, "stopped": bounded(&stopped, MAX_FIELD_CHARS)})),
-        None,
+    // Closed before the file is replaced.
+    drop(scanner);
+    let (moved_to, file_id) = replace_file(
+        path,
+        Replacement {
+            log,
+            link: link.as_ref(),
+            reset: None,
+            old: Some((
+                "quarantine-moved-",
+                "move the chain aside",
+                bounded(&stopped, MAX_FIELD_CHARS).into_owned(),
+            )),
+        },
     )?;
     Ok(MovedAside {
-        moved_to,
+        moved_to: moved_to.unwrap_or_default(),
         link,
-        file_id: cursor.file_id.unwrap_or_default(),
+        file_id,
     })
 }
 
@@ -1238,30 +1376,23 @@ pub struct ResetOpened {
 /// `reset_by_owner`, never silently intact.
 pub fn open_after_reset(path: &Path, log: &str, reset: Value) -> Result<ResetOpened, ChainError> {
     let _lock = lock(&lock_path_of(path))?;
-    let moved_to = if path.exists() {
-        Some(move_to_aside(
-            path,
-            "reset-",
+    let old = chain_file_exists(path)?.then(|| {
+        (
+            "quarantine-reset-",
             "move the abandoned chain aside",
-        )?)
-    } else {
-        None
-    };
-    let writer = ChainWriter::open(path, log).map_err(|error| io_error("open the chain", error))?;
-    let mut cursor = Cursor::empty();
-    cursor.verified = true;
-    writer.open_file_if_empty(
-        &mut cursor,
-        None,
-        moved_to
-            .as_ref()
-            .map(|name| json!({"file": name, "stopped": "abandoned by an owner anchor reset"})),
-        Some(reset),
+            "abandoned by an owner anchor reset".to_owned(),
+        )
+    });
+    let (moved_to, file_id) = replace_file(
+        path,
+        Replacement {
+            log,
+            link: None,
+            reset: Some(reset),
+            old,
+        },
     )?;
-    Ok(ResetOpened {
-        moved_to,
-        file_id: cursor.file_id.unwrap_or_default(),
-    })
+    Ok(ResetOpened { moved_to, file_id })
 }
 
 /// Digests `event` and encodes it as one JSON line (without its line end).

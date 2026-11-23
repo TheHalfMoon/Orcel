@@ -3,9 +3,10 @@
 //! processes, torn-write recovery, size bounds, anchors and redaction.
 
 use crate::anchor::{AnchorOutcome, Anchorer, UNANCHORED_NOTE};
-use crate::chain::forced::Collisions;
+use crate::chain::forced::{Collisions, Fault};
 use crate::chain::{
-    move_aside, ChainError, ChainLink, ChainWriter, EventDraft, ASIDE_ATTEMPTS, MAX_EVENT_BYTES,
+    chain_file_exists, move_aside, ChainError, ChainLink, ChainWriter, EventDraft, ASIDE_ATTEMPTS,
+    MAX_EVENT_BYTES,
 };
 use crate::verify::{verify_file, verify_with_anchors, Verdict};
 use crate::{AuditLogger, ORCELD_LOG};
@@ -1604,6 +1605,187 @@ fn chain_a_failed_sync_keeps_what_the_writer_verified() -> TestResult {
     rewrite(&path, &whole)?;
     let appended = writer.append(draft(9)).map_err(|e| e.to_string())?;
     assert_eq!(appended.event.seq, 4);
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// The new files prepared beside the chain in `dir`.
+fn staged_files(dir: &Path) -> Result<usize, String> {
+    let mut count = 0;
+    for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
+        let name = entry.map_err(|e| e.to_string())?.file_name();
+        count += usize::from(name.to_string_lossy().contains(".recovering-"));
+    }
+    Ok(count)
+}
+
+/// Replacing a file that fails (a full disk, say) at any step before the
+/// swap leaves everything as it was.
+#[test]
+fn chain_a_failed_replacement_changes_nothing() -> TestResult {
+    for (what, run) in MOVERS {
+        for step in ["kept", "staged"] {
+            let dir = sandbox("replace-failed")?;
+            let path = dir.join("audit-chain.jsonl");
+            write(&path, 3)?;
+            let before = std::fs::read(&path).map_err(|e| e.to_string())?;
+            let fault = Fault::at(step, false);
+            assert!(matches!(run(&path), Err(ChainError::Io(_))), "{what}");
+            assert_eq!(std::fs::read(&path).map_err(|e| e.to_string())?, before);
+            assert_eq!(kept_files(&dir)?, Vec::<String>::new(), "{what} {step}");
+            assert_eq!(staged_files(&dir)?, 0, "{what} {step}");
+            drop(fault);
+            let (kept, _) = run(&path).map_err(|e| e.to_string())?;
+            assert_eq!(
+                std::fs::read(dir.join(kept)).map_err(|e| e.to_string())?,
+                before
+            );
+            assert_eq!(staged_files(&dir)?, 0);
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+    Ok(())
+}
+
+/// A crash at any step before the swap leaves the old file at the chain's
+/// path: a writer goes on with it, or still refuses it if it was broken,
+/// instead of opening an unlinked first file, and a second run succeeds.
+#[test]
+fn chain_a_crash_while_replacing_never_leaves_no_chain() -> TestResult {
+    for (what, run) in MOVERS {
+        for step in ["kept", "staged"] {
+            for broken in [false, true] {
+                let case = format!("{what} {step} {broken}");
+                let dir = sandbox("replace-crash")?;
+                let path = dir.join("audit-chain.jsonl");
+                write(&path, 3)?;
+                let mut all = lines(&path)?;
+                if broken {
+                    all[2] = all[2].replace("\"n\":1", "\"n\":8");
+                    rewrite(&path, &all)?;
+                }
+                let fault = Fault::at(step, true);
+                let crashed = std::panic::catch_unwind(|| run(&path));
+                assert!(crashed.is_err(), "{case}");
+                drop(fault);
+                assert_eq!(lines(&path)?, all, "{case}: the old file is in place");
+                assert_eq!(write(&path, 1).is_err(), broken, "{case}");
+                let now = lines(&path)?;
+                assert_eq!(now[0], all[0], "{case}: the same file");
+                let (kept, file_id) = run(&path).map_err(|e| e.to_string())?;
+                assert_eq!(lines(&dir.join(&kept))?, now, "{case}: all of it is kept");
+                let opening = events(&path)?.remove(0);
+                assert_eq!(opening.digest, file_id);
+                assert_eq!(opening.detail["moved_aside"]["file"], kept.as_str());
+                let linked = opening.detail["previous_file_id"] != "none";
+                assert_eq!(linked, what == "moved", "{case}");
+                write(&path, 1)?;
+                let verdict = verify_file(&path).map_err(|e| e.to_string())?.verdict;
+                let expected = match what {
+                    "reset" => Verdict::ResetByOwner,
+                    _ => Verdict::Intact,
+                };
+                assert_eq!(verdict, expected, "{case}");
+                let _ = std::fs::remove_dir_all(dir);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// With no old file, a reset's new one appears whole or not at all.
+#[test]
+fn chain_a_reset_without_an_old_file_opens_one_whole_or_not_at_all() -> TestResult {
+    let dir = sandbox("reset-fresh")?;
+    let path = dir.join("audit-chain.jsonl");
+    let reset = || {
+        crate::open_after_reset(&path, ORCELD_LOG, json!({"event_digest": "d".repeat(64)}))
+            .map_err(|e| e.to_string())
+    };
+    let fault = Fault::at("staged", false);
+    assert!(reset().is_err());
+    assert!(!path.exists());
+    assert_eq!(staged_files(&dir)?, 0);
+    drop(fault);
+    let fault = Fault::at("staged", true);
+    assert!(std::panic::catch_unwind(reset).is_err());
+    assert!(!path.exists());
+    drop(fault);
+    let opened = reset()?;
+    assert_eq!(opened.moved_to, None);
+    assert_eq!(events(&path)?.remove(0).digest, opened.file_id);
+    assert_eq!(kept_files(&dir)?, Vec::<String>::new());
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// A reader of the old file does not stop it being replaced, and reads on.
+#[test]
+fn chain_a_reader_of_the_old_file_does_not_stop_its_replacement() -> TestResult {
+    use std::io::Read as _;
+    for (what, run) in MOVERS {
+        let dir = sandbox("replace-read")?;
+        let path = dir.join("audit-chain.jsonl");
+        write(&path, 3)?;
+        let before = std::fs::read(&path).map_err(|e| e.to_string())?;
+        let mut reader = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+        run(&path).map_err(|error| format!("{what}: {error}"))?;
+        let mut read = Vec::new();
+        reader.read_to_end(&mut read).map_err(|e| e.to_string())?;
+        assert_eq!(read, before);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    Ok(())
+}
+
+/// Only a missing file is no chain file. Anything else at the path that is
+/// not a regular file is refused and left as it is.
+#[test]
+fn chain_only_a_regular_file_is_replaced() -> TestResult {
+    for (what, run) in MOVERS {
+        let dir = sandbox("replace-folder")?;
+        let path = dir.join("audit-chain.jsonl");
+        std::fs::create_dir(&path).map_err(|e| e.to_string())?;
+        let error = run(&path).err().ok_or("a directory is refused")?;
+        assert!(
+            error.to_string().contains("not a regular file"),
+            "{what}: {error}"
+        );
+        assert!(path.is_dir());
+        #[cfg(unix)]
+        for exists in [true, false] {
+            let dir = sandbox("replace-link")?;
+            let path = dir.join("audit-chain.jsonl");
+            let target = dir.join("elsewhere.jsonl");
+            if exists {
+                write(&target, 2)?;
+            }
+            let before = std::fs::read(&target).ok();
+            std::os::unix::fs::symlink(&target, &path).map_err(|e| e.to_string())?;
+            let error = run(&path).err().ok_or("a link is refused")?;
+            assert!(
+                error.to_string().contains("not a regular file"),
+                "{what} {exists}: {error}"
+            );
+            assert_eq!(
+                std::fs::read_link(&path).map_err(|e| e.to_string())?,
+                target
+            );
+            assert_eq!(std::fs::read(&target).ok(), before);
+            assert_eq!(kept_files(&dir)?, Vec::<String>::new());
+            assert_eq!(staged_files(&dir)?, 0);
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        assert_eq!(kept_files(&dir)?, Vec::<String>::new());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    let dir = sandbox("inspect")?;
+    assert_eq!(chain_file_exists(&dir.join("none")), Ok(false));
+    std::fs::write(dir.join("file"), b"x").map_err(|e| e.to_string())?;
+    assert_eq!(chain_file_exists(&dir.join("file")), Ok(true));
+    // A path that cannot be inspected is not a missing file.
+    #[cfg(unix)]
+    assert!(chain_file_exists(&dir.join("file").join("chain")).is_err());
     let _ = std::fs::remove_dir_all(dir);
     Ok(())
 }
