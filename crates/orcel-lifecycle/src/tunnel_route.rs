@@ -152,12 +152,63 @@ pub fn connections_revoked_by_setup(
     }
 }
 
+/// Why a connection's revoke is not known to have happened.
+#[derive(Debug)]
+pub enum RevokeFailure {
+    /// orceld answered that it did not revoke.
+    Refused(LifecycleError),
+    /// No answer, an unreadable one, or an internal error: the revoke may or
+    /// may not have happened.
+    Unconfirmed(LifecycleError),
+}
+
+impl RevokeFailure {
+    fn error(&self) -> &LifecycleError {
+        match self {
+            Self::Refused(error) | Self::Unconfirmed(error) => error,
+        }
+    }
+}
+
+/// orceld's answer to a `remote.lease.revoke`, as a revoke reads it. Only a
+/// typed refusal other than an internal error says that nothing was revoked.
+/// Everything else that is not a count is unconfirmed.
+pub fn revoke_reply(response: Result<Value, LifecycleError>) -> Result<u64, RevokeFailure> {
+    let response = response.map_err(RevokeFailure::Unconfirmed)?;
+    if response.get("ok").and_then(Value::as_bool) == Some(true) {
+        return response
+            .pointer("/result/revoked")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                RevokeFailure::Unconfirmed(LifecycleError::state(
+                    "orceld did not say how many leases it revoked",
+                ))
+            });
+    }
+    let code = response.pointer("/error/code").and_then(Value::as_str);
+    let error = LifecycleError::state(format!(
+        "orceld {}: {}",
+        code.unwrap_or("UNKNOWN"),
+        response
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or("unspecified failure")
+    ));
+    let refused = response.get("ok").and_then(Value::as_bool) == Some(false)
+        && code.is_some_and(|code| code != "INTERNAL_ERROR");
+    Err(if refused {
+        RevokeFailure::Refused(error)
+    } else {
+        RevokeFailure::Unconfirmed(error)
+    })
+}
+
 /// What revoking a tunnel's connections did: how many leases each one's
 /// revoke ended, and which revokes failed.
 #[derive(Debug, Default)]
 pub struct RevokeReport {
     pub ended: Vec<(TunnelConnection, u64)>,
-    pub failed: Vec<(TunnelConnection, LifecycleError)>,
+    pub failed: Vec<(TunnelConnection, RevokeFailure)>,
 }
 
 impl RevokeReport {
@@ -166,7 +217,7 @@ impl RevokeReport {
         self.ended.iter().map(|(_, count)| count).sum()
     }
 
-    /// The connection ids whose revoke failed.
+    /// The connection ids whose revoke failed or is unconfirmed.
     pub fn failed_ids(&self) -> Vec<&str> {
         self.failed
             .iter()
@@ -174,8 +225,11 @@ impl RevokeReport {
             .collect()
     }
 
-    /// Exactly what ended and what may still be active, one sentence each.
+    /// Exactly what ended, what did not and what is not known, one sentence
+    /// each.
     pub fn describe(&self) -> String {
+        const EXPIRY: &str =
+            "may still be active until it expires (at most 15 minutes after it was allowed).";
         let mut out = Vec::new();
         for (connection, count) in &self.ended {
             out.push(format!(
@@ -183,10 +237,16 @@ impl RevokeReport {
                 connection.connection_id, connection.profile
             ));
         }
-        for (connection, error) in &self.failed {
+        for (connection, failure) in &self.failed {
+            let what = match failure {
+                RevokeFailure::Refused(error) => format!("NOT revoked ({})", error.message),
+                RevokeFailure::Unconfirmed(error) => {
+                    format!("could not be confirmed as revoked ({})", error.message)
+                }
+            };
             out.push(format!(
-                "{} ({}): NOT revoked ({}); a lease on it may still be active until it expires (at most 15 minutes after it was allowed).",
-                connection.connection_id, connection.profile, error.message
+                "{} ({}): {what}; a lease on it {EXPIRY}",
+                connection.connection_id, connection.profile
             ));
         }
         out.join(" ")
@@ -197,7 +257,7 @@ impl RevokeReport {
         match self.failed.first() {
             None => Ok(()),
             Some((_, first)) => Err(LifecycleError::new(
-                first.kind,
+                first.error().kind,
                 format!(
                     "{} Run `orcel tunnel revoke` again, or `orcel remote revoke` to end every remote session lease.",
                     self.describe()
@@ -211,16 +271,46 @@ impl RevokeReport {
 /// revoked). A failure does not stop the rest.
 pub fn revoke_each(
     connections: &[TunnelConnection],
-    mut revoke: impl FnMut(&str) -> Result<u64, LifecycleError>,
+    mut revoke: impl FnMut(&str) -> Result<u64, RevokeFailure>,
 ) -> RevokeReport {
     let mut report = RevokeReport::default();
     for connection in connections {
         match revoke(&connection.connection_id) {
             Ok(count) => report.ended.push((connection.clone(), count)),
-            Err(error) => report.failed.push((connection.clone(), error)),
+            Err(failure) => report.failed.push((connection.clone(), failure)),
         }
     }
     report
+}
+
+/// SG-000135 OB-09: what a failed `orcel tunnel setup` says: whether the
+/// previous setup is in place (`restored`), and what happened to the previous
+/// route's leases. It never says both "kept" and "not restored".
+pub fn setup_failure(
+    error: LifecycleError,
+    report: &RevokeReport,
+    restored: bool,
+) -> LifecycleError {
+    let kind = if restored {
+        error.kind
+    } else {
+        crate::ErrorKind::State
+    };
+    let state = if restored {
+        "the key and configuration are as they were before"
+    } else {
+        "the previous key or configuration could not be fully restored; rerun `orcel tunnel setup`"
+    };
+    let leases = if report.failed.is_empty() && !report.ended.is_empty() {
+        // A failed revoke's own error already says this.
+        format!("; the previous route's leases: {}", report.describe())
+    } else {
+        String::new()
+    };
+    LifecycleError::new(
+        kind,
+        format!("tunnel setup failed: {} ({state}{leases})", error.message),
+    )
 }
 
 /// SG-000135 OB-09: change a tunnel's route. The old route's leases are
@@ -233,7 +323,7 @@ pub fn revoke_each(
 /// the same Windows Hello approval) is not ordered by that lock.
 pub fn change_route(
     replaced: &[TunnelConnection],
-    revoke: impl FnMut(&str) -> Result<u64, LifecycleError>,
+    revoke: impl FnMut(&str) -> Result<u64, RevokeFailure>,
     save: impl FnOnce() -> Result<(), LifecycleError>,
 ) -> (RevokeReport, Result<(), LifecycleError>) {
     let report = revoke_each(replaced, revoke);
@@ -436,7 +526,7 @@ mod tests {
             let report = revoke_each(&connections, |_| {
                 calls += 1;
                 if calls - 1 == bad {
-                    Err(LifecycleError::state("orceld did not answer"))
+                    Err(RevokeFailure::Refused(LifecycleError::state("said no")))
                 } else {
                     Ok(1)
                 }
@@ -454,10 +544,7 @@ mod tests {
                     .is_some_and(|rest| rest.split('.').next().unwrap_or("").contains(what))
             };
             assert!(says(ended, "1 lease(s) ended"), "{message}");
-            assert!(
-                says(live, "NOT revoked (orceld did not answer)"),
-                "{message}"
-            );
+            assert!(says(live, "NOT revoked (said no)"), "{message}");
             assert!(message.contains("may still be active"), "{message}");
         }
     }
@@ -582,7 +669,7 @@ mod tests {
             |_| {
                 *calls.borrow_mut() += 1;
                 if *calls.borrow() == 1 {
-                    Err(LifecycleError::state("no answer"))
+                    Err(RevokeFailure::Refused(LifecycleError::state("said no")))
                 } else {
                     Ok(0)
                 }
@@ -597,6 +684,90 @@ mod tests {
             change_route(&replaced, |_| Ok(1), || Err(LifecycleError::state("disk")));
         assert_eq!(report.revoked(), 2);
         assert_eq!(result.unwrap_err().message, "disk");
+    }
+
+    /// SG-000135 OB-09: a revoke with no answer, an unreadable one or an
+    /// internal error is reported as not confirmed, never as refused and
+    /// never as done; a typed refusal is reported as not revoked.
+    #[test]
+    fn ob09_an_unconfirmed_revoke_is_never_called_refused_or_done() {
+        let text = |reply: Result<Value, LifecycleError>| {
+            let mut reply = Some(reply);
+            let one = &all_connections(TUNNEL)[..1];
+            let report = revoke_each(one, |_| match reply.take() {
+                Some(reply) => revoke_reply(reply),
+                None => Ok(0),
+            });
+            (report.describe(), report.check().is_ok())
+        };
+        let timeout = || LifecycleError::state("orceld did not respond within the time limit");
+        let unreadable = || LifecycleError::state("orceld response is not JSON: expected value");
+        for reply in [
+            Err(timeout()),
+            Err(unreadable()),
+            Ok(json!({})),
+            Ok(json!({"ok": true, "result": {}})),
+            Ok(json!({"ok": false})),
+            Ok(json!({"error": {"code": "CAPABILITY_DENIED"}})),
+            Ok(json!({"ok": false, "error": {"code": "INTERNAL_ERROR", "message": "replace"}})),
+        ] {
+            let shown = format!("{reply:?}");
+            let (said, ok) = text(reply);
+            assert!(!ok, "{shown}");
+            assert!(
+                said.contains("could not be confirmed as revoked"),
+                "{shown}: {said}"
+            );
+            assert!(said.contains("may still be active"), "{said}");
+            assert!(
+                !said.contains("NOT revoked") && !said.contains("ended."),
+                "{said}"
+            );
+        }
+        let (said, ok) = text(Ok(
+            json!({"ok": false, "error": {"code": "POLICY_DENIED", "message": "no"}}),
+        ));
+        assert!(!ok && said.contains("NOT revoked (orceld POLICY_DENIED: no)"));
+        assert!(!said.contains("could not be confirmed"));
+        let (said, ok) = text(Ok(json!({"ok": true, "result": {"revoked": 2}})));
+        assert!(ok && said.contains("2 lease(s) ended."));
+    }
+
+    /// SG-000135 OB-09: a failed setup says once whether the previous setup
+    /// is in place and what happened to its leases.
+    #[test]
+    fn ob09_a_setup_failure_says_what_was_kept_and_never_contradicts_itself() {
+        let connections = all_connections(TUNNEL);
+        let ended = revoke_each(&connections, |_| Ok(1));
+        let failed = revoke_each(&connections, |_| {
+            Err(RevokeFailure::Unconfirmed(LifecycleError::state("timeout")))
+        });
+        let none = RevokeReport::default();
+        for (report, error) in [
+            (&ended, LifecycleError::state("disk")),
+            (&failed, failed.check().unwrap_err()),
+            (&none, LifecycleError::state("disk")),
+        ] {
+            for restored in [true, false] {
+                let said = setup_failure(error.clone(), report, restored).message;
+                assert_eq!(said.contains("as they were before"), restored, "{said}");
+                assert_eq!(
+                    said.contains("could not be fully restored"),
+                    !restored,
+                    "{said}"
+                );
+                assert!(!said.contains("was not changed"), "{said}");
+                for connection in report
+                    .ended
+                    .iter()
+                    .map(|(connection, _)| connection)
+                    .chain(report.failed.iter().map(|(connection, _)| connection))
+                {
+                    let id = &connection.connection_id;
+                    assert_eq!(said.matches(id.as_str()).count(), 1, "{said}");
+                }
+            }
+        }
     }
 
     /// SG-000135 OB-09: a `browser_full` tunnel route is a valid remote

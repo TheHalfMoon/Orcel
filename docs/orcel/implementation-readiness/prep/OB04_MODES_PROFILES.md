@@ -1,6 +1,6 @@
 # OB-04: Shadow and Visible modes, persistent Orcel-managed profiles
 
-**Status: implemented on `browser/ob04-modes-profiles` (SG-000135 work packet OB-04), stacked on OB-03 (PR #806). Not merged. Scripted-consent evidence only; the founder-present run has not happened.**
+**Status: merged as #807 (28eb65c4) (SG-000135 work packet OB-04), after OB-03 (#806, 4cbed338). Scripted-consent evidence only; the founder-present run has not happened.**
 
 Grain: SG-000135 (PR #801). OB-04 owns acceptance SH-1, SH-2, SH-8, FA-F, FA-H, the Shadow half of FA-E and the modes part of FX-6. What this branch proves, and what it does not, is listed at the end.
 

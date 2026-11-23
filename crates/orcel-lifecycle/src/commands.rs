@@ -264,7 +264,8 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
             drop(key);
             let platform = host_platform();
             // The old route is revoked before the new one is saved: a crash
-            // in between leaves the saved setup naming the old id.
+            // in between leaves the saved setup naming the old id. The runtime
+            // key above is already the new one then; a rerun fixes that.
             let mut report = orcel_lifecycle::tunnel_route::RevokeReport::default();
             let committed = config::tunnel_config(&layout, &config, &version).and_then(|_| {
                 let (ended, result) = orcel_lifecycle::tunnel_route::change_route(
@@ -278,22 +279,8 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
                 report = ended;
                 result
             });
-            let committed = committed.map(|()| report.revoked()).map_err(|error| {
-                let message = if !report.failed.is_empty() {
-                    format!("the tunnel setup was not changed: {}", error.message)
-                } else if !report.ended.is_empty() {
-                    format!(
-                        "{} (the previous route's leases were already ended: {})",
-                        error.message,
-                        report.describe()
-                    )
-                } else {
-                    return error;
-                };
-                LifecycleError::new(error.kind, message)
-            });
             let revoked = match committed {
-                Ok(revoked) => revoked,
+                Ok(()) => report.revoked(),
                 Err(error) => {
                     let restored_key = match previous_key {
                         Some(bytes) => orcel_lifecycle::layout::write_bytes_atomic(
@@ -308,13 +295,11 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
                             .map_err(|error| LifecycleError::io("remove new runtime key", error)),
                     };
                     let restored_config = previous.save(&layout);
-                    return Err(match (restored_key, restored_config) {
-                        (Ok(()), Ok(())) => error,
-                        _ => LifecycleError::state(format!(
-                            "tunnel setup failed ({}) and the previous key or configuration could not be fully restored; rerun `orcel tunnel setup`",
-                            error.message
-                        )),
-                    });
+                    return Err(orcel_lifecycle::tunnel_route::setup_failure(
+                        error,
+                        &report,
+                        restored_key.is_ok() && restored_config.is_ok(),
+                    ));
                 }
             };
             let mut human = format!(
@@ -438,7 +423,7 @@ fn revoke_connection(
     config: &Config,
     version: &str,
     connection: &str,
-) -> Result<u64, LifecycleError> {
+) -> Result<u64, orcel_lifecycle::tunnel_route::RevokeFailure> {
     let workspace = config.default_workspace().unwrap_or("default").to_string();
     let orceld = layout.version_dir(version).join(per_os::orceld_file_name());
     let request = ipc::request(
@@ -447,11 +432,12 @@ fn revoke_connection(
         "revoke",
         json!({ "remote_connection_id": connection }),
     );
-    let response = ipc::call(&orceld, config, &request, Duration::from_secs(30))?;
-    ipc::expect_ok(&response)?
-        .get("revoked")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| LifecycleError::state("orceld did not say how many leases it revoked"))
+    orcel_lifecycle::tunnel_route::revoke_reply(ipc::call(
+        &orceld,
+        config,
+        &request,
+        Duration::from_secs(30),
+    ))
 }
 
 /// The configured tunnel's id and the one profile it serves.

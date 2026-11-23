@@ -92,7 +92,8 @@ Dependencies:
   Full Access lease covers a remote caller, from any store. Which remote actions raise a dialog, and which raise none
   (FOUNDER DECISION 2026-11-23, "Leave as it is"), is in [`OB09_REMOTE_BROWSER_FULL.md`](OB09_REMOTE_BROWSER_FULL.md) section 1. Engineering wrongly recorded coverage by a service-issued, client-bound lease as founder-delegated on
   2026-11-22 (#836 to #845), and #836 had relaxed OB-09's dependency on the SG-000132 grant window, narrow default scope
-  and Event Log scope record being QUALIFIED; the dependency is restored as first written (OB-09's code, #836 and
+  and Event Log scope record being QUALIFIED; the dependency is restored as first written, without the
+  SG-000055 alternative clause it carried from a1ea7957 until #836 (void with the coverage) (OB-09's code, #836 and
   #838, merged ahead of it) and the coverage is removed. The remote session must still hold the existing SG-000055 STRONG remote-session lease.
 - **Spec section 4.15.** It says a standing approval never covers remote callers. This grain had derived a lift of
   that rule for the remote `browser_full` profile (from the founder's chat directive and the

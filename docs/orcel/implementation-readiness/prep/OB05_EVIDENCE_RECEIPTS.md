@@ -1,6 +1,6 @@
 # OB-05: evidence receipts on the audit chain
 
-**Status: implemented on `browser/ob05-receipts` (SG-000135 work packet OB-05, acceptance FA-J). Not merged. The independent security review of de1deb42 passed with findings; section 11 lists each and its fix. Unit tests only; no live browser run has been made with this code, and the founder-present run has not happened.**
+**Status: merged as #818 (028bca74) (SG-000135 work packet OB-05, acceptance FA-J). The independent security review of de1deb42 passed with findings; section 11 lists each and its fix. Unit tests only; no live browser run has been made with this code, and the founder-present run has not happened.**
 
 Founder requirement J: measured performance, no fake completion, fully clear receipts. The grain's FA-J: measured latency and memory per session are recorded, and receipts state what completed, what is uncertain and what needs the person.
 
