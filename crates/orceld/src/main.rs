@@ -181,7 +181,11 @@ fn dispatch(
                 "id": configured.id,
                 "root": configured.root,
                 "policy_revision": POLICY_REVISION,
-                "mode": "approved_write_bounded_process_read_only_git"
+                "mode": if orcel_provider_git::confinement::require().is_ok() {
+                    "approved_write_bounded_process_read_only_git"
+                } else {
+                    "approved_write_bounded_process"
+                }
             }))
         }
         ("fs.stat", "stat") => fs_provider(workspace)?.stat(target(request)?),

@@ -10,3 +10,8 @@ rust-version.workspace = true
 orcel-contracts = { path = "../orcel-contracts" }
 orcel-platform = { path = "../orcel-platform" }
 serde_json.workspace = true
+
+[dev-dependencies]
+# Only tests link it, so a build that is not this crate's own tests does not
+# compile with `--cfg test` (src/confinement.rs).
+serde.workspace = true

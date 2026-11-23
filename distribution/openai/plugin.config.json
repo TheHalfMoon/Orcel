@@ -2,9 +2,9 @@
   "schema": "orcel-openai-plugin-config/1",
   "name": "orcel",
   "displayName": "Orcel",
-  "description": "Reach your own computer from ChatGPT through Orcel's local security kernel: bounded workspace files, local Git, and registered build tools, with every change approved on your machine.",
+  "description": "Reach your own computer from ChatGPT through Orcel's local security kernel: bounded workspace files and registered build tools, with every change approved on your machine.",
   "shortDescription": "Bounded, locally approved access to your own computer.",
-  "longDescription": "Orcel connects ChatGPT to one computer you paired yourself. Requests travel through your Orcel relay to the local compatibility daemon on that computer, which checks workspace trust, a time-limited remote-session lease that you started locally, and the tool's limits before anything happens. Reads stay inside workspaces you trusted. Every file change, Git change, and program run asks for approval on your computer; ChatGPT can never approve on your behalf. There is no shell, no unrestricted file system, no desktop control, and no clipboard or desktop access from remote clients.",
+  "longDescription": "Orcel connects ChatGPT to one computer you paired yourself. Requests travel through your Orcel relay to the local compatibility daemon on that computer, which checks workspace trust, a time-limited remote-session lease that you started locally, and the tool's limits before anything happens. Reads stay inside workspaces you trusted. Every file change and program run asks for approval on your computer; ChatGPT can never approve on your behalf. There is no shell, no unrestricted file system, no desktop control, and no clipboard or desktop access from remote clients.",
   "developerName": "TheHalfMoon",
   "category": "Productivity",
   "capabilities": ["Read", "Write"],
@@ -12,7 +12,7 @@
   "homepage": "https://github.com/TheHalfMoon/Orcel",
   "repository": "https://github.com/TheHalfMoon/Orcel",
   "license": "Apache-2.0",
-  "keywords": ["computer access", "local approval", "workspace", "git", "mcp"],
+  "keywords": ["computer access", "local approval", "workspace", "mcp"],
   "websiteURL": "https://github.com/TheHalfMoon/Orcel",
   "supportURL": "https://github.com/TheHalfMoon/Orcel/issues",
   "privacyPolicyURL": "https://github.com/TheHalfMoon/Orcel/blob/main/docs/legal/PRIVACY.md",
@@ -21,7 +21,7 @@
   "brandColor": "#090C12",
   "defaultPrompt": [
     "List the files in my project workspace.",
-    "Show me the uncommitted Git changes in my repository.",
+    "Show me the first 40 lines of README.md in my workspace.",
     "Find every TODO in the src folder."
   ],
   "mcpServerName": "orcel"

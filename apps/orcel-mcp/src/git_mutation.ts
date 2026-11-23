@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
+import { GIT_OFF } from "./git_off.js";
 import { KernelClient } from "./kernel.js";
 import { projectKernelResult } from "./result.js";
 
@@ -75,6 +76,7 @@ export function registerGitMutationTools(
     "git_branch_create",
     {
       description:
+        GIT_OFF +
         "Create and switch to one new local Git branch rooted at an exact expected HEAD after fresh local Orcel approval. Existing branches and network Git operations are not exposed.",
       inputSchema: gitBranchCreateSchema(defaultWorkspace)
     },
@@ -92,6 +94,7 @@ export function registerGitMutationTools(
     "git_stage",
     {
       description:
+        GIT_OFF +
         "Stage only the listed literal repository-relative files after fresh local Orcel approval and exact HEAD/state revalidation.",
       inputSchema: gitStageSchema(defaultWorkspace)
     },
@@ -109,6 +112,7 @@ export function registerGitMutationTools(
     "git_unstage",
     {
       description:
+        GIT_OFF +
         "Unstage only the listed literal repository-relative files after fresh local Orcel approval and exact HEAD/index-state revalidation.",
       inputSchema: gitUnstageSchema(defaultWorkspace)
     },
@@ -126,6 +130,7 @@ export function registerGitMutationTools(
     "git_commit",
     {
       description:
+        GIT_OFF +
         "Create exactly one non-amending unsigned local Git commit from the exact approved staged state. Requires repository-local author identity and fresh local Orcel approval.",
       inputSchema: gitCommitSchema(defaultWorkspace)
     },

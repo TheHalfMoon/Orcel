@@ -91,9 +91,9 @@ namespaces. Unit tests in `linux.rs` keep them in the unit.
 
 | Directive | Why |
 | --- | --- |
-| `NoNewPrivileges=yes` | Neither `orceld` nor anything it starts (git, registered executables) can gain privileges through setuid, setgid or file capabilities. |
+| `NoNewPrivileges=yes` | Neither `orceld` nor anything it starts (registered executables) can gain privileges through setuid, setgid or file capabilities. |
 | `RestrictSUIDSGID=yes` | `orceld` and its children cannot create setuid or setgid files. |
-| `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6` | `AF_UNIX` is needed for journald, D-Bus (polkit approvals, XP-10) and ssh-agent. `AF_INET` and `AF_INET6` are needed for outbound git fetch and push and for the network provider. Netlink, packet, Bluetooth and every other family are refused. `orceld` never calls `bind` or `listen`. |
+| `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6` | `AF_UNIX` is needed for journald, D-Bus (polkit approvals, XP-10) and ssh-agent. `AF_INET` and `AF_INET6` are needed for the network provider (and for Git, which is off until it runs confined). Netlink, packet, Bluetooth and every other family are refused. `orceld` never calls `bind` or `listen`. |
 | `RestrictNamespaces=yes` | Namespace creation, a common step in sandbox escapes, is refused for `orceld` and its children. |
 | `RestrictRealtime=yes` | Realtime scheduling is refused, so a runaway child cannot starve the desktop. |
 | `LockPersonality=yes` | The execution domain is locked, which blocks `personality(2)` tricks such as `READ_IMPLIES_EXEC`. |

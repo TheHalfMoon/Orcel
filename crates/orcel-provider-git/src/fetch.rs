@@ -858,6 +858,7 @@ impl GitProvider {
         use std::thread;
         use std::time::{Duration, Instant};
 
+        crate::confinement::require()?;
         // Review of #824: the configuration gate before Git runs.
         crate::repo_config::check_repository(&self.workspace_root, repo)?;
         let neutral = crate::neutralizing_args(repo)?;

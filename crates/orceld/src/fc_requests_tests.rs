@@ -112,6 +112,14 @@ fn every_op() -> Vec<WorkerOp> {
     ]
 }
 
+/// The operations that run: Git is off until it runs confined.
+fn ops_that_run() -> Vec<WorkerOp> {
+    every_op()
+        .into_iter()
+        .filter(|op| op.family() != Family::Git)
+        .collect()
+}
+
 fn capability_of(op: &WorkerOp) -> &'static str {
     match op.family() {
         Family::Filesystem => FS_CAPABILITY,
@@ -442,7 +450,12 @@ fn fc_requests_without_a_lease_every_tool_refuses_lease_required() {
                 false,
                 5
             )),
-            Some(FailureCode::LeaseRequired),
+            // Git is off, which is answered before the lease is looked for.
+            Some(if op.family() == Family::Git {
+                FailureCode::ProviderUnavailable
+            } else {
+                FailureCode::LeaseRequired
+            }),
             "{op:?}"
         );
     }
@@ -464,10 +477,16 @@ fn fc_requests_without_a_lease_every_tool_refuses_lease_required() {
             false,
             5,
         );
-        if op.family() == Family::Filesystem {
-            result.expect("files are covered");
-        } else {
-            assert_eq!(code(result), Some(FailureCode::LeaseRequired), "{op:?}");
+        match op.family() {
+            Family::Filesystem => {
+                result.expect("files are covered");
+            }
+            Family::Git => assert_eq!(
+                code(result),
+                Some(FailureCode::ProviderUnavailable),
+                "{op:?}"
+            ),
+            _ => assert_eq!(code(result), Some(FailureCode::LeaseRequired), "{op:?}"),
         }
     }
     // The person is never asked without a covering lease.
@@ -495,7 +514,7 @@ fn fc_requests_the_principal_is_the_calling_clients_reference() {
     let port = FakePort::installed(vec![lease('1', full_scope())]);
     let launched = launcher(&port);
     let approval = FakeApproval::default();
-    for op in every_op() {
+    for op in ops_that_run() {
         dispatch(&port, &launched, &approval, &fc_request(&op), false, 5).expect("bound client");
     }
     for (_, _, claims) in &port.0.borrow().authorized {
@@ -547,23 +566,119 @@ fn fc_requests_file_writes_are_lease_covered_and_ask_nothing() {
     assert_eq!(launched.runs.get(), 2);
 }
 
-/// SG-000096 A3: a program run and every git change ask a fresh approval
-/// on every call, bound to the digest the service records; reads ask
-/// nothing.
+/// Founder decision of 2026-11-23: Git is off until it runs confined. Every
+/// git operation is refused before the service is asked for anything, the
+/// person is asked or a worker starts.
 #[test]
-fn fc_requests_process_and_git_mutations_ask_every_call() {
+fn fc_requests_git_is_refused_before_the_lease_the_prompt_and_the_worker() {
     let port = FakePort::installed(vec![lease('1', full_scope())]);
     let launched = launcher(&port);
     let approval = FakeApproval::default();
-    let asking = [
-        "run",
-        "git_add",
-        "git_unstage",
-        "git_commit",
-        "git_branch_create",
-    ];
+    let git: Vec<WorkerOp> = every_op()
+        .into_iter()
+        .filter(|op| op.family() == Family::Git)
+        .collect();
+    assert_eq!(git.len(), 7);
+    for op in &git {
+        let refused =
+            dispatch(&port, &launched, &approval, &fc_request(op), false, 5).expect_err("off");
+        assert_eq!(refused.code, FailureCode::ProviderUnavailable, "{op:?}");
+        assert_eq!(
+            refused.message,
+            orcel_provider_git::confinement::OFF_MESSAGE
+        );
+    }
+    let service = port.0.borrow();
+    assert!(service.calls.is_empty(), "{:?}", service.calls);
+    assert!(service.authorized.is_empty());
+    assert!(service.outcomes.is_empty());
+    assert!(approval.asked.borrow().is_empty());
+    assert_eq!(launched.runs.get(), 0);
+}
+
+/// The same through orceld's entry, for the Safe `git.*` requests too, local
+/// and remote: a remote one without any lease is told Git is off, so no
+/// remote-session lease is looked for either.
+#[test]
+fn fc_requests_the_entry_refuses_every_git_request_and_asks_nothing() {
+    let (policy, audit, root) = entry_fixture();
+    let workspaces = crate::remote_lease::WorkspaceSet::from_pairs(&[]);
+    let mut requests: Vec<(RequestEnvelope, bool)> = [
+        ("git.status", "status"),
+        ("git.diff", "diff"),
+        ("git.log", "log"),
+        ("git.branch.create", "create"),
+        ("git.stage", "stage"),
+        ("git.unstage", "unstage"),
+        ("git.commit", "commit"),
+        ("git.fetch.preview", "preview"),
+        ("git.fetch", "fetch"),
+        ("git.push.preview", "preview"),
+        ("git.push", "push"),
+    ]
+    .into_iter()
+    .map(|(capability, operation)| (request(capability, operation, json!({})), true))
+    .collect();
+    requests.extend(
+        every_op()
+            .iter()
+            .filter(|op| op.family() == Family::Git)
+            .map(|op| (fc_request(op), false)),
+    );
+    for (request, reaches_remote_callers) in requests {
+        let mut remotes = vec![None];
+        if reaches_remote_callers {
+            remotes.push(Some(remote_context()));
+        }
+        for remote in remotes {
+            let response = crate::handle_envelope(
+                &policy,
+                &audit,
+                &NeverAsked,
+                &workspaces,
+                RemoteRequestEnvelope {
+                    request: request.clone(),
+                    remote,
+                    profile: None,
+                },
+            );
+            let error = response.error.expect("refused");
+            assert_eq!(
+                (error.code, error.message.as_str()),
+                (
+                    FailureCode::ProviderUnavailable,
+                    orcel_provider_git::confinement::OFF_MESSAGE
+                ),
+                "{}/{}",
+                request.capability,
+                request.operation
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// SG-000096 A3: a program run asks a fresh approval on every call, bound to
+/// the digest the service records; reads ask nothing. Git changes ask too
+/// when Git is on; while it is off they ask nothing and run nothing.
+#[test]
+fn fc_requests_process_runs_ask_every_call() {
+    let port = FakePort::installed(vec![lease('1', full_scope())]);
+    let launched = launcher(&port);
+    let approval = FakeApproval::default();
+    for op in every_op() {
+        let asks_when_on = [
+            "run",
+            "git_add",
+            "git_unstage",
+            "git_commit",
+            "git_branch_create",
+        ];
+        assert_eq!(op.needs_approval(), asks_when_on.contains(&op.name()));
+    }
+    let asking = ["run"];
     for round in 0..2u64 {
-        for op in every_op() {
+        for op in ops_that_run() {
             let before = approval.asked.borrow().len();
             dispatch(
                 &port,
@@ -576,7 +691,6 @@ fn fc_requests_process_and_git_mutations_ask_every_call() {
             .expect("ran");
             let asked = approval.asked.borrow().len() - before;
             assert_eq!(asked, usize::from(asking.contains(&op.name())), "{op:?}");
-            assert_eq!(op.needs_approval(), asking.contains(&op.name()));
         }
     }
     let asked = approval.asked.borrow();
@@ -666,7 +780,8 @@ fn fc_requests_status_shows_the_lease_scope_and_grants_nothing() {
     assert_eq!(own["bound_to_this_client"], json!(true));
     assert_eq!(
         own["usable_capabilities"],
-        json!([FS_CAPABILITY, PROCESS_CAPABILITY, GIT_CAPABILITY])
+        json!([FS_CAPABILITY, PROCESS_CAPABILITY]),
+        "Git is off, so fc.git is not usable"
     );
     // An unbound lease admits this client for desktop input only.
     let unbound = &leases[1];
@@ -969,9 +1084,15 @@ fn fc_requests_bad_arguments_are_refused_before_the_prompt() {
     assert!(approval.asked.borrow().is_empty(), "no prompt was shown");
     assert!(port.0.borrow().authorized.is_empty());
     assert_eq!(launched.runs.get(), 0);
-    // Every sample request passes the same checks.
+    // Every sample request passes the same checks; a git one is then refused
+    // because Git is off.
     for op in every_op() {
-        op.check_arguments().expect("valid sample");
+        op.check_bounds().expect("valid sample");
+        assert_eq!(
+            op.check_arguments().err().map(|error| error.code),
+            (op.family() == Family::Git).then_some(FailureCode::ProviderUnavailable),
+            "{op:?}"
+        );
     }
 }
 

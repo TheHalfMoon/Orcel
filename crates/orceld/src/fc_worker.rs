@@ -176,8 +176,19 @@ impl WorkerOp {
     /// before the person is asked, so a malformed request never costs a
     /// prompt (`INVALID_REQUEST`; an oversized write is `OUTPUT_LIMIT`, as
     /// in the worker). Paths are checked by the dispatcher and the worker;
-    /// nothing here reads the disk.
+    /// nothing here reads the disk. Then, founder decision of 2026-11-23:
+    /// Git is off until it runs confined, so a git operation is refused
+    /// here, before a lease is used or the person is asked.
     pub(crate) fn check_arguments(&self) -> Result<(), ProviderError> {
+        self.check_bounds()?;
+        if self.family() == Family::Git {
+            orcel_provider_git::confinement::require().map_err(exec::git_error)?;
+        }
+        Ok(())
+    }
+
+    /// [`WorkerOp::check_arguments`]' bounds alone.
+    pub(crate) fn check_bounds(&self) -> Result<(), ProviderError> {
         match self {
             Self::Stat { .. } | Self::Mkdir { .. } => Ok(()),
             Self::List { max_entries, .. } => {

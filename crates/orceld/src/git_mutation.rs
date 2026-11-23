@@ -106,7 +106,9 @@ fn message_sha256(message: &str) -> String {
 }
 
 /// How an exited orceld's dispatched branch creation or commit turned
-/// out, read from the repository's refs only. Any read failure is unknown.
+/// out, read from the repository's refs only. Any read failure is unknown;
+/// so is everything while Git is off (`orcel_provider_git::confinement`),
+/// and an unknown outcome is never retried.
 pub(crate) fn reconcile(
     root: &Path,
     repository: &str,
@@ -455,60 +457,89 @@ mod tests {
         }
     }
 
-    #[test]
-    fn denied_approval_preserves_git_state() {
-        struct Deny;
-        impl ApprovalBroker for Deny {
-            fn request_token(
-                &self,
-                _prompt: &ApprovalPrompt,
-            ) -> Result<orcel_approval::ApprovedToken, orcel_approval::ApprovalError> {
-                Err(orcel_approval::ApprovalError {
-                    code: FailureCode::ApprovalDenied,
-                    message: "local user denied Git mutation".into(),
-                })
-            }
+    /// Asking answers `APPROVAL_DENIED`, which no test here expects.
+    struct NeverAsked;
 
-            fn consume(
-                &self,
-                _token: &orcel_approval::ApprovedToken,
-                _expected: &ConsumeExpectation,
-                _now_ms: u64,
-            ) -> Result<(), orcel_approval::ApprovalError> {
-                Err(orcel_approval::ApprovalError {
-                    code: FailureCode::ApprovalDenied,
-                    message: "no approval was granted".into(),
-                })
-            }
+    impl ApprovalBroker for NeverAsked {
+        fn request_token(
+            &self,
+            _prompt: &ApprovalPrompt,
+        ) -> Result<orcel_approval::ApprovedToken, orcel_approval::ApprovalError> {
+            Err(orcel_approval::ApprovalError {
+                code: FailureCode::ApprovalDenied,
+                message: "the person was asked".into(),
+            })
         }
 
+        fn consume(
+            &self,
+            _token: &orcel_approval::ApprovedToken,
+            _expected: &ConsumeExpectation,
+            _now_ms: u64,
+        ) -> Result<(), orcel_approval::ApprovalError> {
+            Err(orcel_approval::ApprovalError {
+                code: FailureCode::ApprovalDenied,
+                message: "no approval was granted".into(),
+            })
+        }
+    }
+
+    fn changes() -> Vec<(&'static str, &'static str, Value)> {
+        vec![
+            ("git.stage", "stage", json!({"paths": ["a.txt"]})),
+            ("git.unstage", "unstage", json!({"paths": ["a.txt"]})),
+            ("git.commit", "commit", json!({"message": "change"})),
+            ("git.branch.create", "create", json!({"branch": "topic"})),
+        ]
+    }
+
+    fn assert_off(error: &ProviderError) {
+        assert_eq!(error.code, FailureCode::ProviderUnavailable);
+        assert_eq!(error.message, orcel_provider_git::confinement::OFF_MESSAGE);
+    }
+
+    /// Founder decision of 2026-11-23: Git is off until it runs confined.
+    /// Nothing is asked, journaled or changed. (Before: a denied stage
+    /// changed nothing.)
+    #[test]
+    fn a_git_change_is_refused_before_the_prompt_and_the_journal() {
         let root = repository();
         fs::write(root.join("a.txt"), "two\n").expect("modify");
-        let request = request(&root, "git.stage", "stage", json!({"paths": ["a.txt"]}));
-        let before = git(&root, &["diff", "--cached", "--name-only"]);
-        let error = dispatch(&workspace(&root), &Deny, &request).expect_err("denial");
-        assert_eq!(error.code, FailureCode::ApprovalDenied);
-        assert_eq!(git(&root, &["diff", "--cached", "--name-only"]), before);
+        let before = (
+            git(&root, &["status", "--porcelain", "--branch"]),
+            git(&root, &["show-ref"]),
+        );
+        for (capability, operation, arguments) in changes() {
+            let request = request(&root, capability, operation, arguments);
+            let error =
+                dispatch_to(Sink::None, &workspace(&root), &NeverAsked, &request).expect_err("off");
+            assert_off(&error);
+        }
+        let after = (
+            git(&root, &["status", "--porcelain", "--branch"]),
+            git(&root, &["show-ref"]),
+        );
+        assert_eq!(after, before);
         let _ = fs::remove_dir_all(root);
     }
 
+    /// Even a person who would approve changes nothing. (Before: an approved
+    /// stage changed the index.)
     #[test]
-    fn approved_stage_mutates_only_after_bound_approval() {
+    fn an_approval_cannot_turn_git_on() {
         let root = repository();
         fs::write(root.join("a.txt"), "two\n").expect("modify");
-        let request = request(&root, "git.stage", "stage", json!({"paths": ["a.txt"]}));
-        let result = dispatch(
-            &workspace(&root),
-            &FixedApprovalBroker(ApprovalDecision::Approved),
-            &request,
-        )
-        .expect("dispatch")
-        .expect("handled");
-        assert_eq!(result["paths"][0], "a.txt");
-        assert_eq!(
-            git(&root, &["diff", "--cached", "--name-only"]).trim(),
-            "a.txt"
-        );
+        for (capability, operation, arguments) in changes() {
+            let request = request(&root, capability, operation, arguments);
+            let error = dispatch(
+                &workspace(&root),
+                &FixedApprovalBroker(ApprovalDecision::Approved),
+                &request,
+            )
+            .expect_err("off");
+            assert_off(&error);
+        }
+        assert_eq!(git(&root, &["diff", "--cached", "--name-only"]), "");
         let _ = fs::remove_dir_all(root);
     }
 
