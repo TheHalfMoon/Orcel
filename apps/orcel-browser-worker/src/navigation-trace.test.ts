@@ -157,6 +157,18 @@ test("#584: every step of the probe ends at the one deadline", async (t) => {
   assert.deepEqual(marks, ["browser_attach_answered", "browser_history_no_answer", "browser_version_no_answer"]);
 });
 
+test("#584: the probe takes 2 s unless told otherwise", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let marks: string[] = [];
+  void probeBrowser(never).then((found) => (marks = found));
+  t.mock.timers.tick(1_999);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(marks, []);
+  t.mock.timers.tick(1);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(marks, ["browser_attach_no_answer", "browser_history_not_sent", "browser_version_not_sent"]);
+});
+
 test("#584: attaching that throws at once is an error, and the probe's timer is cleared", async (t) => {
   const cleared = t.mock.method(globalThis, "clearTimeout");
   const throwing = (): never => {

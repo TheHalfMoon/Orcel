@@ -5,11 +5,12 @@
 // engine fails the suite; elsewhere it is skipped, as the others are.
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { test } from "node:test";
 import { chromium } from "playwright-core";
 import { probeBrowser } from "./navigation-trace.js";
@@ -23,7 +24,22 @@ const isWindows = process.platform === "win32";
 const engine = EDGE_CANDIDATES.find((path) => existsSync(path));
 const skip = isWindows ? false : "native probes are Windows-only evidence";
 
-test("#584: a healthy engine answers the probe while a navigation is pending, and a closed one does not", { skip, timeout: 120_000 }, async () => {
+/// Wait (bounded) until no engine process uses `profile`, as native.test.ts
+/// does: one still exiting holds files in it.
+function engineExited(profile: string): void {
+  execFileSync(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      `$ErrorActionPreference='Stop'; $q = { @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" | Where-Object { $_.CommandLine -like '*${basename(profile)}*' }) }; $deadline = (Get-Date).AddSeconds(60); $p = @(& $q); while ($p.Count -gt 0 -and (Get-Date) -lt $deadline) { $left = [Math]::Max(1, [int]($deadline - (Get-Date)).TotalSeconds); Wait-Process -Id $p.ProcessId -Timeout $left -ErrorAction SilentlyContinue; $p = @(& $q) }; $p.Count`
+    ],
+    { encoding: "utf8", timeout: 120_000 }
+  );
+}
+
+test("#584: a healthy engine answers the probe while a navigation is pending, and a closed one does not", { skip, timeout: 300_000 }, async () => {
   assert.ok(engine, "Edge is installed");
   let requests = 0;
   const server = createServer(() => {
@@ -62,6 +78,7 @@ test("#584: a healthy engine answers the probe while a navigation is pending, an
     await context.close().catch(() => {});
     server.closeAllConnections();
     server.close();
-    rmSync(profile, { recursive: true, force: true, maxRetries: 5 });
+    engineExited(profile);
+    rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
   }
 });

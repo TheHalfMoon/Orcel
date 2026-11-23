@@ -35,7 +35,7 @@ import { waitForText } from "./actions/wait.js";
 import { uploadFile } from "./actions/upload.js";
 import { DialogLog } from "./actions/dialogs.js";
 import { NavigationError, TabError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy, type TabsState } from "./worker.js";
-import { ScreenshotError, takeScreenshot } from "./screenshot.js";
+import { ScreenshotError, tabSubject, takeScreenshot } from "./screenshot.js";
 import { denyDesktopPermissions, interceptFileChoosers } from "./desktop-guard.js";
 import { admitPopup, MAX_PENDING_POPUPS, MAX_TABS, NavigationWatch, TabRegistry } from "./tabs.js";
 import { captureOutline, OUTLINE_BUDGET_MS, readOnlyCdp, type BoundedOutline } from "./outline/capture.js";
@@ -534,16 +534,8 @@ const playwrightLauncher: Launcher = {
         // learns the tabs.
         if (active === null || tab === null) throw new ScreenshotError("busy");
         const page = active;
-        const shot = await takeScreenshot(
-          {
-            page,
-            loading: () => watches.get(page)?.loading === true,
-            active: () => tabs.active === tab,
-            metrics: () => context.newCDPSession(page)
-          },
-          fullPage
-        );
-        return { ...shot, tab };
+        const subject = tabSubject(page, tab, tabs, () => watches.get(page), () => context.newCDPSession(page));
+        return { ...(await takeScreenshot(subject, fullPage)), tab };
       },
       async tabNew() {
         if (tabs.size >= MAX_TABS) throw new TabError("cap");

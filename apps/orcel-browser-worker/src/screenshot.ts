@@ -177,16 +177,19 @@ export class ScreenshotBudget {
   async within<T>(work: Promise<T>): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        this.over = true;
-        reject(this.failure("budget"));
-      }, Math.max(0, this.deadline - this.clock()));
+      timer = setTimeout(() => reject(this.failure("budget")), Math.max(0, this.deadline - this.clock()));
     });
     try {
       const done = await Promise.race([work, deadline]);
       // Work that ended late, in a process too busy to run the timer.
       this.remaining();
       return done;
+    } catch (error) {
+      // The screenshot has failed and said why: whatever of it is still
+      // running (another frame's census) starts no further step.
+      this.over = true;
+      this.reported = true;
+      throw error;
     } finally {
       clearTimeout(timer);
     }
@@ -277,10 +280,12 @@ export async function runExclusive<T>(key: object, task: () => Promise<T>): Prom
 ///   pending. That step is a read (a count, a box, the layout metrics), or a
 ///   capture that outlived its own timeout, which is set to end before the
 ///   budget does. No further step follows it.
-/// - What a failed task leaves running. On its own timeout Playwright removes
-///   its masks and its style without anything waiting for that, and it hides
-///   leftover masks before its next capture. When one frame's census fails,
-///   another frame's reads may go on until they are answered or time out.
+/// - What a task leaves pending when it fails, and so lets go of the page. When
+///   Playwright's own timeout ends a capture, the engine may still be at it
+///   (Playwright drops what it gives), and Playwright removes its masks and its
+///   style without anything waiting for that. It hides leftover masks before
+///   its next capture. When one frame's census fails, the read another frame
+///   was at may still be pending; it is that frame's last.
 export function runBounded<T>(key: object, budget: ScreenshotBudget, task: () => Promise<T>): Promise<T> {
   return budget.within(
     runExclusive(key, async () => {
@@ -399,6 +404,18 @@ export interface ShotSubject {
   metrics(): Promise<MetricsSession>;
 }
 
+/// `page`, which tab `tab` shows: `tabs` and `watch` are read when asked, since
+/// both change while a screenshot runs.
+export function tabSubject(
+  page: ShotSubject["page"],
+  tab: number,
+  tabs: { readonly active: number | null },
+  watch: () => { readonly loading: boolean } | undefined,
+  metrics: () => Promise<MetricsSession>
+): ShotSubject {
+  return { page, loading: () => watch()?.loading === true, active: () => tabs.active === tab, metrics };
+}
+
 /// One screenshot of `subject`, from here to the answer within `budget`.
 export async function takeScreenshot(
   subject: ShotSubject,
@@ -422,6 +439,9 @@ export async function takeScreenshot(
       } catch (error) {
         throw budget.failure(errorCode(error));
       } finally {
+        // Waited for, within the budget: the capture starts with the metrics
+        // session let go of. A detach that fails is of a session
+        // already gone.
         await session?.detach().catch(() => {});
       }
     }

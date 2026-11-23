@@ -23,12 +23,14 @@ import {
   ScreenshotBudget,
   ScreenshotError,
   SECRET_FIELD_SELECTOR,
+  tabSubject,
   takeScreenshot,
   toBase64Pieces,
   type ShotFrame,
   type ShotPage,
   type ShotSubject
 } from "./screenshot.js";
+import { rememberSecretField, secretMemory } from "./secret-memory.js";
 
 const capturePng = (page: ShotPage, clip?: Parameters<typeof capture>[1]) => capture(page, clip, new ScreenshotBudget(SCREENSHOT_BUDGET_MS, () => {}));
 
@@ -267,12 +269,15 @@ function held<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: 
 const BOX = { x: 0, y: 0, width: 10, height: 10 };
 const still: ShotFrame = { locator: () => ({ all: async () => [{ boundingBox: async () => BOX }] }) };
 
-/// Run one screenshot as the worker does: alone on its page, within `ms`.
+/// Run one screenshot as the worker does, within `ms`.
 async function shoot(page: ShotPage, ms: number): Promise<{ outcome: string; elapsed: number; reports: string[] }> {
   const reports: string[] = [];
   const began = performance.now();
   const budget = new ScreenshotBudget(ms, (stage, code) => reports.push(`${stage}: ${code}`));
-  const outcome = await runBounded(page, budget, () => capture(page, undefined, budget)).then(
+  // The same object each time: a page is held by its identity.
+  const held = Object.assign(page, { url: () => "https://example.test/", isClosed: () => false });
+  const of: ShotSubject = { page: held, loading: () => false, active: () => true, metrics: () => Promise.reject(new Error("not asked for")) };
+  const outcome = await takeScreenshot(of, false, budget).then(
     () => "picture",
     (error: unknown) => {
       assert.ok(error instanceof ScreenshotError, String(error));
@@ -518,6 +523,68 @@ test("#438: the worker's screenshot takes the whole budget by default, its metri
   );
 });
 
+test("#438: the capture waits for the metrics session to be let go of, and a detach that fails is no failure", async () => {
+  const detaching = held<void>();
+  let captured = false;
+  const of = subject(
+    { metrics: async () => ({ send: async () => ({}), detach: () => detaching.promise }) },
+    { screenshot: async () => ((captured = true), png(10, 10)) }
+  );
+  const shot = taken(of, true);
+  await turns();
+  assert.equal(captured, false);
+  detaching.reject(new Error("session closed"));
+  assert.deepEqual(await shot, ["picture https://example.test/ false"]);
+  assert.equal(captured, true);
+});
+
+test("OB-07b: a password field the page now shows in clear is masked and counted, by its remembered name", async () => {
+  const selectors: string[] = [];
+  const masks: unknown[] = [];
+  const locator = { all: async () => [] };
+  const frame: ShotFrame = { locator: (selector) => (selectors.push(selector), locator) };
+  const of = subject({}, { frames: () => [frame], screenshot: async (options) => (masks.push(options.mask), png(10, 10)) });
+  assert.deepEqual(await taken(of), ["picture https://example.test/ false"]);
+  rememberSecretField(secretMemory(of.page), undefined, "shown", undefined);
+  assert.deepEqual(await taken(of), ["picture https://example.test/ false"]);
+  assert.deepEqual(selectors, [SECRET_FIELD_SELECTOR, `${SECRET_FIELD_SELECTOR}, input[name="shown" i]`]);
+  // The locators of that selector are the ones Playwright masks.
+  assert.deepEqual(masks, [[locator], [locator]]);
+});
+
+test("#438: a census that failed in one frame starts no further read in another", async () => {
+  const box = held<typeof BOX>();
+  let reads = 0;
+  const slow: ShotFrame = { locator: () => ({ all: async () => [1, 2, 3].map(() => ({ boundingBox: () => ((reads += 1), box.promise) })) }) };
+  const broken: ShotFrame = { locator: () => ({ all: () => turns().then(() => Promise.reject(new Error("detached"))) }) };
+  const shot = await taken(subject({}, { frames: () => [slow, broken] }));
+  assert.deepEqual(shot, ["failed", "census_before: Error"]);
+  assert.equal(reads, 1);
+  box.resolve(BOX);
+  await turns();
+  assert.equal(reads, 1, "the read that was pending is that frame's last");
+});
+
+test("OB-03: the worker's tab is asked as it is now, not as it was", () => {
+  const tabs: { active: number | null } = { active: 3 };
+  let watch: { loading: boolean } | undefined;
+  const { page } = subject();
+  const session = { send: async () => ({}), detach: async () => {} };
+  const metrics = async () => session;
+  const of = tabSubject(page, 3, tabs, () => watch, metrics);
+  assert.equal(of.page, page);
+  assert.equal(of.metrics, metrics);
+  assert.deepEqual([of.loading(), of.active()], [false, true]);
+  watch = { loading: true };
+  assert.equal(of.loading(), true);
+  watch.loading = false;
+  assert.equal(of.loading(), false);
+  for (const active of [4, null]) {
+    tabs.active = active;
+    assert.equal(of.active(), false);
+  }
+});
+
 test("#438: what the metrics took is gone from the capture's time", async () => {
   let now = 0;
   const asked: unknown[] = [];
@@ -614,10 +681,7 @@ test("#438: a failed screenshot reports one closed code, never the error's messa
   const write = process.stderr.write;
   process.stderr.write = ((text: string) => (written.push(text), true)) as typeof process.stderr.write;
   try {
-    const failing = async (page: ShotPage) => {
-      const budget = new ScreenshotBudget();
-      await assert.rejects(runBounded(page, budget, () => capture(page, undefined, budget)), ScreenshotError);
-    };
+    const failing = (page: ShotPage) => assert.rejects(takeScreenshot(subject({}, page), false), ScreenshotError);
     const throwing = (error: unknown): ShotPage => ({ frames: () => [still], screenshot: () => Promise.reject(error) });
     await failing(throwing(new TimeoutError(secret)));
     await failing(throwing(Object.assign(new Error(secret), { name: secret })));

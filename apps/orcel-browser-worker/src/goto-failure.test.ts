@@ -34,6 +34,7 @@ test("#584: a navigation that timed out asks the browser process and says so on 
     written: ["orcel-browser-worker: navigation timeline: browser_attach_answered browser_history_answered browser_version_answered page_closed_false\n"],
     attached: 1
   });
+  assert.equal((await failing(named("TimeoutError", ""))).reason, "timeout");
   const closed = await failing(named("TimeoutError", "Timeout"), { closed: () => true, attach: () => Promise.reject(new Error(SECRET)) });
   assert.deepEqual(closed.written, ["orcel-browser-worker: navigation timeline: browser_attach_error browser_history_not_sent browser_version_not_sent page_closed_true\n"]);
 });
@@ -46,6 +47,8 @@ test("#584: any other failure is typed as before, keeps only the engine's code, 
   });
   const blocked = new Error(`page.goto: net::ERR_BLOCKED_BY_CLIENT at ${SECRET}`);
   assert.deepEqual(await failing(blocked, { refusedByOrcel: () => true }), { reason: "denied", written: [], attached: 0 });
+  // A timeout is told by the error's class: a message can say anything.
+  assert.equal((await failing(new Error("TimeoutError: Timeout 30000ms exceeded."))).reason, "failed");
   // The engine's own cancellation, not Orcel's refusal.
   assert.deepEqual(await failing(blocked), {
     reason: "failed",
