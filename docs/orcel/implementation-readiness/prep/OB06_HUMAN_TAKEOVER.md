@@ -1,6 +1,6 @@
 # OB-06: human takeover and the 3000 ms quiet timer
 
-**Status: implemented on `browser/ob06-takeover` (SG-000135 work packet OB-06, acceptance FA-G). Not merged. The first head (f86e3819) failed its security review; section 8 lists each finding and its fix. Unit and Windows probe tests only; the founder-present run has not happened, and no real takeover was driven on a headed window.**
+**Status: merged as #817 (aa622184) (SG-000135 work packet OB-06, acceptance FA-G). The first head (f86e3819) failed its security review; section 8 lists each finding and its fix. Unit and Windows probe tests only; the founder-present run has not happened, and no real takeover was driven on a headed window.**
 
 Founder requirement: when a person takes over the browser, the agent pauses at once, and it resumes only 3 seconds after the person's LAST input. Then it observes the page again, and the person's edits win. Shadow Mode uses no OS input, focus or clipboard.
 

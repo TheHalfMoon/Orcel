@@ -334,8 +334,7 @@ test("a standards OAuth client links through device pairing and reaches the devi
 });
 
 test("SG-000135 OB-09: the relay serves the core profile only and never a browser tool", async () => {
-  // Engineering-chosen 2026-11-22 under the founder's delegation: remote
-  // Orcel Browser control is the ChatGPT Secure MCP Tunnel's only. No relay
+  // An engineering choice (2026-11-22): remote Orcel Browser control is the ChatGPT Secure MCP Tunnel's only. No relay
   // source names that profile, so no branch could be flipped silently...
   const src = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
   for (const name of readdirSync(src).filter((file) => file.endsWith(".ts") && !file.endsWith(".test.ts"))) {

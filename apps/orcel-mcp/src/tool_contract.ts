@@ -765,8 +765,8 @@ export function remoteProfileForProvider(providerKind: string): ToolSurfaceProfi
 }
 
 /**
- * SG-000135 OB-09 (engineering-chosen 2026-11-22 under the founder's
- * delegation): the provider kinds that may be served the remote
+ * SG-000135 OB-09 (tunnel only: an engineering choice,
+ * 2026-11-22): the provider kinds that may be served the remote
  * `browser_full` profile: `openai` only, through the ChatGPT Secure MCP
  * Tunnel set up for it on the PC. The relay never serves it
  * (`allowedToolsFor`), and every other provider keeps `core` alone.

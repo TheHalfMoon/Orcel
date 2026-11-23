@@ -44,6 +44,13 @@ pub const MIN_BROWSER_LEASE_MS: u64 = 60_000;
 pub const MAX_BROWSER_LEASE_MS: u64 = 12 * 60 * 60 * 1_000;
 /// The prefix of a client reference (`client_ref`).
 pub const CLIENT_REF_PREFIX: &str = "cl-";
+/// SG-000135 OB-09: the prefix of a remote caller's broker client
+/// (`orceld::browser_remote`); a local MCP session id never starts with it.
+pub const REMOTE_BROKER_CLIENT_PREFIX: &str = "remote:";
+/// SG-000135 OB-09: the prefix of a remote caller's client reference. It is
+/// not a client reference a lease can name: no Full Access lease covers a
+/// remote caller (founder decision 2026-11-23).
+pub const REMOTE_CLIENT_REF_PREFIX: &str = "cl-remote-";
 /// The prefix of an authority service lease id.
 pub const SERVICE_LEASE_ID_PREFIX: &str = "al-";
 const LONGEST_HOST: usize = 253;
@@ -269,15 +276,28 @@ pub fn is_client_ref(text: &str) -> bool {
         .is_some_and(|hex| is_lower_hex(hex, 32))
 }
 
+/// Whether `text` is a remote caller's client reference, which no lease can
+/// name (SG-000135 OB-09).
+pub fn is_remote_client_ref(text: &str) -> bool {
+    text.starts_with(REMOTE_CLIENT_REF_PREFIX)
+}
+
 /// The client reference of an MCP session id: a domain-separated digest,
-/// so the reference names the client without carrying its session id.
+/// so the reference names the client without carrying its session id. A
+/// remote caller's broker client gets the remote kind
+/// ([`REMOTE_CLIENT_REF_PREFIX`]), which every lease scope check refuses.
 pub fn client_ref(client_session_id: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"orcel/sg000135/browser-lease-client/v1");
     hasher.update((client_session_id.len() as u64).to_le_bytes());
     hasher.update(client_session_id.as_bytes());
     let digest = lower_hex(&hasher.finalize());
-    format!("{CLIENT_REF_PREFIX}{}", &digest[..32])
+    let prefix = if client_session_id.starts_with(REMOTE_BROKER_CLIENT_PREFIX) {
+        REMOTE_CLIENT_REF_PREFIX
+    } else {
+        CLIENT_REF_PREFIX
+    };
+    format!("{prefix}{}", &digest[..32])
 }
 
 fn bounded_field(name: &str, value: &str) -> Result<(), PolicyError> {
@@ -621,6 +641,12 @@ mod tests {
         assert!(is_client_ref(&reference));
         assert_ne!(reference, client_ref("client-b"));
         assert!(!is_client_ref("cl-xyz"));
+        assert!(!is_remote_client_ref(&reference));
+        // SG-000135 OB-09: a remote broker client's reference is another
+        // kind, which no lease names.
+        let remote = client_ref("remote:rc-1:rp-1:s1");
+        assert!(is_remote_client_ref(&remote));
+        assert!(!is_client_ref(&remote));
         assert!(is_session_id(SESSION));
         for bad in ["bs-1", "bs-0123456789abcdef-01-0001020304050607", "x"] {
             assert!(!is_session_id(bad), "{bad}");

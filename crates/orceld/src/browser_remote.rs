@@ -1,21 +1,20 @@
 //! SG-000135 OB-09: who a `browser_full` request comes from.
 //!
 //! A local request (stdio, loopback) is the MCP session it names. A remote
-//! one (the Secure MCP Tunnel or the relay) came through the device uplink,
-//! passed the SG-000055 STRONG remote-session lease for the `browser_full`
+//! one came through the ChatGPT Secure MCP Tunnel (the relay serves `core`
+//! only), passed the SG-000055 STRONG remote-session lease for the `browser_full`
 //! profile (`remote_lease::gate_remote`) and carries the authenticated
 //! remote context. Its broker client is bound to that context: the paired
 //! connection, the principal and its own MCP session. So a remote client can
-//! never name a local session or another remote client's session, and the
-//! client reference a Full Access lease names (`client_ref`) identifies
-//! exactly that remote client: a lease issued to any other client does not
-//! match (`orcel_policy::browser_lease::check_browser_lease`).
+//! never name a local session or another remote client's session. Its client
+//! reference is its own kind (`cl-remote-...`), which no Full Access lease
+//! can name (`orcel_policy::browser_lease::client_ref`).
 //!
 //! What changes for a remote caller is recorded here and in
 //! `browser_lease::FullAccess::for_remote_caller`: the session's receipts
 //! name the remote origin, a persistent Orcel-managed profile is never used
-//! remotely, and only a lease the installed SG-000132 authority service
-//! issued to this client may cover an action. Every approval the remote
+//! remotely, and no Full Access lease ever covers an action (founder
+//! decision 2026-11-23). Every approval the remote
 //! request raises goes to the Windows dialog on the PC, marked remote
 //! (`OriginStamp`); nothing the remote caller sends can answer one.
 
@@ -25,7 +24,8 @@ use serde_json::{json, Value};
 
 /// The prefix of a remote caller's broker client. A local request whose
 /// MCP session id starts with it is refused (`check_local_client`).
-pub(crate) const REMOTE_CLIENT_PREFIX: &str = "remote:";
+pub(crate) const REMOTE_CLIENT_PREFIX: &str =
+    orcel_policy::browser_lease::REMOTE_BROKER_CLIENT_PREFIX;
 
 /// Where a `browser_full` request comes from.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -194,11 +194,13 @@ mod tests {
         assert_ne!(client, Caller::of(Some(&other)).broker_client("s1"));
         // A local caller cannot name it.
         assert!(check_local_client(&client).is_err());
-        // The lease client reference differs too.
-        assert_ne!(
-            orcel_policy::browser_lease::client_ref(&client),
-            orcel_policy::browser_lease::client_ref("s1")
-        );
+        // The client reference is the remote kind, which no lease can name.
+        let reference = orcel_policy::browser_lease::client_ref(&client);
+        assert_ne!(reference, orcel_policy::browser_lease::client_ref("s1"));
+        assert!(orcel_policy::browser_lease::is_remote_client_ref(
+            &reference
+        ));
+        assert!(!orcel_policy::browser_lease::is_client_ref(&reference));
     }
 
     #[test]

@@ -56,8 +56,9 @@ pub fn write_private_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// without replace), so a crash leaves the file at exactly one of the names.
 ///
 /// A filesystem without that step (and any other Unix) gets a hard link at
-/// `to` and then loses `from`. An error there takes the link away again, so
-/// nothing has moved; a crash in between leaves the same file at both names,
+/// `to` and then loses `from`. An error there takes the link away again where
+/// the directory allows it (an append-only one does not, and the link stays);
+/// that error, or a crash in between, leaves the same file at both names,
 /// never at neither. A filesystem without hard links either fails closed.
 pub fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -111,7 +112,7 @@ fn exclusive_rename(from: &Path, to: &Path) -> io::Result<()> {
 
 /// Whether the kernel, a system call filter (`EPERM`) or the filesystem has
 /// no exclusive rename. The two-step move never replaces either, so a wrong
-/// guess costs nothing.
+/// guess costs at most a spare name (see [`rename_no_replace`]).
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn exclusive_rename_unsupported(error: &io::Error) -> bool {
     [libc::ENOSYS, libc::EINVAL, libc::ENOTSUP, libc::EPERM]
@@ -189,7 +190,9 @@ fn link_then_unlink_with(
 }
 
 /// Takes away `to`, the second name this process gave the file at `from`,
-/// unless `from` is that file no longer: then `to` may be its only name.
+/// unless `from` is that file no longer: then `to` may be its only name. A
+/// process that writes to the directory without taking the caller's lock can
+/// still remove `from` in between, as it could remove the file itself.
 fn remove_spare_name(from: &Path, to: &Path) {
     let (Ok(from), Ok(named)) = (
         std::fs::symlink_metadata(from),
@@ -320,12 +323,20 @@ pub fn sync_parent_dir(path: &Path) -> io::Result<()> {
     }
 }
 
-/// A filesystem that cannot sync a directory says so with `EINVAL` or
-/// `ENOTSUP`; any other error is one.
+/// A filesystem that cannot sync a directory says so with `EINVAL`,
+/// `ENOTSUP` or (macOS, where the sync is `F_FULLFSYNC`) `ENOTTY`; any other
+/// error is one.
 #[cfg(unix)]
 fn directory_synced(synced: io::Result<()>) -> io::Result<()> {
     match synced {
-        Err(error) if matches!(error.raw_os_error(), Some(libc::EINVAL | libc::ENOTSUP)) => Ok(()),
+        Err(error)
+            if matches!(
+                error.raw_os_error(),
+                Some(libc::EINVAL | libc::ENOTSUP | libc::ENOTTY)
+            ) =>
+        {
+            Ok(())
+        }
         synced => synced,
     }
 }
@@ -611,7 +622,14 @@ mod tests {
             Err(io::Error::other("injected"))
         }
         let moves: [Move; 2] = [
-            |from, to| link_then_unlink_with(from, to, |_| failed(), |_| panic!("not synced")),
+            |from, to| {
+                link_then_unlink_with(
+                    from,
+                    to,
+                    |_| failed(),
+                    |_| Err(io::Error::other("unlinked before the sync")),
+                )
+            },
             |from, to| link_then_unlink_with(from, to, |_| Ok(()), |_| failed()),
         ];
         for (index, rename) in moves.iter().enumerate() {
@@ -735,7 +753,7 @@ mod tests {
     #[test]
     fn a_directory_sync_error_is_an_error_unless_syncing_is_unsupported() {
         let synced = |code| directory_synced(Err(io::Error::from_raw_os_error(code)));
-        for code in [libc::EINVAL, libc::ENOTSUP] {
+        for code in [libc::EINVAL, libc::ENOTSUP, libc::ENOTTY] {
             assert!(synced(code).is_ok(), "{code}");
         }
         for code in [libc::EIO, libc::ENOSPC, libc::EACCES, libc::EPERM] {
