@@ -43,10 +43,12 @@ browser_session_create {continue_from: <old>, mode: <other mode>}
      its session_start naming continued_from {session_id, mode, last_receipt_sha256, carried, dropped, plan_sha256}
   -> each carried tab reopened: the first in the session's page (browser_open), each later one
      in a new tab (browser_tabs new), the active tab last; each its own intent, approval and receipt
-  -> the epoch checked once more, as after any action: a revoke during the last reopen ends the new session
-     now, and restore_stopped says so
+  -> the epoch checked once more (a page action makes the same check after it ran; create, status and close do
+     not): a revoke during the last reopen ends the new session now, session_ended says what ended it, and no page
+     is reported as restored
   -> reply: the new session, continued_from with the old session's end report, carried pages
-     (sanitized URL, new page id, receipt seq, restored), tabs_not_carried, restore_stopped
+     (sanitized URL, new page id, receipt seq, restored), tabs_not_carried, restore_stopped (the refusal that stopped the
+     reopening, never overwritten), session_ended
 ```
 
 Code: `crates/orceld/src/browser_mode_switch.rs` (checks, carry rule, plan digest), `Broker::plan_switch` and `Broker::end_for_switch` in `browser_broker.rs`, the `switch` path in `live_dispatch.rs`, the `SessionWorker::switch_state` read of the live browser's own records (tabs, sign-in, takeover hold and Needs-you), and the verifier's link check in `browser_receipts.rs`.
@@ -68,7 +70,7 @@ Code: `crates/orceld/src/browser_mode_switch.rs` (checks, carry rule, plan diges
 | A token, code or typed password in a URL is sent again | No tab after a sign-in; exact carry only when `agent_url` changes nothing and no value is token-like; otherwise scheme, host and path. A heuristic: a short token under an ordinary name is missed (section 5) | `sh2_secret_bearing_urls_are_never_carried`, `sh2_tabs_are_carried_background_first_and_active_last` |
 | A single-use link (a token in the path) is reopened | A tab with a token-like path segment (a run of 16 or more token characters, or more than 64) is dropped and counted in `tabs_not_carried`; a shorter one is missed, and its reopen asks the owner (section 5) | `sh2_secret_bearing_urls_are_never_carried` |
 | A lease granted mid-switch covers a reopened page | The new session's lease is held while each page is reopened; every reopen asks | `sh2_a_held_lease_covers_nothing_so_reopened_pages_always_ask` |
-| A revoke lands during the last reopen | The epoch is checked again at the end of the switch; a moved or unverifiable epoch ends every session, and the reply says so | `sh2_a_revoke_during_the_last_reopen_ends_the_new_session` |
+| A revoke lands during the last reopen | The epoch is checked again at the end of the switch; a moved or unverifiable epoch ends every session, `session_ended` says so and no page is reported as restored | `sh2_a_revoke_during_the_last_reopen_ends_the_new_session`, `sh2_a_refusal_is_kept_when_a_revoke_then_ends_the_session`, `the_live_dispatch_wires_the_reopen_and_the_caller` |
 | A URL reaches the audit chain | The start event holds counts and digests only | `sh2_a_task_moves_both_ways_and_the_receipts_link_the_sessions` (no URL text in the chain) |
 | A window appears on the desktop without the owner's say | Switching to Visible asks a fresh SOFT approval bound to the plan before anything ends | `sh2_the_plan_digest_binds_every_choice`; the prompt path is in `live_dispatch.rs` (live build only) |
 | The task is pulled out from under a person | A held window refuses (`HUMAN_TAKEOVER`); a waiting page never moves into Shadow | `sh2_a_refused_switch_changes_nothing`, `sh2_a_switch_is_refused_before_anything_changes` |

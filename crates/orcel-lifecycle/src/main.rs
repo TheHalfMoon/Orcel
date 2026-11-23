@@ -39,9 +39,11 @@ Configuration:
       the tunnel client by file reference; it is never printed or logged.
   orcel tunnel show                       Show the tunnel configuration (never the key).
   orcel tunnel allow [--workspaces <a,b>] [--scopes <s,...>] [--minutes <1-15>] [--read-mode <m>]
-      Allow one finite ChatGPT tunnel session (Windows Hello). Tunnel clients see
-      only the `core` profile, and every tunnel request needs this lease.
-  orcel tunnel revoke                     End the tunnel session leases (both profiles) now.
+      Allow one finite ChatGPT tunnel session (Windows Hello). Tunnel clients see only
+      the one profile the tunnel was set up for (`core`, or `browser_full`), and every
+      tunnel request needs this lease.
+  orcel tunnel revoke                     End the tunnel session leases (both profiles) now
+      and say which connection each belonged to, or which could not be ended.
 
 Updates:
   orcel update --source <release-dir> [--check] [--allow-downgrade] [--reinstall]
@@ -120,7 +122,8 @@ Orcel Browser Full Access (SG-000135; leases come from the authority service onl
   orcel browser grant --session <bs-...> --client-ref <cl-...> --origin <https://host>...
       [--families navigate,click,type,select,tabs] [--task <label>] [--minutes <1-720>]
       Up to 16 exact origins, routine families only, at most 12 hours. Local sessions
-      only: a remote (ChatGPT) session's client reference is refused; it asks every time.
+      only: a remote (ChatGPT) session's client reference is refused, and no lease
+      covers its actions.
   orcel browser leases                    Show this session's active browser leases.
   orcel browser revoke <lease id>         Revoke one browser lease.
 

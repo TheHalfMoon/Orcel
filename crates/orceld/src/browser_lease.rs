@@ -42,8 +42,10 @@
 //! (`FullAccess::for_remote_caller`) is never covered by a Full Access lease.
 //! FOUNDER DECISION 2026-11-23: no remote lease coverage, and spec 4.15
 //! stands unamended for remote callers (a standing approval never covers
-//! one). So every consequential remote action asks on the owner's Windows
-//! dialog: the decision always asks and the check right before dispatch
+//! one). So a remote page open, click, fill, select or new tab with a URL
+//! asks on the owner's Windows dialog, as a local one does without a lease
+//! (`prep/OB09_REMOTE_BROWSER_FULL.md` section 1 lists the remote actions
+//! that raise no dialog, founder decision 2026-11-23): the decision always asks and the check right before dispatch
 //! always refuses, both before the service is read, and there is no setting,
 //! file, caller or constant that changes it. The rule is structural as well:
 //! a remote session's client reference (`cl-remote-...`) is one that no lease
@@ -470,13 +472,31 @@ impl FullAccess {
         self
     }
 
+    /// A broker session's lease cache for its caller: a remote caller's is
+    /// never covered. The broker client says remote too
+    /// (`REMOTE_BROKER_CLIENT_PREFIX`), and either is enough.
+    pub(crate) fn for_session(
+        session_id: &str,
+        client: &str,
+        task: Option<&str>,
+        caller: &crate::browser_remote::Caller,
+    ) -> Self {
+        let access = Self::service_backed(session_id, client, task);
+        if caller.is_remote() || client.starts_with(crate::browser_remote::REMOTE_CLIENT_PREFIX) {
+            access.for_remote_caller()
+        } else {
+            access
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_remote(&self) -> bool {
+        self.remote
+    }
+
     /// The authority service and the secret store, with this process's
     /// native identity.
-    pub(crate) fn service_backed(
-        session_id: &str,
-        client_session_id: &str,
-        task: Option<&str>,
-    ) -> Self {
+    fn service_backed(session_id: &str, client_session_id: &str, task: Option<&str>) -> Self {
         let identity = orcel_policy::full_control::current_windows_identity()
             .ok()
             .map(|identity| (identity.windows_user_sid, identity.logon_session_id));

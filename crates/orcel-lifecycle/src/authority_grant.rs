@@ -135,7 +135,7 @@ pub fn browser_scope(
     // refuses a remote reference too; this says why.
     if orcel_policy::browser_lease::is_remote_client_ref(&client_ref) {
         return Err(LifecycleError::usage(
-            "that client reference is a remote (ChatGPT) session's: a Full Access lease never covers a remote session; every remote action asks you on this PC",
+            "that client reference is a remote (ChatGPT) session's: a Full Access lease never covers a remote session; its page opens, clicks, fills and selections each ask you on this PC",
         ));
     }
     if origins.len() > MAX_ORIGINS {

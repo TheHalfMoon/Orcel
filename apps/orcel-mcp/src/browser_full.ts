@@ -14,10 +14,10 @@ import {
 /**
  * SG-000135 OB-02: the `browser_full` profile's tools. Registered only when
  * local configuration selects `browser_full` (`ORCEL_TOOL_SURFACE_PROFILE`),
- * or, since SG-000135 OB-09, for a tunnel or paired connection the owner set
- * up for the remote `browser_full` profile (its remote-safe tools only; the
- * contract gate filters the rest). Each tool forwards one `browser.session` shape to orceld's
- * Orcel Browser Session Broker, which is the sole authority with its
+ * or, since SG-000135 OB-09, for a ChatGPT tunnel the owner set up for the
+ * remote `browser_full` profile (its remote-safe tools only; the contract
+ * gate filters the rest; the relay serves `core` only). Each tool forwards
+ * one `browser.session` shape to orceld's Orcel Browser Session Broker, which is the sole authority with its
  * profile gate, policy, takeover gate and approval broker:
  *
  * - `browser_session_create` mints a broker session: one isolated,
@@ -236,7 +236,7 @@ export function browserExtractSchema(defaultWorkspace: string) {
 const DEV_ONLY = "Windows development builds only; other builds answer typed unavailable.";
 /** SG-000135 OB-08: what a Full Access lease changes for an approved tool. */
 const LEASE_NOTE =
-  "Under a Full Access lease the owner issued for this local session, a routine action on a leased origin runs without a prompt and its receipt names the lease; anything else, and every consequential action of a remote session, still asks.";
+  "Under a Full Access lease the owner issued for this local session, a routine action on a leased origin runs without a prompt and its receipt names the lease; anything else still asks, and no lease covers a remote session.";
 
 export function registerSessionBrokerTools(server: McpServer, kernel: KernelClient, defaultWorkspace: string): void {
   // Each tool forwards exactly its broker shape: the capability and
@@ -254,7 +254,7 @@ export function registerSessionBrokerTools(server: McpServer, kernel: KernelClie
   server.registerTool(
     "browser_session_create",
     {
-      description: `Create an Orcel browser session: its own isolated, Orcel-managed profile (never your browser or its profile) and its own browser worker, bound to this MCP session. Returns session_id, which every other browser tool takes, and client_ref, which the owner names when asking the Orcel authority service for a Full Access lease (it grants nothing). mode: shadow (default) runs headless, and Orcel never uses your mouse, keyboard, focus or foreground window; visible opens a window of its own titled "Orcel agent session", after fresh local Orcel approval; the browser may bring it to the front when it opens and when it opens a page, so it does not claim no-interference. profile: by default the profile is ephemeral (browser_close, the end of this MCP session or an emergency stop removes it); name a persistent Orcel-managed profile from browser_profiles to keep its cookies and site storage across sessions (one live session per profile). A Visible session, and the first use of a persistent profile in this MCP session, each ask fresh local Orcel approval first (the profile may be signed in to sites); every page prompt in a persistent profile names it. continue_from: an open session of this MCP session whose task moves to the new session in mode (the other mode), on its profile and with its task label (name neither); the old session ends, its recorded pages reopen as approved GET navigations, each with its own receipt, and no click, fill, submit or download is repeated; moving to visible asks fresh local Orcel approval first, a Full Access lease does not carry over, and a session with an uncertain action, a person using its window, or (moving to shadow) a page that waits for you is refused with nothing changed. Pages get no async clipboard or other permission and no file dialog, but in either mode a page can still copy text to your system clipboard after an approved click (the legacy execCommand("copy") path). At most 2 sessions per MCP session and 4 on the device. task is an optional label of at most 64 characters; it grants nothing. ${DEV_ONLY}`,
+      description: `Create an Orcel browser session: its own isolated, Orcel-managed profile (never your browser or its profile) and its own browser worker, bound to this MCP session. Returns session_id, which every other browser tool takes, and client_ref, which the owner names when asking the Orcel authority service for a Full Access lease for a local session (it grants nothing; a remote session's client_ref is refused). mode: shadow (default) runs headless, and Orcel never uses your mouse, keyboard, focus or foreground window; visible opens a window of its own titled "Orcel agent session", after fresh local Orcel approval; the browser may bring it to the front when it opens and when it opens a page, so it does not claim no-interference. profile: by default the profile is ephemeral (browser_close, the end of this MCP session or an emergency stop removes it); name a persistent Orcel-managed profile from browser_profiles to keep its cookies and site storage across sessions (one live session per profile). A Visible session, and the first use of a persistent profile in this MCP session, each ask fresh local Orcel approval first (the profile may be signed in to sites); every page prompt in a persistent profile names it. continue_from: an open session of this MCP session whose task moves to the new session in mode (the other mode), on its profile and with its task label (name neither); the old session ends, its recorded pages reopen as approved GET navigations, each with its own receipt, and no click, fill, submit or download is repeated; moving to visible asks fresh local Orcel approval first, a Full Access lease does not carry over, and a session with an uncertain action, a person using its window, or (moving to shadow) a page that waits for you is refused with nothing changed. Pages get no async clipboard or other permission and no file dialog, but in either mode a page can still copy text to your system clipboard after an approved click (the legacy execCommand("copy") path). At most 2 sessions per MCP session and 4 on the device. task is an optional label of at most 64 characters; it grants nothing. ${DEV_ONLY}`,
       inputSchema: browserSessionCreateSchema(defaultWorkspace)
     },
     async ({ workspace_id, task, mode, profile, continue_from }) =>

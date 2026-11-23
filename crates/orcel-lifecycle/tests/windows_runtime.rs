@@ -332,6 +332,11 @@ fn install_configure_start_status_doctor_stop_restart_and_uninstall() {
     }
     let revoked = json_ok(&orcel(&cli, &local, &["tunnel", "revoke", "--json"]));
     assert_eq!(revoked["revoke"]["revoked"], 0, "{revoked}");
+    assert_eq!(
+        revoked["revoke"]["connections"].as_array().unwrap().len(),
+        2,
+        "{revoked}"
+    );
 
     // Restart, then uninstall stops the running instance first.
     let restarted = json_ok(&orcel(&cli, &local, &["start", "--json"]));

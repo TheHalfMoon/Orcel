@@ -1935,7 +1935,7 @@ mod full {
                             dirs,
                             mode,
                             profile_name.as_deref(),
-                            caller.is_remote(),
+                            caller,
                         )
                     },
                 )
@@ -1950,84 +1950,25 @@ mod full {
             if let (Value::Object(map), Value::Object(facts)) = (&mut reply, session.mode_json()) {
                 map.extend(facts);
             }
-            // Reopen the carried pages, background tabs first and the active
-            // one last: the first in the session's page, each later one in a
-            // new tab. Each is the ordinary navigation (its own intent,
-            // approval and receipt); the first refusal stops the rest.
-            let mut carried = Vec::new();
-            let mut stopped: Option<String> = None;
-            for (index, tab) in plan.tabs.iter().enumerate() {
-                // The agent reads the carried URL as it read it in the old
-                // session: an exact carry had nothing redacted, a path-only
-                // carry has no query or fragment.
-                let entry = |page_id: Value, receipt_seq: Value, restored: bool| {
-                    json!({
-                        "from_page_id": tab.from_page_id,
-                        "page_id": page_id,
-                        "carried": tab.kind.as_str(),
-                        "url": crate::agent_url::agent_url(&tab.target, false),
-                        "active": tab.active,
-                        "restored": restored,
-                        "receipt_seq": receipt_seq,
-                    })
-                };
-                if stopped.is_some() {
-                    carried.push(entry(Value::Null, Value::Null, false));
-                    continue;
-                }
-                let action = if index == 0 {
-                    FullAction::Open {
-                        session: session_id.clone(),
-                        url: tab.target.clone(),
-                    }
-                } else {
-                    FullAction::Tabs {
-                        session: session_id.clone(),
-                        op: TabOp::New {
-                            url: Some(tab.target.clone()),
-                        },
-                    }
-                };
-                // A reopened page always asks the owner: the session's lease
-                // is held for it, even if one was granted meanwhile.
-                let outcome =
-                    crate::browser_broker::checked_baseline(broker, probe()).and_then(|baseline| {
-                        let session = broker.session(client, &session_id)?;
-                        session.begin_action()?;
-                        let current = || probe() == Some(baseline);
-                        session.worker.hold_full_access(true);
-                        let result = run_recorded(
-                            workspace, approval, request, session, &action, baseline, &current,
-                        );
-                        session.worker.hold_full_access(false);
-                        result
-                    });
-                match outcome {
-                    Ok(done) => {
-                        let page = done
-                            .get("page_id")
-                            .or_else(|| done.get("active_page_id"))
-                            .cloned()
-                            .unwrap_or(Value::Null);
-                        let seq = done
-                            .get("receipt")
-                            .and_then(|receipt| receipt.get("seq"))
-                            .cloned()
-                            .unwrap_or(Value::Null);
-                        carried.push(entry(page, seq, true));
-                    }
-                    Err(error) => {
-                        stopped = Some(crate::browser_broker::refusal_text(&error));
-                        carried.push(entry(Value::Null, Value::Null, false));
-                    }
-                }
-            }
-            // As after any action: a revoke that landed during the last
-            // reopen ends every session now, the new one included, and the
-            // reply says so.
-            if let Some(ended) = crate::browser_broker::epoch_ended(broker, probe()) {
-                stopped = Some(ended);
-            }
+            // Reopen the carried pages (`reopen_carried`: the first refusal
+            // stops the rest, and the epoch is checked again at the end). A
+            // reopened page always asks the owner: the session's lease is
+            // held for it, even if one was granted meanwhile.
+            let reopened = crate::browser_broker::reopen_carried(
+                broker,
+                client,
+                &session_id,
+                &plan.tabs,
+                &probe,
+                |session, action, baseline, current| {
+                    session.worker.hold_full_access(true);
+                    let result = run_recorded(
+                        workspace, approval, request, session, action, baseline, current,
+                    );
+                    session.worker.hold_full_access(false);
+                    result
+                },
+            );
             let page_id = broker
                 .peek(client, &session_id)
                 .ok()
@@ -2043,9 +1984,10 @@ mod full {
                         "ended": ended.to_json(),
                     }),
                 );
-                map.insert("carried".into(), json!(carried));
+                map.insert("carried".into(), json!(reopened.carried));
                 map.insert("tabs_not_carried".into(), json!(plan.from.dropped));
-                map.insert("restore_stopped".into(), json!(stopped));
+                map.insert("restore_stopped".into(), json!(reopened.stopped));
+                map.insert("session_ended".into(), json!(reopened.ended));
                 map.insert("repeated_actions".into(), json!(REPEATED_NONE));
             }
             Ok(reply)
@@ -2064,7 +2006,7 @@ mod full {
         dirs: &SessionDirs,
         mode: SessionMode,
         profile: Option<&str>,
-        remote: bool,
+        caller: &crate::browser_remote::Caller,
     ) -> Result<LiveBrowser, ProviderError> {
         let launch = WorkerHostLaunch {
             node: None,
@@ -2106,12 +2048,9 @@ mod full {
         // `orcel browser grant` has the service issue a lease.
         // SG-000135 OB-09: no lease ever covers a remote caller's session
         // (founder decision 2026-11-23).
-        let access = crate::browser_lease::FullAccess::service_backed(session_id, client, task);
-        browser.set_full_access(if remote {
-            access.for_remote_caller()
-        } else {
-            access
-        });
+        browser.set_full_access(crate::browser_lease::FullAccess::for_session(
+            session_id, client, task, caller,
+        ));
         if let Some(name) = profile {
             browser.set_profile(name);
         }
@@ -2208,7 +2147,7 @@ mod full {
                             dirs,
                             mode,
                             profile_name.as_deref(),
-                            caller.is_remote(),
+                            caller,
                         )
                     },
                 )?;

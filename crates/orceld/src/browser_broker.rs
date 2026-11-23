@@ -342,17 +342,108 @@ pub(crate) fn checked_baseline<W: SessionWorker>(
     })
 }
 
-/// SG-000135 SH-2: the check an action makes after it ran, for the end of a
-/// mode switch: an epoch that moved, or could not be verified, ends every
-/// session now. Returns what ended them, for the reply.
-pub(crate) fn epoch_ended<W: SessionWorker>(
+/// SG-000135 SH-2: what a mode switch reopened.
+#[derive(Debug, Default)]
+pub(crate) struct Reopened {
+    /// One entry per carried page, in order.
+    pub carried: Vec<Value>,
+    /// The refusal that stopped the reopening, if one did.
+    pub stopped: Option<String>,
+    /// What ended the new session before the switch returned, if anything
+    /// did: then no page of it is open, and no entry says it was restored.
+    pub ended: Option<String>,
+}
+
+/// SG-000135 SH-2: reopen the carried pages in the new session, background
+/// tabs first and the active one last (the plan's order): the first in the
+/// session's page, each later one in a new tab, each through `reopen` (the
+/// ordinary approved, receipted navigation). The first refusal stops the
+/// rest. Then the epoch is read once more, the check a page action makes
+/// after it ran: one that moved during the last reopen, or cannot be
+/// verified, ends every session now, the new one included.
+pub(crate) fn reopen_carried<W: SessionWorker>(
     broker: &mut Broker<W>,
-    seen: Option<u64>,
-) -> Option<String> {
-    broker
-        .check_epoch(seen)
-        .err()
-        .map(|error| refusal_text(&error))
+    client: &str,
+    session_id: &str,
+    tabs: &[crate::browser_mode_switch::CarriedTab],
+    probe: &dyn Fn() -> Option<u64>,
+    mut reopen: impl FnMut(
+        &mut BrokerSession<W>,
+        &crate::browser_full::FullAction,
+        u64,
+        &dyn Fn() -> bool,
+    ) -> Result<Value, ProviderError>,
+) -> Reopened {
+    use crate::browser_full::{FullAction, TabOp};
+    let mut out = Reopened::default();
+    for (index, tab) in tabs.iter().enumerate() {
+        // The agent reads the carried URL as it read it in the old session:
+        // an exact carry had nothing redacted, a path-only carry has no
+        // query or fragment.
+        let entry = |page_id: Value, receipt_seq: Value, restored: bool| {
+            json!({
+                "from_page_id": tab.from_page_id,
+                "page_id": page_id,
+                "carried": tab.kind.as_str(),
+                "url": crate::agent_url::agent_url(&tab.target, false),
+                "active": tab.active,
+                "restored": restored,
+                "receipt_seq": receipt_seq,
+            })
+        };
+        if out.stopped.is_some() {
+            out.carried.push(entry(Value::Null, Value::Null, false));
+            continue;
+        }
+        let action = if index == 0 {
+            FullAction::Open {
+                session: session_id.to_owned(),
+                url: tab.target.clone(),
+            }
+        } else {
+            FullAction::Tabs {
+                session: session_id.to_owned(),
+                op: TabOp::New {
+                    url: Some(tab.target.clone()),
+                },
+            }
+        };
+        let outcome = checked_baseline(broker, probe()).and_then(|baseline| {
+            let session = broker.session(client, session_id)?;
+            session.begin_action()?;
+            reopen(session, &action, baseline, &|| probe() == Some(baseline))
+        });
+        match outcome {
+            Ok(done) => {
+                let page = done
+                    .get("page_id")
+                    .or_else(|| done.get("active_page_id"))
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                let seq = done
+                    .get("receipt")
+                    .and_then(|receipt| receipt.get("seq"))
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                out.carried.push(entry(page, seq, true));
+            }
+            Err(error) => {
+                out.stopped = Some(refusal_text(&error));
+                out.carried.push(entry(Value::Null, Value::Null, false));
+            }
+        }
+    }
+    let moved = broker.check_epoch(probe()).err();
+    if let Err(gone) = broker.peek(client, session_id).map(|_| ()) {
+        // The new session is over: none of its pages is open. The receipts
+        // of the pages it did reopen stay named.
+        out.ended = Some(refusal_text(&moved.unwrap_or(gone)));
+        for entry in &mut out.carried {
+            entry["restored"] = Value::Bool(false);
+            entry["page_id"] = Value::Null;
+        }
+    }
+    out
 }
 
 /// A refusal as a mode switch's reply names it: its code and message.
@@ -3487,28 +3578,154 @@ mod tests {
         assert!(broker.check_epoch(Some(4)).is_ok());
     }
 
-    /// SG-000135 SH-2: a revoke that lands during a mode switch's last reopen
-    /// ends the new session at the end of the switch, not at the next action,
-    /// and the reply says why; an unverified epoch does the same; an unmoved
-    /// one changes nothing.
+    /// SG-000135 SH-2: the reopen loop, driven with a scripted navigation
+    /// that moves the epoch (an emergency revoke) after it did its work.
+    fn reopen_with(
+        name: &str,
+        revoke_during: Option<usize>,
+        refuse_at: Option<usize>,
+    ) -> (Reopened, Vec<String>, Result<(), String>) {
+        use crate::browser_full::FullAction;
+        let mut scene = Scene::new(name);
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        let epoch = std::cell::Cell::new(Some(3));
+        let _ = broker.check_epoch(epoch.get());
+        let id = match scene.create(&mut broker, "client-a", "1") {
+            Ok(id) => id,
+            Err(error) => return (Reopened::default(), Vec::new(), Err(error.message)),
+        };
+        let tab = |page: &str, active| crate::browser_mode_switch::CarriedTab {
+            from_page_id: page.into(),
+            target: format!("https://fixture.test/{page}"),
+            kind: crate::browser_mode_switch::CarryKind::Exact,
+            active,
+        };
+        let tabs = [tab("pg-a", false), tab("pg-b", true)];
+        let mut ran = Vec::new();
+        let out = reopen_carried(
+            &mut broker,
+            "client-a",
+            &id,
+            &tabs,
+            &|| epoch.get(),
+            |_, action, _, current| {
+                let index = ran.len();
+                ran.push(match action {
+                    FullAction::Open { .. } => "open".to_owned(),
+                    FullAction::Tabs { .. } => "tab".to_owned(),
+                    _ => "other".to_owned(),
+                });
+                assert!(current(), "the epoch holds when the reopen starts");
+                if revoke_during == Some(index) {
+                    epoch.set(Some(4));
+                }
+                if refuse_at == Some(index) {
+                    return Err(ProviderError::new(
+                        FailureCode::ApprovalDenied,
+                        "the person said no",
+                    ));
+                }
+                Ok(json!({"page_id": format!("pg-new-{index}"), "receipt": {"seq": index + 1}}))
+            },
+        );
+        let alive = broker
+            .peek("client-a", &id)
+            .map(|_| ())
+            .map_err(|error| error.message);
+        (out, ran, alive)
+    }
+
+    /// SG-000135 SH-2: a revoke that lands during the last reopen ends the
+    /// new session before the switch returns; no page of it is reported as
+    /// restored, and the receipts of what ran stay named.
     #[test]
     fn sh2_a_revoke_during_the_last_reopen_ends_the_new_session() {
-        for (seen, code) in [
-            (Some(4), "TARGET_STALE: "),
-            (None, "APPROVAL_UNAVAILABLE: "),
-        ] {
-            let mut scene = Scene::new("sh2-last-reopen");
-            let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
-            assert_eq!(checked_baseline(&mut broker, Some(3)).ok(), Some(3));
-            let id = scene.create(&mut broker, "client-a", "1").unwrap();
-            assert_eq!(epoch_ended(&mut broker, Some(3)), None);
-            assert!(broker.peek("client-a", &id).is_ok());
-            let ended = epoch_ended(&mut broker, seen).unwrap_or_default();
-            assert!(ended.starts_with(code), "{ended}");
-            assert!(ended.contains("every browser session ended"), "{ended}");
-            let refused = broker.session("client-a", &id).map(|_| ()).unwrap_err();
-            assert!(refused.message.contains("emergency_stop"));
+        let (out, ran, alive) = reopen_with("sh2-last-reopen", Some(1), None);
+        assert_eq!(ran, ["open", "tab"]);
+        assert!(alive.is_err());
+        let ended = out.ended.unwrap_or_default();
+        assert!(ended.starts_with("TARGET_STALE: "), "{ended}");
+        assert!(ended.contains("every browser session ended"), "{ended}");
+        assert_eq!(out.stopped, None, "nothing was refused");
+        for (index, entry) in out.carried.iter().enumerate() {
+            assert_eq!(entry["restored"], false, "{entry}");
+            assert_eq!(entry["page_id"], Value::Null, "{entry}");
+            assert_eq!(entry["receipt_seq"], index + 1, "{entry}");
         }
+    }
+
+    /// SG-000135 SH-2: the refusal that stopped the reopening stays in
+    /// `restore_stopped` when a revoke then ends the session; `session_ended`
+    /// says that separately.
+    #[test]
+    fn sh2_a_refusal_is_kept_when_a_revoke_then_ends_the_session() {
+        let (out, ran, alive) = reopen_with("sh2-refused-then-revoked", Some(1), Some(1));
+        assert_eq!(ran, ["open", "tab"]);
+        assert!(alive.is_err());
+        assert_eq!(
+            out.stopped.as_deref(),
+            Some("APPROVAL_DENIED: the person said no")
+        );
+        assert!(out.ended.is_some());
+        assert!(out.carried.iter().all(|entry| entry["restored"] == false));
+        // Between two reopens: the second is refused and the session is over.
+        let (out, ran, alive) = reopen_with("sh2-revoked-between", Some(0), None);
+        assert_eq!(ran, ["open"]);
+        assert!(alive.is_err() && out.stopped.is_some() && out.ended.is_some());
+        assert!(out.carried.iter().all(|entry| entry["restored"] == false));
+    }
+
+    /// SG-000135 SH-2: without a revoke the pages are restored, a refusal
+    /// stops only the rest, and the session lives.
+    #[test]
+    fn sh2_reopened_pages_are_restored_and_a_refusal_stops_the_rest() {
+        let (out, _, alive) = reopen_with("sh2-reopened", None, None);
+        assert!(alive.is_ok() && out.stopped.is_none() && out.ended.is_none());
+        assert!(out.carried.iter().all(|entry| entry["restored"] == true));
+        assert_eq!(out.carried[1]["page_id"], "pg-new-1");
+        let (out, ran, alive) = reopen_with("sh2-reopen-refused", None, Some(0));
+        assert_eq!(ran, ["open"]);
+        assert!(alive.is_ok() && out.stopped.is_some() && out.ended.is_none());
+        assert!(out.carried.iter().all(|entry| entry["restored"] == false));
+    }
+
+    /// SG-000135 SH-2 and OB-09: the live dispatch (built only in the
+    /// Windows development build) reopens through `reopen_carried`, which
+    /// holds the epoch re-check, and starts a worker at exactly two places,
+    /// each with the request's own caller; a worker's lease cache comes from
+    /// that caller only.
+    #[test]
+    fn the_live_dispatch_wires_the_reopen_and_the_caller() {
+        let compact: String = include_str!("live_dispatch.rs")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        // The broker sessions' part (browser_structured comes before it).
+        let compact = compact.split("modfull{").nth(1).unwrap_or_default();
+        let count = |text: &str| compact.matches(text).count();
+        let switch = compact
+            .split("fnswitch(")
+            .nth(1)
+            .and_then(|rest| rest.split("constREPEATED_NONE").next())
+            .unwrap_or_default();
+        assert_eq!(switch.matches("reopen_carried(").count(), 1);
+        assert_eq!(count("reopen_carried("), 1);
+        assert!(switch.contains("map.insert(\"carried\".into(),json!(reopened.carried));"));
+        assert!(switch.contains("map.insert(\"session_ended\".into(),json!(reopened.ended));"));
+        // Two calls and the definition; the caller is never rebound.
+        assert_eq!(count("letcaller"), 0);
+        assert_eq!(count("start(id,"), 2);
+        assert_eq!(
+            count("start(id,client,task.as_deref(),dirs,mode,profile_name.as_deref(),caller,)"),
+            2
+        );
+        assert_eq!(count("fnstart("), 1);
+        assert_eq!(count("FullAccess::"), 1);
+        assert_eq!(
+            count("FullAccess::for_session(session_id,client,task,caller,)"),
+            1
+        );
+        assert_eq!(count("caller.broker_client(&request.client_session_id)"), 1);
     }
 
     /// The epoch is read once per action: a revoke that lands after the

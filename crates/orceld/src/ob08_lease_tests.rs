@@ -1465,6 +1465,21 @@ fn ob09_no_lease_can_name_a_remote_client() {
     assert!(local.service.authorized.borrow().is_empty());
 }
 
+/// The lease cache a worker is started with follows the request's caller,
+/// and a remote broker client alone is enough.
+#[test]
+fn ob09_a_remote_callers_session_gets_the_remote_lease_cache() {
+    use crate::browser_remote::Caller;
+    let remote = Caller::of(Some(&remote_context('b')));
+    let made = |client: &str, caller: &Caller| {
+        FullAccess::for_session(SESSION, client, Some(TASK), caller).is_remote()
+    };
+    assert!(made(&remote.broker_client("s1"), &remote));
+    assert!(made("s1", &remote));
+    assert!(made(&remote.broker_client("s1"), &Caller::Local));
+    assert!(!made("s1", &Caller::Local));
+}
+
 /// Local coverage is unchanged by the remote rule: a local session's lease
 /// covers, confirms and shows as active.
 #[test]

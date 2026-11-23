@@ -114,13 +114,25 @@ pub fn remote_connection_id_for(tunnel_id: &str, profile: &str) -> Option<String
     }
 }
 
-/// SG-000135 OB-09: every remote connection id `tunnel_id` derives, one per
+/// One connection a tunnel id derives: the profile and its connection id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TunnelConnection {
+    pub profile: &'static str,
+    pub connection_id: String,
+}
+
+/// SG-000135 OB-09: every remote connection `tunnel_id` derives, one per
 /// profile it may serve. Revoking a tunnel revokes all of them, so a lease
 /// left from the profile it served before never outlives the revoke.
-pub fn all_connections(tunnel_id: &str) -> Vec<String> {
+pub fn all_connections(tunnel_id: &str) -> Vec<TunnelConnection> {
     TUNNEL_PROFILES
         .iter()
-        .filter_map(|profile| remote_connection_id_for(tunnel_id, profile))
+        .filter_map(|profile| {
+            Some(TunnelConnection {
+                profile,
+                connection_id: remote_connection_id_for(tunnel_id, profile)?,
+            })
+        })
         .collect()
 }
 
@@ -131,7 +143,7 @@ pub fn connections_revoked_by_setup(
     previous: Option<(&str, &str)>,
     tunnel_id: &str,
     profile: &str,
-) -> Vec<String> {
+) -> Vec<TunnelConnection> {
     match previous {
         Some((old_id, old_profile)) if old_id != tunnel_id || old_profile != profile => {
             all_connections(old_id)
@@ -140,27 +152,93 @@ pub fn connections_revoked_by_setup(
     }
 }
 
-/// Revoke every connection with `revoke` (which returns how many leases it
-/// revoked), and add them up. A failure does not stop the rest; the first
-/// one is returned after every connection was tried.
-pub fn revoke_each(
-    connections: &[String],
-    mut revoke: impl FnMut(&str) -> Result<u64, LifecycleError>,
-) -> Result<u64, LifecycleError> {
-    let mut total = 0;
-    let mut failed = None;
-    for connection in connections {
-        match revoke(connection) {
-            Ok(count) => total += count,
-            Err(error) => {
-                failed.get_or_insert(error);
-            }
+/// What revoking a tunnel's connections did: how many leases each one's
+/// revoke ended, and which revokes failed.
+#[derive(Debug, Default)]
+pub struct RevokeReport {
+    pub ended: Vec<(TunnelConnection, u64)>,
+    pub failed: Vec<(TunnelConnection, LifecycleError)>,
+}
+
+impl RevokeReport {
+    /// How many leases were ended.
+    pub fn revoked(&self) -> u64 {
+        self.ended.iter().map(|(_, count)| count).sum()
+    }
+
+    /// The connection ids whose revoke failed.
+    pub fn failed_ids(&self) -> Vec<&str> {
+        self.failed
+            .iter()
+            .map(|(connection, _)| connection.connection_id.as_str())
+            .collect()
+    }
+
+    /// Exactly what ended and what may still be active, one sentence each.
+    pub fn describe(&self) -> String {
+        let mut out = Vec::new();
+        for (connection, count) in &self.ended {
+            out.push(format!(
+                "{} ({}): {count} lease(s) ended.",
+                connection.connection_id, connection.profile
+            ));
+        }
+        for (connection, error) in &self.failed {
+            out.push(format!(
+                "{} ({}): NOT revoked ({}); a lease on it may still be active until it expires (at most 15 minutes after it was allowed).",
+                connection.connection_id, connection.profile, error.message
+            ));
+        }
+        out.join(" ")
+    }
+
+    /// An error naming what ended and what did not, when any revoke failed.
+    pub fn check(&self) -> Result<(), LifecycleError> {
+        match self.failed.first() {
+            None => Ok(()),
+            Some((_, first)) => Err(LifecycleError::new(
+                first.kind,
+                format!(
+                    "{} Run `orcel tunnel revoke` again, or `orcel remote revoke` to end every remote session lease.",
+                    self.describe()
+                ),
+            )),
         }
     }
-    match failed {
-        Some(error) => Err(error),
-        None => Ok(total),
+}
+
+/// Revoke every connection with `revoke` (which returns how many leases it
+/// revoked). A failure does not stop the rest.
+pub fn revoke_each(
+    connections: &[TunnelConnection],
+    mut revoke: impl FnMut(&str) -> Result<u64, LifecycleError>,
+) -> RevokeReport {
+    let mut report = RevokeReport::default();
+    for connection in connections {
+        match revoke(&connection.connection_id) {
+            Ok(count) => report.ended.push((connection.clone(), count)),
+            Err(error) => report.failed.push((connection.clone(), error)),
+        }
     }
+    report
+}
+
+/// SG-000135 OB-09: change a tunnel's route. The old route's leases are
+/// revoked first, while the saved setup still names it, so a failure or a
+/// crash before `save` leaves the old id reachable by `orcel tunnel revoke`
+/// and by a rerun; `save` runs only when every revoke succeeded. An
+/// `orcel tunnel allow` cannot run in between: every `orcel tunnel` command
+/// holds the lifecycle lock for its whole run, its Windows Hello prompt
+/// included. A `remote.lease.create` sent to orceld some other way (it needs
+/// the same Windows Hello approval) is not ordered by that lock.
+pub fn change_route(
+    replaced: &[TunnelConnection],
+    revoke: impl FnMut(&str) -> Result<u64, LifecycleError>,
+    save: impl FnOnce() -> Result<(), LifecycleError>,
+) -> (RevokeReport, Result<(), LifecycleError>) {
+    let report = revoke_each(replaced, revoke);
+    let result = report.check().and_then(|()| save());
+    (report, result)
 }
 
 /// The derived device identity of the tunnel route.
@@ -338,32 +416,50 @@ mod tests {
     #[test]
     fn ob09_a_tunnel_revoke_covers_both_derived_connections() {
         let connections = all_connections(TUNNEL);
-        assert_eq!(
-            connections,
-            [
-                remote_connection_id(TUNNEL),
-                remote_connection_id_for(TUNNEL, "browser_full").unwrap()
-            ]
-        );
+        let ids: Vec<&str> = connections
+            .iter()
+            .map(|connection| connection.connection_id.as_str())
+            .collect();
+        let browser = remote_connection_id_for(TUNNEL, "browser_full").unwrap();
+        assert_eq!(ids, [remote_connection_id(TUNNEL).as_str(), &browser]);
         let mut seen = Vec::new();
-        let total = revoke_each(&connections, |connection| {
+        let report = revoke_each(&connections, |connection| {
             seen.push(connection.to_owned());
             Ok(1)
-        })
-        .unwrap();
-        assert_eq!((total, seen), (2, connections.clone()));
-        let mut seen = Vec::new();
-        let failed = revoke_each(&connections, |connection| {
-            seen.push(connection.to_owned());
-            if seen.len() == 1 {
-                Err(LifecycleError::state("the first one failed"))
-            } else {
-                Ok(1)
-            }
-        })
-        .unwrap_err();
-        assert!(failed.message.contains("the first one failed"));
-        assert_eq!(seen, connections, "the second was still revoked");
+        });
+        assert_eq!((report.revoked(), seen.len()), (2, 2));
+        assert!(report.failed_ids().is_empty() && report.check().is_ok());
+        // A failed revoke, first or second: the other is still revoked, and
+        // the report and the error say exactly which is which.
+        for bad in 0..2 {
+            let mut calls = 0;
+            let report = revoke_each(&connections, |_| {
+                calls += 1;
+                if calls - 1 == bad {
+                    Err(LifecycleError::state("orceld did not answer"))
+                } else {
+                    Ok(1)
+                }
+            });
+            assert_eq!(calls, 2);
+            assert_eq!(report.revoked(), 1);
+            assert_eq!(report.failed_ids(), [ids[bad]]);
+            let message = report.check().unwrap_err().message;
+            assert!(message.contains(&format!("{} (", ids[bad])), "{message}");
+            let (live, ended) = (ids[bad], ids[1 - bad]);
+            let says = |id: &str, what: &str| {
+                message
+                    .split(id)
+                    .nth(1)
+                    .is_some_and(|rest| rest.split('.').next().unwrap_or("").contains(what))
+            };
+            assert!(says(ended, "1 lease(s) ended"), "{message}");
+            assert!(
+                says(live, "NOT revoked (orceld did not answer)"),
+                "{message}"
+            );
+            assert!(message.contains("may still be active"), "{message}");
+        }
     }
 
     /// SG-000135 OB-09: the leases both connections hold are revoked in the
@@ -417,13 +513,13 @@ mod tests {
             lease(TUNNEL, "browser_full"),
             lease(other, "core"),
         ];
-        let total = revoke_each(&all_connections(TUNNEL), |connection| {
+        let report = revoke_each(&all_connections(TUNNEL), |connection| {
             let (next, count) = revoke_leases(&leases, Some(connection));
             leases = next;
             Ok(count as u64)
-        })
-        .unwrap();
-        assert_eq!(total, 2);
+        });
+        assert!(report.check().is_ok());
+        assert_eq!(report.revoked(), 2);
         let revoked: Vec<bool> = leases.iter().map(|lease| lease.revoked).collect();
         assert_eq!(revoked, [true, true, false]);
     }
@@ -434,7 +530,7 @@ mod tests {
     #[test]
     fn ob09_a_setup_that_changes_the_route_revokes_the_old_one() {
         let other = "tunnel_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
-        let none: Vec<String> = Vec::new();
+        let none: Vec<TunnelConnection> = Vec::new();
         assert_eq!(connections_revoked_by_setup(None, TUNNEL, "core"), none);
         for profile in TUNNEL_PROFILES {
             assert_eq!(
@@ -450,9 +546,57 @@ mod tests {
         // Only the profile changed, either way.
         for (old, new) in [("core", "browser_full"), ("browser_full", "core")] {
             let revoked = connections_revoked_by_setup(Some((TUNNEL, old)), TUNNEL, new);
-            assert!(revoked.contains(&remote_connection_id_for(TUNNEL, old).unwrap()));
+            assert!(revoked.iter().any(|connection| {
+                Some(&connection.connection_id) == remote_connection_id_for(TUNNEL, old).as_ref()
+            }));
             assert_eq!(revoked, all_connections(TUNNEL));
         }
+    }
+
+    /// SG-000135 OB-09: the old route is revoked before the new one is saved,
+    /// and nothing is saved when a revoke fails, so the old id stays
+    /// reachable; a failed save leaves the revoke done and reported.
+    #[test]
+    fn ob09_the_old_route_is_revoked_before_the_new_one_is_saved() {
+        use std::cell::RefCell;
+        let replaced = all_connections(TUNNEL);
+        let steps = RefCell::new(Vec::new());
+        let (report, result) = change_route(
+            &replaced,
+            |_| {
+                steps.borrow_mut().push("revoke");
+                Ok(1)
+            },
+            || {
+                steps.borrow_mut().push("save");
+                Ok(())
+            },
+        );
+        assert!(result.is_ok());
+        assert_eq!(report.revoked(), 2);
+        assert_eq!(*steps.borrow(), ["revoke", "revoke", "save"]);
+        // One revoke fails: both were tried, nothing is saved.
+        let calls = RefCell::new(0);
+        let (report, result) = change_route(
+            &replaced,
+            |_| {
+                *calls.borrow_mut() += 1;
+                if *calls.borrow() == 1 {
+                    Err(LifecycleError::state("no answer"))
+                } else {
+                    Ok(0)
+                }
+            },
+            || Err(LifecycleError::internal("saved after a failed revoke")),
+        );
+        assert_eq!(*calls.borrow(), 2);
+        assert_eq!(report.failed_ids().len(), 1);
+        assert!(result.unwrap_err().message.contains("NOT revoked"));
+        // The save fails: the revoke is done, and the report says so.
+        let (report, result) =
+            change_route(&replaced, |_| Ok(1), || Err(LifecycleError::state("disk")));
+        assert_eq!(report.revoked(), 2);
+        assert_eq!(result.unwrap_err().message, "disk");
     }
 
     /// SG-000135 OB-09: a `browser_full` tunnel route is a valid remote

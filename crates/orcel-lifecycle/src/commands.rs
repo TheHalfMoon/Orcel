@@ -263,19 +263,35 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
             config::store_runtime_key(&layout, &key)?;
             drop(key);
             let platform = host_platform();
-            let committed = config::tunnel_config(&layout, &config, &version)
-                .and_then(|_| config.save(&layout))
-                .and_then(|()| platform.verify_tree_acl(&layout.root))
-                .and_then(|()| {
-                    revoke_tunnel_connections(&layout, &config, &version, &replaced).map_err(
-                        |error| {
-                            LifecycleError::state(format!(
-                                "{} (the previous tunnel route's remote-session leases could not be revoked, so the route was not changed; retry, or end them with `orcel tunnel revoke`)",
-                                error.message
-                            ))
-                        },
+            // The old route is revoked before the new one is saved: a crash
+            // in between leaves the saved setup naming the old id.
+            let mut report = orcel_lifecycle::tunnel_route::RevokeReport::default();
+            let committed = config::tunnel_config(&layout, &config, &version).and_then(|_| {
+                let (ended, result) = orcel_lifecycle::tunnel_route::change_route(
+                    &replaced,
+                    |connection| revoke_connection(&layout, &previous, &version, connection),
+                    || {
+                        config.save(&layout)?;
+                        platform.verify_tree_acl(&layout.root)
+                    },
+                );
+                report = ended;
+                result
+            });
+            let committed = committed.map(|()| report.revoked()).map_err(|error| {
+                let message = if !report.failed.is_empty() {
+                    format!("the tunnel setup was not changed: {}", error.message)
+                } else if !report.ended.is_empty() {
+                    format!(
+                        "{} (the previous route's leases were already ended: {})",
+                        error.message,
+                        report.describe()
                     )
-                });
+                } else {
+                    return error;
+                };
+                LifecycleError::new(error.kind, message)
+            });
             let revoked = match committed {
                 Ok(revoked) => revoked,
                 Err(error) => {
@@ -314,7 +330,8 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
             }
             if !replaced.is_empty() {
                 human.push_str(&format!(
-                    "The previous tunnel route was replaced: {revoked} remote-session lease(s) revoked; `orcel tunnel allow` leases the new one.\n"
+                    "The previous tunnel route was replaced: {revoked} remote-session lease(s) ended. {} `orcel tunnel allow` leases the new route.\n",
+                    report.describe()
                 ));
             }
             human.push_str("Next: `orcel start`, then `orcel status` or `orcel doctor`.\n");
@@ -382,16 +399,30 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
             let config = Config::load(&layout)?;
             config.check_workspaces_with_policy()?;
             let version = active_version(&layout)?;
-            let revoked = revoke_tunnel_connections(
-                &layout,
-                &config,
-                &version,
+            let report = orcel_lifecycle::tunnel_route::revoke_each(
                 &orcel_lifecycle::tunnel_route::all_connections(&tunnel_id),
-            )?;
+                |connection| revoke_connection(&layout, &config, &version, connection),
+            );
+            report.check()?;
             Ok(Output {
                 exit_code: 0,
-                human: format!("Revoked {revoked} tunnel session lease(s).\n"),
-                json: json!({"ok": true, "revoke": {"revoked": revoked}}),
+                human: format!(
+                    "Revoked {} tunnel session lease(s). {}\n",
+                    report.revoked(),
+                    report.describe()
+                ),
+                json: json!({"ok": true, "revoke": {
+                    "revoked": report.revoked(),
+                    "connections": report
+                        .ended
+                        .iter()
+                        .map(|(connection, count)| json!({
+                            "remote_connection_id": connection.connection_id,
+                            "profile": connection.profile,
+                            "revoked": count,
+                        }))
+                        .collect::<Vec<_>>(),
+                }}),
             })
         }
         other => Err(LifecycleError::usage(format!(
@@ -400,30 +431,27 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
     }
 }
 
-/// SG-000135 OB-09: revoke the remote-session leases of `connections`
-/// through orceld, every one even if one fails. Returns how many were
-/// revoked.
-fn revoke_tunnel_connections(
+/// SG-000135 OB-09: revoke the remote-session leases of one connection
+/// through orceld. Returns how many were revoked.
+fn revoke_connection(
     layout: &Layout,
     config: &Config,
     version: &str,
-    connections: &[String],
+    connection: &str,
 ) -> Result<u64, LifecycleError> {
     let workspace = config.default_workspace().unwrap_or("default").to_string();
     let orceld = layout.version_dir(version).join(per_os::orceld_file_name());
-    orcel_lifecycle::tunnel_route::revoke_each(connections, |connection| {
-        let request = ipc::request(
-            &workspace,
-            "remote.lease.revoke",
-            "revoke",
-            json!({ "remote_connection_id": connection }),
-        );
-        let response = ipc::call(&orceld, config, &request, Duration::from_secs(30))?;
-        ipc::expect_ok(&response)?
-            .get("revoked")
-            .and_then(Value::as_u64)
-            .ok_or_else(|| LifecycleError::state("orceld did not say how many leases it revoked"))
-    })
+    let request = ipc::request(
+        &workspace,
+        "remote.lease.revoke",
+        "revoke",
+        json!({ "remote_connection_id": connection }),
+    );
+    let response = ipc::call(&orceld, config, &request, Duration::from_secs(30))?;
+    ipc::expect_ok(&response)?
+        .get("revoked")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| LifecycleError::state("orceld did not say how many leases it revoked"))
 }
 
 /// The configured tunnel's id and the one profile it serves.
