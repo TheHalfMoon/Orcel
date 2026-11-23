@@ -23,9 +23,10 @@
 // source), pdf-inspector is still the version the patch was reviewed
 // against, and orceld's lockfile has no lopdf at all.
 //
-// Every vendored file must also be reviewable by the exact-diff gate: text,
-// with no line longer than MAX_REVIEWABLE_LINE and no line ending in
-// whitespace (the gate runs `git diff --check`).
+// Every vendored file must also pass the range check of the required Alibaba
+// OCR Delegation job (.github/scripts/check-review-range.mjs): text, with no
+// line longer than MAX_REVIEWABLE_LINE and no line ending in whitespace (it
+// runs `git diff --check`).
 //
 // Usage: node scripts/check-vendored-lopdf.mjs [--upstream]
 // Dependency-free; needs git on PATH. Exits 1 on any mismatch.
@@ -224,17 +225,17 @@ export async function check({ upstream = false } = {}) {
     summary.push(`crates.io ${krate.name}-${krate.version}.crate: ${fetched.files.size} files, tree ${fetched.tree}`);
   }
 
-  // Every vendored file must pass the exact-diff review gate as text.
+  // Every vendored file must pass the range check as text.
   for (const path of all.keys()) {
     const bytes = readFileSync(join(repoRoot, path));
     if (bytes.subarray(0, 8192).includes(0) || !isUtf8(bytes)) {
-      errors.push(`${path}: binary content cannot pass exact-diff review`);
+      errors.push(`${path}: binary content cannot pass the Alibaba OCR Delegation range check`);
       continue;
     }
     const text = bytes.toString("utf8");
     const longest = Math.max(...text.split("\n").map((line) => line.length));
     if (longest > MAX_REVIEWABLE_LINE) {
-      errors.push(`${path}: a ${longest}-character line exceeds the ${MAX_REVIEWABLE_LINE}-character review limit`);
+      errors.push(`${path}: a ${longest}-character line exceeds the ${MAX_REVIEWABLE_LINE}-character limit (Alibaba OCR Delegation range check)`);
     }
     if (stripLineEnds(text) !== text) errors.push(`${path}: a line ends in whitespace, which git diff --check refuses`);
   }

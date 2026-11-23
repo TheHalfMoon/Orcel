@@ -150,6 +150,7 @@ The per-component view (state, commits, tests, limitations, blockers) is in
 | Whether Git runs before it is confined | Decided 2026-11-23: "Switch git off for now". Every Orcel Git tool refuses with a clear message until Git runs inside an OS sandbox (`crates/orcel-provider-git/src/confinement.rs`; `prep/SG132_SLICE4.md`) |
 | Design System v1 and the People First identity (v5) | #814's package is at status `review`, not approved; #811 is open (2026-11-19). Integration waits for both, and for the open questions in the package's `IMPLEMENTATION.md` section 5 |
 | Paid infrastructure, deployment | Excluded by the zero-cost rule |
+| Jev as a mandatory review | Decided, effective 2026-11-23: retired; D1 optional and advisory. `docs/governance/2026-11-23-jev-retirement.md`. The ruleset check "Jev Semantic Review" is removed by the coordinating session after the retirement PR merges |
 
 ## 5. External hardware or credentials
 

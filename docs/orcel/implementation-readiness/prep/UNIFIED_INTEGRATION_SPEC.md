@@ -769,8 +769,8 @@ the browser host; OpenAPI 3.1.0 via zod's `z.toJSONSchema`.
 
 ### 8.2 Wave 1 packets
 
-Every packet: exact-head CI on `ubuntu-latest`, `windows-latest`, `macos-latest`; Review Gates (Jev, Alibaba OCR
-delegation); zero unresolved threads; security judge where marked; d1-local advisory only. **WP1-01, 02, 03, 04, 05
+Every packet: exact-head CI on `ubuntu-latest`, `windows-latest`, `macos-latest`; Review Gates (Alibaba OCR
+delegation); independent code review (from 2026-11-23, replacing Jev); zero unresolved threads; security judge where marked; d1-local advisory only. **WP1-01, 02, 03, 04, 05
 and 08 are ready to implement** and are written to the file level.
 
 #### WP1-00 Activation PR

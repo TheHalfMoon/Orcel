@@ -1045,6 +1045,10 @@ Architecture: Cotra is standalone; Kernux is not a dependency.
 
 Evidence rule: never claim PROVEN or CLOSED canonical without required exact-head, platform, merge, post-merge, and governance evidence.
 
-Qualification rule: genuine TypeSafe Jev and Alibaba Open Code Review are required qualification evidence where integrated. Cubic, Qodo, CodeRabbit, and similar bots are not qualification evidence.
+Qualification rule until 2026-11-23: genuine TypeSafe Jev and Alibaba Open Code Review are required qualification evidence where integrated. Evidence recorded under it stays as recorded, Jev passes and failures included.
+
+Qualification rule from 2026-11-23 (founder decision, recorded in `docs/governance/2026-11-23-jev-retirement.md`): exact-head CI, the Rust and platform tests, Alibaba Open Code Review, independent code review, targeted security review for authority, permissions, filesystem boundaries, network or privilege, negative and adversarial regression tests, zero unresolved blocking findings and post-merge verification are required. Jev is retired. D1 is optional and advisory and never authorizes a merge or a privileged operation. Independent code review and the targeted security review are separate. The ruleset enforces only its required status checks on an up-to-date pull request and main's no-deletion and no-force-push rules. It does not enforce the independent code review, the targeted security review, the negative and adversarial tests, the judgment behind Alibaba Open Code Review or the manual review of the files it excludes, zero unresolved blocking findings or resolved threads, the acceptance and exact-diff checks, founder approval, post-merge verification, the platform jobs that are not required checks, or signed-off normal merge commits (full list: `docs/governance/DIFFCIPLINE.md` section 10). Whoever merges records the reviews on the pull request before merging, and the closing pull request carries them into the evidence ledger's `review_basis`. Jev requirements in older plans and packet documents are superseded for future work by this rule.
+
+Cubic, Qodo, CodeRabbit, and similar bots are not qualification evidence.
 
 Language rule: all repository technical content is English only.

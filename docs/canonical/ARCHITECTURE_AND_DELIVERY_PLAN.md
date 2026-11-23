@@ -993,9 +993,10 @@ Every implementation PR must provide:
 - exact-head CI result;
 - Windows qualification when applicable;
 - Diffcipline exact-diff review;
-- Jev-style semantic review;
+- independent code review of the exact head, recorded on the PR (a process rule, not a GitHub check; `docs/governance/DIFFCIPLINE.md` section 10);
 - Alibaba Open Code Review pass where integrated;
 - security review for new capability/authority;
+- negative and adversarial regression tests for every changed boundary;
 - zero unresolved blocking review threads;
 - post-merge verification before canonical effectiveness is claimed.
 

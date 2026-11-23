@@ -3291,7 +3291,7 @@ fn the_no_publication_parsers_decide_the_shapes_they_claim() {
         decide("/tmp/orcel-ocr-output/ocr-preview.json"),
         Ok(UploadPlace::Outside)
     );
-    assert_eq!(decide("jev-review.json"), checkout("jev-review.json"));
+    assert_eq!(decide("review.json"), checkout("review.json"));
     // The step's env wins over the job's; the workflow's is read last.
     assert_eq!(decide("${{ env.STEP }}"), checkout("apps/web/out"));
     assert_eq!(
@@ -3345,7 +3345,7 @@ fn the_no_publication_parsers_decide_the_shapes_they_claim() {
         "apps/web/*",
         "macos-dist",
         "target/release/examples/f4_journey.exe",
-        "jev-review.json",
+        "review.json",
     ] {
         assert!(
             !UploadPlace::Checkout(apart.to_owned()).covers_the_control_room(),
