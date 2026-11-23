@@ -56,8 +56,9 @@ pub fn write_private_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// without replace), so a crash leaves the file at exactly one of the names.
 ///
 /// A filesystem without that step (and any other Unix) gets a hard link at
-/// `to` and then loses `from`: a crash in between leaves the same file at
-/// both names, never at neither.
+/// `to` and then loses `from`. An error there takes the link away again, so
+/// nothing has moved; a crash in between leaves the same file at both names,
+/// never at neither. A filesystem without hard links either fails closed.
 pub fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
@@ -84,10 +85,13 @@ fn exclusive_rename(from: &Path, to: &Path) -> io::Result<()> {
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path holds a NUL byte"))
     };
     let (from, to) = (c_path(from)?, c_path(to)?);
-    // SAFETY: both paths are NUL-terminated and outlive the call.
+    // The system call itself: `renameat2` is in glibc only since 2.28.
+    // SAFETY: both paths are NUL-terminated and outlive the call, and the
+    // arguments have the types the call takes.
     #[cfg(target_os = "linux")]
     let status = unsafe {
-        libc::renameat2(
+        libc::syscall(
+            libc::SYS_renameat2,
             libc::AT_FDCWD,
             from.as_ptr(),
             libc::AT_FDCWD,
@@ -105,12 +109,14 @@ fn exclusive_rename(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
-/// Whether the kernel or the filesystem has no exclusive rename.
+/// Whether the kernel, a system call filter (`EPERM`) or the filesystem has
+/// no exclusive rename. The two-step move never replaces either, so a wrong
+/// guess costs nothing.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn exclusive_rename_unsupported(error: &io::Error) -> bool {
-    error
-        .raw_os_error()
-        .is_some_and(|code| code == libc::ENOSYS || code == libc::EINVAL || code == libc::ENOTSUP)
+    [libc::ENOSYS, libc::EINVAL, libc::ENOTSUP, libc::EPERM]
+        .iter()
+        .any(|code| error.raw_os_error() == Some(*code))
 }
 
 /// `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` or
@@ -140,9 +146,13 @@ fn exclusive_rename(from: &Path, to: &Path) -> io::Result<()> {
 /// it does through `std::fs`.
 #[cfg(windows)]
 fn verbatim(path: &Path) -> io::Result<Vec<u16>> {
+    std::path::absolute(path).map(|path| verbatim_of(&path))
+}
+
+#[cfg(windows)]
+fn verbatim_of(path: &Path) -> Vec<u16> {
     use std::os::windows::ffi::OsStrExt as _;
     use std::path::{Component, Prefix};
-    let path = std::path::absolute(path)?;
     let (prefix, skip) = match path.components().next() {
         Some(Component::Prefix(prefix)) => match prefix.kind() {
             Prefix::Disk(_) => (r"\\?\", 0),
@@ -151,23 +161,81 @@ fn verbatim(path: &Path) -> io::Result<Vec<u16>> {
         },
         _ => ("", 0),
     };
-    Ok(prefix
+    prefix
         .encode_utf16()
         .chain(path.as_os_str().encode_wide().skip(skip))
         .chain(std::iter::once(0))
-        .collect())
+        .collect()
 }
 
 /// The two-step move: `to` is created exclusively as a second name of the
 /// file, made durable, and only then does `from` go.
 #[cfg(any(test, not(windows)))]
 fn link_then_unlink(from: &Path, to: &Path) -> io::Result<()> {
+    link_then_unlink_with(from, to, sync_parent_dir, |from| std::fs::remove_file(from))
+}
+
+#[cfg(any(test, not(windows)))]
+fn link_then_unlink_with(
+    from: &Path,
+    to: &Path,
+    sync: impl FnOnce(&Path) -> io::Result<()>,
+    unlink: impl FnOnce(&Path) -> io::Result<()>,
+) -> io::Result<()> {
     std::fs::hard_link(from, to)?;
+    sync(to)
+        .and_then(|()| unlink(from))
+        .inspect_err(|_| remove_spare_name(from, to))
+}
+
+/// Takes away `to`, the second name this process gave the file at `from`,
+/// unless `from` is that file no longer: then `to` may be its only name.
+#[cfg(any(test, not(windows)))]
+fn remove_spare_name(from: &Path, to: &Path) {
+    let (Ok(from), Ok(named)) = (
+        std::fs::symlink_metadata(from),
+        std::fs::symlink_metadata(to),
+    ) else {
+        return;
+    };
     #[cfg(unix)]
-    if let Some(parent) = to.parent().filter(|parent| !parent.as_os_str().is_empty()) {
-        File::open(parent)?.sync_all()?;
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        if (from.dev(), from.ino()) != (named.dev(), named.ino()) {
+            return;
+        }
     }
-    std::fs::remove_file(from)
+    #[cfg(not(unix))]
+    let _ = (from, named);
+    let _ = std::fs::remove_file(to);
+}
+
+/// Makes the names in `path`'s directory durable, where the filesystem can.
+#[cfg(any(test, not(windows)))]
+fn sync_parent_dir(path: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        directory_synced(File::open(parent)?.sync_all())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(())
+    }
+}
+
+/// A filesystem that cannot sync a directory says so with `EINVAL` or
+/// `ENOTSUP`; any other error is one.
+#[cfg(unix)]
+fn directory_synced(synced: io::Result<()>) -> io::Result<()> {
+    match synced {
+        Err(error) if matches!(error.raw_os_error(), Some(libc::EINVAL | libc::ENOTSUP)) => Ok(()),
+        synced => synced,
+    }
 }
 
 /// Creates one new directory that only its owner can enter (#417): mode 0700
@@ -443,17 +511,106 @@ mod tests {
         }
     }
 
+    /// An error after the link was made takes the link away again: nothing
+    /// has moved, and the same name can be tried again.
+    #[test]
+    fn a_failed_two_step_move_moves_nothing() {
+        fn failed() -> io::Result<()> {
+            Err(io::Error::other("injected"))
+        }
+        let moves: [Move; 2] = [
+            |from, to| link_then_unlink_with(from, to, |_| failed(), |_| panic!("not synced")),
+            |from, to| link_then_unlink_with(from, to, |_| Ok(()), |_| failed()),
+        ];
+        for (index, rename) in moves.iter().enumerate() {
+            let dir = sandbox(&format!("move-failed-{index}"));
+            let (from, to) = (dir.join("from"), dir.join("to"));
+            std::fs::write(&from, b"one").expect("from");
+            let error = rename(&from, &to).expect_err("injected");
+            assert_eq!(error.to_string(), "injected", "move {index}");
+            assert!(std::fs::symlink_metadata(&to).is_err(), "move {index}");
+            assert_eq!(std::fs::read(&from).expect("from"), b"one");
+            link_then_unlink(&from, &to).expect("the next try");
+            assert_eq!(std::fs::read(&to).expect("to"), b"one");
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    /// When the old name is gone although taking it away failed, the new
+    /// name is the file's only one and stays.
+    #[test]
+    fn a_failed_two_step_move_never_removes_the_only_name() {
+        let dir = sandbox("move-only-name");
+        let (from, to) = (dir.join("from"), dir.join("to"));
+        std::fs::write(&from, b"one").expect("from");
+        let gone = |from: &Path| {
+            std::fs::remove_file(from).expect("gone");
+            Err(io::Error::other("injected"))
+        };
+        assert!(link_then_unlink_with(&from, &to, |_| Ok(()), gone).is_err());
+        assert_eq!(std::fs::read(&to).expect("to"), b"one");
+        #[cfg(unix)]
+        {
+            // Another file at the old name does not make the new one spare.
+            let to = dir.join("to-2");
+            std::fs::write(&from, b"two").expect("from");
+            let replaced = |from: &Path| {
+                std::fs::write(dir.join("other"), b"other").expect("other");
+                std::fs::rename(dir.join("other"), from).expect("replaced");
+                Err(io::Error::other("injected"))
+            };
+            assert!(link_then_unlink_with(&from, &to, |_| Ok(()), replaced).is_err());
+            assert_eq!(std::fs::read(&to).expect("to"), b"two");
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Only a directory that cannot be synced at all is let off.
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_sync_error_is_an_error_unless_syncing_is_unsupported() {
+        let synced = |code| directory_synced(Err(io::Error::from_raw_os_error(code)));
+        for code in [libc::EINVAL, libc::ENOTSUP] {
+            assert!(synced(code).is_ok(), "{code}");
+        }
+        for code in [libc::EIO, libc::ENOSPC, libc::EACCES, libc::EPERM] {
+            assert_eq!(synced(code).expect_err("error").raw_os_error(), Some(code));
+        }
+        assert!(directory_synced(Ok(())).is_ok());
+        let dir = sandbox("sync-dir");
+        sync_parent_dir(&dir.join("name")).expect("a directory is synced");
+        assert!(sync_parent_dir(&dir.join("missing").join("name")).is_err());
+        sync_parent_dir(Path::new("name")).expect("the current directory is synced");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The paths the Windows move passes to the system.
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_paths_have_the_form_windows_takes() {
+        for (path, wide) in [
+            (r"C:\dir\file", r"\\?\C:\dir\file"),
+            (r"\\server\share\dir\file", r"\\?\UNC\server\share\dir\file"),
+            (r"\\?\C:\dir\file", r"\\?\C:\dir\file"),
+            (r"\\?\UNC\server\share\f", r"\\?\UNC\server\share\f"),
+            (r"\\.\pipe\name", r"\\.\pipe\name"),
+        ] {
+            let expected: Vec<u16> = wide.encode_utf16().chain(std::iter::once(0)).collect();
+            assert_eq!(verbatim_of(Path::new(path)), expected, "{path}");
+        }
+    }
+
     /// Only an absent exclusive rename leads to the two-step move; a taken
     /// name or any other failure does not.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn only_an_unsupported_exclusive_rename_falls_back() {
-        for code in [libc::ENOSYS, libc::EINVAL, libc::ENOTSUP] {
+        for code in [libc::ENOSYS, libc::EINVAL, libc::ENOTSUP, libc::EPERM] {
             assert!(exclusive_rename_unsupported(&io::Error::from_raw_os_error(
                 code
             )));
         }
-        for code in [libc::EEXIST, libc::ENOENT, libc::EACCES, libc::EPERM] {
+        for code in [libc::EEXIST, libc::ENOENT, libc::EACCES, libc::ENOSPC] {
             assert!(!exclusive_rename_unsupported(
                 &io::Error::from_raw_os_error(code)
             ));
