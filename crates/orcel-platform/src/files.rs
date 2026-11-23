@@ -48,6 +48,128 @@ pub fn write_private_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
     linked
 }
 
+/// Moves `from` to `to` in the same directory, never replacing what is at
+/// `to`: an existing file, directory or symbolic link (dangling or not) is
+/// left as it is and the move fails with [`io::ErrorKind::AlreadyExists`],
+/// with `from` untouched. One step in the kernel (`renameat2` with
+/// `RENAME_NOREPLACE`, `renamex_np` with `RENAME_EXCL`, `MoveFileExW`
+/// without replace), so a crash leaves the file at exactly one of the names.
+///
+/// A filesystem without that step (and any other Unix) gets a hard link at
+/// `to` and then loses `from`: a crash in between leaves the same file at
+/// both names, never at neither.
+pub fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        match exclusive_rename(from, to) {
+            Err(error) if exclusive_rename_unsupported(&error) => link_then_unlink(from, to),
+            done => done,
+        }
+    }
+    #[cfg(windows)]
+    {
+        exclusive_rename(from, to)
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+    {
+        link_then_unlink(from, to)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn exclusive_rename(from: &Path, to: &Path) -> io::Result<()> {
+    use std::os::unix::ffi::OsStrExt as _;
+    let c_path = |path: &Path| {
+        std::ffi::CString::new(path.as_os_str().as_bytes())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path holds a NUL byte"))
+    };
+    let (from, to) = (c_path(from)?, c_path(to)?);
+    // SAFETY: both paths are NUL-terminated and outlive the call.
+    #[cfg(target_os = "linux")]
+    let status = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            from.as_ptr(),
+            libc::AT_FDCWD,
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    // SAFETY: as above.
+    #[cfg(target_os = "macos")]
+    let status = unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) };
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// Whether the kernel or the filesystem has no exclusive rename.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn exclusive_rename_unsupported(error: &io::Error) -> bool {
+    error
+        .raw_os_error()
+        .is_some_and(|code| code == libc::ENOSYS || code == libc::EINVAL || code == libc::ENOTSUP)
+}
+
+/// `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` or
+/// `MOVEFILE_COPY_ALLOWED`: one rename, or an error.
+#[cfg(windows)]
+fn exclusive_rename(from: &Path, to: &Path) -> io::Result<()> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::WIN32_ERROR;
+    use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_WRITE_THROUGH};
+    let (from, to) = (verbatim(from)?, verbatim(to)?);
+    // SAFETY: both paths are NUL-terminated and outlive the call.
+    unsafe {
+        MoveFileExW(
+            PCWSTR(from.as_ptr()),
+            PCWSTR(to.as_ptr()),
+            MOVEFILE_WRITE_THROUGH,
+        )
+    }
+    // The windows crate's own conversion loses the error's kind.
+    .map_err(|error| match WIN32_ERROR::from_error(&error) {
+        Some(code) => io::Error::from_raw_os_error(code.0 as i32),
+        None => error.into(),
+    })
+}
+
+/// `path` as an absolute, NUL-terminated `\\?\` path, so a long one works as
+/// it does through `std::fs`.
+#[cfg(windows)]
+fn verbatim(path: &Path) -> io::Result<Vec<u16>> {
+    use std::os::windows::ffi::OsStrExt as _;
+    use std::path::{Component, Prefix};
+    let path = std::path::absolute(path)?;
+    let (prefix, skip) = match path.components().next() {
+        Some(Component::Prefix(prefix)) => match prefix.kind() {
+            Prefix::Disk(_) => (r"\\?\", 0),
+            Prefix::UNC(..) => (r"\\?\UNC\", 2),
+            _ => ("", 0),
+        },
+        _ => ("", 0),
+    };
+    Ok(prefix
+        .encode_utf16()
+        .chain(path.as_os_str().encode_wide().skip(skip))
+        .chain(std::iter::once(0))
+        .collect())
+}
+
+/// The two-step move: `to` is created exclusively as a second name of the
+/// file, made durable, and only then does `from` go.
+#[cfg(any(test, not(windows)))]
+fn link_then_unlink(from: &Path, to: &Path) -> io::Result<()> {
+    std::fs::hard_link(from, to)?;
+    #[cfg(unix)]
+    if let Some(parent) = to.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        File::open(parent)?.sync_all()?;
+    }
+    std::fs::remove_file(from)
+}
+
 /// Creates one new directory that only its owner can enter (#417): mode 0700
 /// from the first instant on Unix, and a protected DACL naming only the user,
 /// `SYSTEM` and Administrators on Windows (not whatever `%TEMP%` grants). It
@@ -152,6 +274,13 @@ fn create_private_temp(path: &Path) -> io::Result<(PathBuf, File)> {
     ))
 }
 
+/// 128 bits in hex that tell one call's result from any other's, in this
+/// process or another: for names and records that must differ even when made
+/// in the same millisecond. Never a key or a secret. It cannot fail.
+pub fn unique_token() -> String {
+    format!("{:016x}{:016x}", random_suffix(), random_suffix())
+}
+
 /// A suffix nobody can predict: `RandomState` is seeded from the OS once per
 /// process, mixed with the time, the pid and a per-process counter.
 fn random_suffix() -> u64 {
@@ -240,6 +369,111 @@ mod tests {
     #[test]
     fn temp_suffixes_differ_between_calls() {
         assert_ne!(random_suffix(), random_suffix());
+    }
+
+    #[test]
+    fn unique_tokens_differ_between_calls() {
+        let tokens: std::collections::HashSet<_> = (0..1000).map(|_| unique_token()).collect();
+        assert_eq!(tokens.len(), 1000);
+        assert!(tokens.iter().all(|token| token.len() == 32));
+    }
+
+    type Move = fn(&Path, &Path) -> io::Result<()>;
+
+    /// Both ways to move a file aside: the one this platform uses, and the
+    /// two-step one a filesystem without an exclusive rename gets.
+    const MOVES: [Move; 2] = [rename_no_replace, link_then_unlink];
+
+    #[test]
+    fn a_move_without_replace_moves_the_file() {
+        for (index, rename) in MOVES.iter().enumerate() {
+            let dir = sandbox(&format!("move-{index}"));
+            let (from, to) = (dir.join("from"), dir.join("to"));
+            std::fs::write(&from, b"one").expect("from");
+            rename(&from, &to).expect("move");
+            assert!(!from.exists(), "move {index}");
+            assert_eq!(std::fs::read(&to).expect("to"), b"one");
+            assert_eq!(
+                rename(&from, &dir.join("other")).expect_err("gone").kind(),
+                io::ErrorKind::NotFound
+            );
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[test]
+    fn a_move_without_replace_never_replaces_a_file_or_a_directory() {
+        for (index, rename) in MOVES.iter().enumerate() {
+            let dir = sandbox(&format!("taken-{index}"));
+            let (from, to) = (dir.join("from"), dir.join("to"));
+            std::fs::write(&from, b"new").expect("from");
+            std::fs::write(&to, b"kept").expect("to");
+            std::fs::create_dir(dir.join("folder")).expect("folder");
+            for target in [to.clone(), dir.join("folder")] {
+                let error = rename(&from, &target).expect_err("taken");
+                assert_eq!(error.kind(), io::ErrorKind::AlreadyExists, "move {index}");
+            }
+            assert_eq!(std::fs::read(&to).expect("to"), b"kept");
+            assert_eq!(std::fs::read(&from).expect("from"), b"new");
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    /// A link at the target, whether it leads anywhere or not, is neither
+    /// replaced nor followed.
+    #[cfg(unix)]
+    #[test]
+    fn a_move_without_replace_never_replaces_or_follows_a_symlink() {
+        for (index, rename) in MOVES.iter().enumerate() {
+            let dir = sandbox(&format!("move-link-{index}"));
+            let (from, victim) = (dir.join("from"), dir.join("victim"));
+            std::fs::write(&from, b"new").expect("from");
+            std::fs::write(&victim, b"keep").expect("victim");
+            for leads_to in [victim.clone(), dir.join("nowhere")] {
+                let to = dir.join(format!("to-{}", leads_to.exists()));
+                std::os::unix::fs::symlink(&leads_to, &to).expect("link");
+                let error = rename(&from, &to).expect_err("taken");
+                assert_eq!(error.kind(), io::ErrorKind::AlreadyExists, "move {index}");
+                assert_eq!(std::fs::read_link(&to).expect("link kept"), leads_to);
+            }
+            assert_eq!(std::fs::read(&victim).expect("victim"), b"keep");
+            assert_eq!(std::fs::read(&from).expect("from"), b"new");
+            assert!(!dir.join("nowhere").exists());
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    /// Only an absent exclusive rename leads to the two-step move; a taken
+    /// name or any other failure does not.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn only_an_unsupported_exclusive_rename_falls_back() {
+        for code in [libc::ENOSYS, libc::EINVAL, libc::ENOTSUP] {
+            assert!(exclusive_rename_unsupported(&io::Error::from_raw_os_error(
+                code
+            )));
+        }
+        for code in [libc::EEXIST, libc::ENOENT, libc::EACCES, libc::EPERM] {
+            assert!(!exclusive_rename_unsupported(
+                &io::Error::from_raw_os_error(code)
+            ));
+        }
+    }
+
+    /// A name longer than MAX_PATH moves, as it does through `std::fs`.
+    #[cfg(windows)]
+    #[test]
+    fn a_move_without_replace_takes_a_long_path() {
+        let dir = sandbox("move-long");
+        let mut deep = dir.clone();
+        while deep.as_os_str().len() < 300 {
+            deep.push("d".repeat(50));
+        }
+        std::fs::create_dir_all(&deep).expect("deep");
+        std::fs::write(deep.join("from"), b"one").expect("from");
+        rename_no_replace(&deep.join("from"), &deep.join("to")).expect("move");
+        assert_eq!(std::fs::read(deep.join("to")).expect("to"), b"one");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

@@ -22,10 +22,16 @@
 //! was replaced by an unlinked file, or whose added records do not chain,
 //! is refused: nothing is appended and the caller gets
 //! [`ChainError::Broken`]. A torn last line (a crash in the middle of a
-//! write) is moved to `<chain>.quarantine-<ms>-<pid>`, cut from the file and
-//! recorded as a `rotation` event before anything else is appended, so the
-//! cut is itself in the chain. A last line that is a whole valid event
+//! write) is moved to `<chain>.quarantine-<ms>-<pid>-<token>`, cut from the
+//! file and recorded as a `rotation` event before anything else is appended,
+//! so the cut is itself in the chain. A last line that is a whole valid event
 //! without its line end is not what a crash leaves, and is refused.
+//!
+//! Kept evidence is never replaced: a file or tail moved aside only takes a
+//! name nothing has, and after [`ASIDE_ATTEMPTS`] taken names the operation
+//! fails with the chain as it was. An opening record carries a `nonce`, so
+//! two files opened in one millisecond still have different ids (a file
+//! opened before there was a nonce has none, and verifies the same).
 //!
 //! Every [`ANCHOR_INTERVAL_EVENTS`] events the writer asks its
 //! [`Anchorer`] to hold `(log, file id, seq, digest)` and records the answer
@@ -44,6 +50,7 @@ use orcel_contracts::event::{
 use orcel_contracts::job::ExecutionState;
 use orcel_contracts::lease::DispatchAuthority;
 use orcel_contracts::Contract;
+use orcel_platform::files::{rename_no_replace, unique_token};
 use serde_json::{json, Value};
 use std::fmt;
 use std::fs::{File, OpenOptions};
@@ -61,6 +68,9 @@ pub const MAX_LINE_BYTES: usize = 64 * 1024;
 const LOCK_WAIT: Duration = Duration::from_secs(10);
 /// How long a writer waits for the holder to hold a reset file's opening.
 pub const OPENING_ANCHOR_WAIT: Duration = Duration::from_secs(3);
+
+/// How many names an operation that keeps evidence aside tries.
+pub(crate) const ASIDE_ATTEMPTS: usize = 16;
 
 /// Asks `anchorer` on a thread of its own and waits at most `wait`; no
 /// answer in time is an unanchored outcome (the thread is left to finish).
@@ -229,6 +239,10 @@ pub struct Appended {
 }
 
 pub(crate) fn now_ms() -> u64 {
+    #[cfg(test)]
+    if let Some(forced) = forced::now_ms() {
+        return forced;
+    }
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
@@ -556,17 +570,101 @@ fn os_lock(lock_path: &Path) -> Result<File, ChainError> {
     }
 }
 
-/// A name beside `path` for a file moved aside, owned by the chain's
+/// What a test makes collide on purpose, in its own thread.
+#[cfg(test)]
+pub(crate) mod forced {
+    use std::cell::{Cell, RefCell};
+    use std::collections::VecDeque;
+
+    thread_local! {
+        static NOW_MS: Cell<Option<u64>> = const { Cell::new(None) };
+        static ASIDE_TOKENS: RefCell<VecDeque<String>> = const { RefCell::new(VecDeque::new()) };
+    }
+
+    pub(super) fn now_ms() -> Option<u64> {
+        NOW_MS.get()
+    }
+
+    pub(super) fn aside_token() -> Option<String> {
+        ASIDE_TOKENS.with_borrow_mut(VecDeque::pop_front)
+    }
+
+    /// Stops this thread's clock at `ms` until dropped.
+    pub(crate) struct Collisions(());
+
+    impl Collisions {
+        pub(crate) fn at(ms: u64) -> Self {
+            NOW_MS.set(Some(ms));
+            Self(())
+        }
+
+        /// The tokens of the next aside names; random again after them.
+        pub(crate) fn tokens(&self, tokens: &[&str]) {
+            ASIDE_TOKENS.set(tokens.iter().map(|&token| token.to_owned()).collect());
+        }
+
+        /// How many of them no aside name has used yet.
+        pub(crate) fn tokens_left(&self) -> usize {
+            ASIDE_TOKENS.with_borrow(VecDeque::len)
+        }
+    }
+
+    impl Drop for Collisions {
+        fn drop(&mut self) {
+            NOW_MS.set(None);
+            ASIDE_TOKENS.take();
+        }
+    }
+}
+
+fn aside_token() -> String {
+    #[cfg(test)]
+    if let Some(token) = forced::aside_token() {
+        return token;
+    }
+    unique_token()
+}
+
+/// A fresh name beside `path` for a file moved aside, owned by the chain's
 /// registered store (`.quarantine-` siblings).
 fn aside_name(path: &Path, what: &str) -> String {
     format!(
-        "{}.quarantine-{what}{}-{}",
+        "{}.quarantine-{what}{}-{}-{}",
         path.file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default(),
         now_ms(),
-        std::process::id()
+        std::process::id(),
+        aside_token()
     )
+}
+
+/// Runs `keep` on one fresh aside path after another until one is not taken,
+/// and returns its name. `keep` must create the path exclusively, so that
+/// whatever already has the name is left as it is.
+fn keep_aside<T>(
+    path: &Path,
+    what: &str,
+    action: &str,
+    keep: impl Fn(&Path) -> io::Result<T>,
+) -> Result<(String, T), ChainError> {
+    for _ in 0..ASIDE_ATTEMPTS {
+        let name = aside_name(path, what);
+        match keep(&path.with_file_name(&name)) {
+            Ok(kept) => return Ok((name, kept)),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(io_error(action, error)),
+        }
+    }
+    Err(ChainError::Io(format!(
+        "{action}: all {ASIDE_ATTEMPTS} names tried are taken; nothing was moved or replaced"
+    )))
+}
+
+/// Moves the chain at `path` to a fresh name beside it, never onto an
+/// existing file, and returns the name.
+fn move_to_aside(path: &Path, what: &str, action: &str) -> Result<String, ChainError> {
+    keep_aside(path, what, action, |to| rename_no_replace(path, to)).map(|(name, ())| name)
 }
 
 impl ChainWriter {
@@ -907,15 +1005,15 @@ impl ChainWriter {
     /// Moves a torn last line aside, cuts it from the chain and records
     /// both in the chain.
     fn quarantine_tail(&self, cursor: &mut Cursor, bytes: &[u8]) -> Result<(), ChainError> {
-        let name = aside_name(&self.path, "");
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
         std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        options
-            .open(self.path.with_file_name(&name))
-            .and_then(|mut file| file.write_all(bytes).and_then(|()| file.sync_all()))
-            .map_err(|error| io_error("quarantine the torn tail", error))?;
+        let action = "quarantine the torn tail";
+        let (name, mut kept) = keep_aside(&self.path, "", action, |to| options.open(to))?;
+        kept.write_all(bytes)
+            .and_then(|()| kept.sync_all())
+            .map_err(|error| io_error(action, error))?;
         OpenOptions::new()
             .write(true)
             .open(&self.path)
@@ -939,7 +1037,8 @@ impl ChainWriter {
     }
 
     /// Event 0 of a new file: a `rotation` event opening it, linked to the
-    /// file it follows.
+    /// file it follows, with a nonce so that its digest (the file's id) is no
+    /// other file's.
     fn open_file_if_empty(
         &self,
         cursor: &mut Cursor,
@@ -960,6 +1059,7 @@ impl ChainWriter {
             "previous_head_digest": link.map(|link| link.previous_head_digest.as_str()),
             "moved_aside": moved,
             "anchor_reset": reset,
+            "nonce": unique_token(),
         });
         cursor.head = link.map_or_else(
             || GENESIS_PREV_DIGEST.to_owned(),
@@ -1060,9 +1160,9 @@ pub struct MovedAside {
 }
 
 /// Operator recovery for a chain that does not verify: under the chain's
-/// lock, keeps the file as `<chain>.quarantine-moved-<ms>-<pid>` and opens a
-/// new file whose opening event links to the old file's last verifiable
-/// record and names where the old file went. Running writers follow the
+/// lock, keeps the file as `<chain>.quarantine-moved-<ms>-<pid>-<token>` and
+/// opens a new file whose opening event links to the old file's last
+/// verifiable record and names where the old file went. Running writers follow the
 /// linked file. A continuation, never a clean slate: everything the old
 /// file held stays, and the gap is recorded.
 pub fn move_aside(path: &Path, log: &str) -> Result<MovedAside, ChainError> {
@@ -1092,9 +1192,7 @@ pub fn move_aside(path: &Path, log: &str) -> Result<MovedAside, ChainError> {
         previous_head_seq: scanner.next_seq.saturating_sub(1),
         previous_head_digest: scanner.head.clone(),
     });
-    let moved_to = aside_name(path, "moved-");
-    std::fs::rename(path, path.with_file_name(&moved_to))
-        .map_err(|error| io_error("move the chain aside", error))?;
+    let moved_to = move_to_aside(path, "moved-", "move the chain aside")?;
     let writer = ChainWriter::open(path, log).map_err(|error| io_error("open the chain", error))?;
     let mut cursor = Cursor::empty();
     cursor.verified = true;
@@ -1122,17 +1220,18 @@ pub struct ResetOpened {
 
 /// After the owner reset the anchor holder's anchor of this log (an
 /// elevated, confirmed `orcel audit reset-anchor`): keeps the current file,
-/// if any, as `<chain>.quarantine-reset-<ms>-<pid>` and opens a new first
-/// file whose opening record names the reset (`anchor_reset`: the holder's
+/// if any, as `<chain>.quarantine-reset-<ms>-<pid>-<token>` and opens a new
+/// first file whose opening record names the reset (`anchor_reset`: the holder's
 /// reset record digest and seq). The verifier reports such a file as
 /// `reset_by_owner`, never silently intact.
 pub fn open_after_reset(path: &Path, log: &str, reset: Value) -> Result<ResetOpened, ChainError> {
     let _lock = lock(&lock_path_of(path))?;
     let moved_to = if path.exists() {
-        let name = aside_name(path, "reset-");
-        std::fs::rename(path, path.with_file_name(&name))
-            .map_err(|error| io_error("move the abandoned chain aside", error))?;
-        Some(name)
+        Some(move_to_aside(
+            path,
+            "reset-",
+            "move the abandoned chain aside",
+        )?)
     } else {
         None
     };
