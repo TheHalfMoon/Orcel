@@ -304,7 +304,16 @@ mod macos {
             };
             let config = crate::config::Config::load(layout)?;
             let stderr_log = layout.logs_dir().join(launchd::STDERR_LOG);
-            launchd::rotate_log(&stderr_log, launchd::MAX_STDERR_LOG)?;
+            // Best effort: the start script checks the log every time, so a
+            // log that cannot be moved aside never fails an install, update
+            // or recovery. Links and foreign owners in the install are still
+            // refused by `protect_tree` and `verify_tree`.
+            if let Err(error) = launchd::rotate_log(&stderr_log, launchd::MAX_STDERR_LOG) {
+                crate::logs::transcript(
+                    layout,
+                    &format!("agent log not moved aside: {}", error.message),
+                );
+            }
             let mut environment = launchd::agent_environment(&config);
             environment.extend(extra);
             let spec = AgentSpec {

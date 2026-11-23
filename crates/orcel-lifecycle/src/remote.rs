@@ -299,8 +299,8 @@ pub fn validate_relay_origin(origin: &str) -> Result<(), LifecycleError> {
     }
 }
 
-/// SG-000135 OB-09 (engineering-chosen 2026-11-22 under the founder's
-/// delegation): the relay serves the `core` profile only. Remote Orcel
+/// SG-000135 OB-09 (tunnel only: an engineering choice,
+/// 2026-11-22): the relay serves the `core` profile only. Remote Orcel
 /// Browser control (`browser_full`) is available only through the ChatGPT
 /// Secure MCP Tunnel, so `orcel remote enable|pair --profile` accepts
 /// nothing but `core`.

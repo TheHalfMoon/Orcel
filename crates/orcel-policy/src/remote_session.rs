@@ -63,8 +63,8 @@ pub fn tunnel_browser_full_route(tunnel_id: &str) -> (String, String, String) {
     )
 }
 
-/// SG-000135 OB-09 (engineering-chosen 2026-11-22 under the founder's
-/// delegation): only the ChatGPT Secure MCP Tunnel serves `browser_full`.
+/// SG-000135 OB-09 (tunnel only: an engineering choice,
+/// 2026-11-22): only the ChatGPT Secure MCP Tunnel serves `browser_full`.
 /// A `browser_full` remote-session lease is built only when the local
 /// command proves the route is the tunnel's own: `orcel tunnel allow` sends
 /// the configured tunnel id, and the lease's principal, connection and

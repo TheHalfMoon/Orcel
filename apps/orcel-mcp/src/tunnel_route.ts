@@ -9,8 +9,8 @@
  * `orceld` requires an active local remote-session lease and the remote
  * scope map. In tunnel mode no environment variable selects a local profile.
  *
- * SG-000135 OB-09 (engineering-chosen 2026-11-22 under the founder's
- * delegation): the tunnel is the only remote path that may serve the remote
+ * SG-000135 OB-09 (tunnel only: an engineering choice,
+ * 2026-11-22): the tunnel is the only remote path that may serve the remote
  * `browser_full` profile, when the owner set the tunnel up for it on the PC
  * (`orcel tunnel setup --profile browser_full`). The relay's paired
  * connections stay `core` only (`PairedConnection`).

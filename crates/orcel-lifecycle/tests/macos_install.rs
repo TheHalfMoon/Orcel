@@ -429,11 +429,12 @@ fn the_launch_agent_starts_orceld_per_connection_and_uninstall_removes_it() {
     assert_eq!(mode(&socket), 0o600);
     assert_eq!(mode(socket.parent().unwrap()), 0o700);
 
-    // A log over the bound is moved aside when launchd next starts orceld.
+    // A log over the bound is moved aside when launchd next starts orceld,
+    // and one with wider permissions is made owner-only.
     let log = root.join("logs").join("orceld-agent.log");
     let oversized = orcel_lifecycle::launchd::MAX_STDERR_LOG as usize + 1;
     fs::write(&log, vec![b'x'; oversized]).unwrap();
-    fs::set_permissions(&log, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::set_permissions(&log, fs::Permissions::from_mode(0o644)).unwrap();
 
     for _ in 0..2 {
         let response = system_status(&socket);
@@ -446,6 +447,7 @@ fn the_launch_agent_starts_orceld_per_connection_and_uninstall_removes_it() {
     let rotated = fs::metadata(root.join("logs").join("orceld-agent.log.1"))
         .expect("the oversized log was moved aside");
     assert_eq!(rotated.len() as usize, oversized);
+    assert_eq!(mode(&root.join("logs").join("orceld-agent.log.1")), 0o600);
     let logged = fs::read_to_string(&log).expect("the agent's stderr log");
     assert_eq!(
         logged.matches("orceld ready:").count(),
@@ -564,5 +566,80 @@ fn the_installed_orceld_refuses_emergency_revoke_headless() {
         "MAC-M1-08-EVIDENCE installed_orceld code={code} revoked=false audited={} bypass_env_ignored=true seconds={}",
         lines.len(),
         started.elapsed().as_secs()
+    );
+}
+
+/// A log that cannot be moved aside (a folder under its name, or an oversized
+/// log whose `.1` is a folder) never fails the install that writes the agent:
+/// it is noted in the lifecycle log, and the agent is loaded and, with the
+/// real `orceld`, answers.
+#[test]
+fn an_agent_log_that_cannot_be_moved_aside_does_not_fail_the_install() {
+    let Some(node) = node() else { return };
+    for (index, case) in ["folder", "aside-folder"].into_iter().enumerate() {
+        let (home, root) = home_and_root(case);
+        let workspace = home.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        orcel_lifecycle::config::Config {
+            workspaces: vec![orcel_lifecycle::config::WorkspaceEntry {
+                id: "ci".into(),
+                root: workspace,
+            }],
+            ..orcel_lifecycle::config::Config::default()
+        }
+        .save(&Layout::new(&root))
+        .unwrap();
+        let logs = root.join("logs");
+        let log = logs.join("orceld-agent.log");
+        fs::create_dir_all(&logs).unwrap();
+        let oversized = vec![b'x'; orcel_lifecycle::launchd::MAX_STDERR_LOG as usize + 1];
+        if case == "folder" {
+            fs::create_dir(&log).unwrap();
+        } else {
+            fs::write(&log, &oversized).unwrap();
+            fs::create_dir(logs.join("orceld-agent.log.1")).unwrap();
+        }
+        let label = format!("ai.orcel.orceld.log{}-{index}", std::process::id());
+        let _guard = Bootout(label.clone());
+        let socket = unique("l").join("orcel").join("orceld.sock");
+        let platform = MacosPlatform {
+            agent: AgentTarget::Custom {
+                plist_dir: home.join("Library").join("LaunchAgents"),
+                label: label.clone(),
+                socket: socket.clone(),
+                extra_environment: std::collections::BTreeMap::from([(
+                    "HOME".to_owned(),
+                    home.to_str().unwrap().to_owned(),
+                )]),
+            },
+        };
+        let installer = Installer::new(Layout::new(&root), &platform);
+        installer
+            .install(&release(case), &options(node.clone()))
+            .unwrap_or_else(|error| panic!("{case}: {}", error.message));
+        installer.verify().expect("verify");
+        assert!(agent_loaded(&label), "{case}");
+        let lifecycle = fs::read_to_string(logs.join("lifecycle.log")).unwrap();
+        assert!(
+            lifecycle.contains("agent log not moved aside"),
+            "{case}: {lifecycle}"
+        );
+        if std::env::var_os("ORCEL_MACOS_ORCELD").is_some() {
+            let response = system_status(&socket);
+            assert_eq!(response["ok"], true, "{case}: {response}");
+        }
+        if case == "folder" {
+            assert_eq!(fs::read_dir(&log).unwrap().count(), 0);
+        } else {
+            assert_eq!(fs::read(&log).unwrap(), oversized);
+        }
+        installer
+            .uninstall(&UninstallOptions::default())
+            .expect("uninstall");
+        assert!(!agent_loaded(&label), "{case}");
+    }
+    println!(
+        "MAC-M1-07-EVIDENCE unmovable_log install=ok noted=true answered={}",
+        std::env::var_os("ORCEL_MACOS_ORCELD").is_some()
     );
 }

@@ -26,11 +26,13 @@
 //!   intent and receipt. Nothing else is replayed: no click, fill, select,
 //!   submit, Enter or download. A tab's URL is carried exactly only when the
 //!   agent could read it in full (nothing redacted) and no query or
-//!   fragment value looks like a token; otherwise only its scheme, host and
-//!   path (`agent_url::bare`), so a query that held a token is never sent
-//!   again. No tab is carried once the session showed a sign-in page, nor a
-//!   tab whose path has a token-like segment (a possible single-use link),
-//!   nor one that is not an https page.
+//!   fragment value is token-like; otherwise only its scheme, host and path
+//!   (`agent_url::bare`), never its query. No tab is carried once the session
+//!   showed a sign-in page, nor a tab whose path has a token-like segment (a
+//!   possible single-use link), nor one that is not an https page.
+//!   Token-like is a heuristic (a run of 16 or more token characters, or more
+//!   than 64 characters): a shorter code under an ordinary name, or a short
+//!   single-use path, is not recognised and is reopened if the owner approves.
 
 use crate::browser_broker::SessionMode;
 use crate::browser_remote::Caller;
@@ -134,8 +136,8 @@ pub(crate) struct SwitchPlan {
 /// carried (not an https page).
 pub(crate) fn carry_url(committed: &str, sign_in_seen: bool) -> Option<(String, CarryKind)> {
     // After a sign-in any URL may hold what the person typed or a one-time
-    // link, and a token-like path segment may be a single-use link: never
-    // reopened automatically.
+    // link, and a token-like path segment (a heuristic: a shorter one is not
+    // recognised) may be a single-use link: never reopened.
     if !committed.starts_with("https://")
         || sign_in_seen
         || crate::agent_url::token_like_path(committed)
@@ -221,7 +223,7 @@ pub(crate) fn check(check: &SwitchCheck<'_>) -> Result<(), ProviderError> {
         return Err(ProviderError::new(
             FailureCode::OutcomeUnknown,
             format!(
-                "{} action(s) of this browser session have an uncertain outcome (see its receipts); a mode switch would lose the guard that keeps an uncertain write from being repeated, so nothing was moved. Reconcile them in this session, or close it",
+                "{} action(s) of this browser session have an uncertain outcome (see its receipts); a mode switch would lose the guard that keeps an uncertain write from being repeated, so nothing was moved. This session keeps that count until it ends, so it cannot switch; check the effect on the site, then close this session",
                 check.unsettled
             ),
         ));
