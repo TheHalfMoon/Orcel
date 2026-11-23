@@ -458,7 +458,11 @@ fn refuse_link(path: &Path) -> Result<(), GitProviderError> {
 /// direct entry of its `objects`, is a link or junction, so a ref, a reflog
 /// or an object is written in the Git folder and nowhere else.
 pub(crate) fn check_git_folder(dir: &Path) -> Result<(), GitProviderError> {
-    let mut left = MAX_GIT_FOLDER_ENTRIES;
+    check_git_folder_within(dir, MAX_GIT_FOLDER_ENTRIES)
+}
+
+fn check_git_folder_within(dir: &Path, most: usize) -> Result<(), GitProviderError> {
+    let mut left = most;
     let mut pending: Vec<(PathBuf, bool)> = ["refs", "logs", "objects"]
         .iter()
         .map(|name| (dir.join(name), *name != "objects"))
@@ -710,6 +714,40 @@ mod tests {
         ] {
             assert!(!refuses(text), "{text:?}");
         }
+    }
+
+    #[test]
+    fn the_git_folder_check_is_bounded() {
+        let dir = std::env::temp_dir().join(format!("orcel-git-folder-{}", std::process::id()));
+        let heads = dir.join("refs").join("heads");
+        std::fs::create_dir_all(&heads).expect("heads");
+        for name in ["a", "b", "c"] {
+            std::fs::write(heads.join(name), "x").expect("ref");
+        }
+        // refs/heads and its three entries.
+        assert!(check_git_folder_within(&dir, 4).is_ok());
+        assert!(check_git_folder_within(&dir, 3).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extensions_are_refused_whatever_their_case_or_place() {
+        for text in [
+            "[extensions]\n\trefStorage = files:///c/other/.git\n",
+            "[Extensions]\n\tREFSTORAGE = reftable\n",
+            "[extensions]\n\trefstorage = files\n\trefstorage = reftable\n",
+            "[extensions.x]\n\tnoop = 1\n",
+            "[extensions]\n\tunknown = 1\n",
+            "[extensions]\n\tpartialClone = \n",
+        ] {
+            assert!(refuses(text), "{text:?}");
+        }
+        assert!(!refuses(
+            "[extensions]\n\trefstorage = files\n\tworktreeConfig = TRUE\n\tpartialClone = my.origin-1\n"
+        ));
+        assert!(check_listed("local\0extensions.refstorage\nreftable\0").is_err());
+        assert!(check_listed("worktree\0extensions.refstorage\nfiles:///x\0").is_err());
+        assert!(check_listed("local\0extensions.refstorage\nfiles\0").is_ok());
     }
 
     #[test]
