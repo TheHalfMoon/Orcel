@@ -87,24 +87,56 @@ export function netErrorCode(message: string): string {
   return /net::ERR_[A-Z0-9_]+/.exec(message)?.[0] ?? "unknown";
 }
 
+/// The only CDP methods a probe may send. Both are reads the browser process
+/// answers by itself. The renderer is not asked: while a navigation is pending
+/// the engine holds back what is sent to it, so a healthy renderer gives no
+/// answer to `evaluate` either (measured on Edge 158). `Page.stopLoading`
+/// would let it answer, but it would also cancel the navigation.
+export const PROBE_METHODS = ["Page.getNavigationHistory", "Browser.getVersion"] as const;
+
+/// What a probe needs from a CDP session.
+export interface ProbeSession {
+  send(method: (typeof PROBE_METHODS)[number]): Promise<unknown>;
+  detach(): Promise<void>;
+}
+
+/// "answered" only if there was a result. A refusal is an "error": it can be
+/// Playwright's own, for a page that is already closed.
+function settled(work: Promise<unknown>): Promise<"answered" | "error"> {
+  return work.then(
+    () => "answered" as const,
+    () => "error" as const
+  );
+}
+
 /**
- * #584: whether the page's renderer answers at all after a navigation stalled: "answered"
- * if `evaluate` settles (resolves or rejects) within `ms`, else "no answer". A renderer that
- * never started, or hangs, gives no answer; one that is alive but never began the
- * navigation answers.
+ * #584: whether the engine's browser process answers after a navigation stalled, as stage
+ * marks: attaching a CDP session to the page, the page's navigation history, and the
+ * browser's version. Each is "answered", "error" or "no_answer", within `ms` for all of them;
+ * a probe that could not be sent because attaching did not succeed is "not_sent". Only
+ * whether an answer came is kept, never the answer. It says nothing about the renderer.
  */
-export async function rendererAnswers(evaluate: () => Promise<unknown>, ms = 2_000): Promise<"answered" | "no answer"> {
+export async function probeBrowser(attach: () => Promise<ProbeSession>, ms = 2_000): Promise<string[]> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<"no answer">((resolve) => {
-    timer = setTimeout(() => resolve("no answer"), ms);
+  const deadline = new Promise<"no_answer">((resolve) => {
+    timer = setTimeout(() => resolve("no_answer"), ms);
   });
+  const attaching = attach();
+  const mark = (answer: string, history: string, version: string) => [
+    `browser_attach_${answer}`,
+    `browser_history_${history}`,
+    `browser_version_${version}`
+  ];
   try {
-    const answer = evaluate().then(
-      () => "answered" as const,
-      () => "answered" as const
-    );
-    return await Promise.race([answer, deadline]);
+    const attached = await Promise.race([settled(attaching), deadline]);
+    if (attached !== "answered") return mark(attached, "not_sent", "not_sent");
+    const session = await attaching;
+    const [history, version] = await Promise.all(PROBE_METHODS.map((method) => Promise.race([settled(session.send(method)), deadline])));
+    return mark(attached, history!, version!);
   } finally {
     clearTimeout(timer);
+    // Never waited for: detaching can wait behind a stalled page. It also lets
+    // go of a session that attaches late.
+    void attaching.then((session) => session.detach()).catch(() => {});
   }
 }

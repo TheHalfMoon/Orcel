@@ -9,10 +9,12 @@
 
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
+import { createServer, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { inflateSync } from "node:zlib";
-import { chromium } from "playwright-core";
-import { capturePng, pngSize } from "./screenshot.js";
+import { chromium, type Page } from "playwright-core";
+import { capturePng as capture, pngSize, runBounded, SCREENSHOT_BUDGET_MS, ScreenshotBudget, ScreenshotError } from "./screenshot.js";
 
 const EDGE_CANDIDATES = [
   "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
@@ -21,6 +23,12 @@ const EDGE_CANDIDATES = [
 const isWindows = process.platform === "win32";
 const engine = EDGE_CANDIDATES.find((path) => existsSync(path));
 const skip = isWindows ? false : "native probes are Windows-only evidence";
+
+/// One screenshot as the worker takes it.
+const capturePng = (page: Page, clip?: Parameters<typeof capture>[1], ms = SCREENSHOT_BUDGET_MS) => {
+  const budget = new ScreenshotBudget(ms);
+  return runBounded(page, budget, () => capture(page, clip, budget));
+};
 
 /// Decode an 8-bit, non-interlaced RGB or RGBA PNG into RGBA rows.
 export function decodePng(png: Buffer): { width: number; height: number; pixel: (x: number, y: number) => [number, number, number] } {
@@ -145,5 +153,40 @@ test("OB-03: fields in an open shadow root, in an iframe and added before the ca
     assert.deepEqual(decoded.pixel(200, 364), [0, 0, 0], "the field added before the capture is masked");
   } finally {
     await browser.close();
+  }
+});
+
+test("#438: a screenshot of a page whose renderer answers nothing fails on time, and the page can be captured after", { skip, timeout: 120_000 }, async () => {
+  assert.ok(engine, "Edge is installed");
+  // The server answers only when told to: while the navigation is pending the
+  // engine holds back everything sent to the renderer, the census included.
+  const waiting: ServerResponse[] = [];
+  const server = createServer((_request, response) => void waiting.push(response));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const browser = await chromium.launch({ executablePath: engine, headless: true });
+  try {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+    const page = await context.newPage();
+    await page.setContent(PAGE);
+    await capturePng(page);
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+    await assert.rejects(page.goto(url, { timeout: 1_500 }), { name: "TimeoutError" });
+    const began = performance.now();
+    await assert.rejects(capturePng(page, undefined, 2_000), (error: unknown) => error instanceof ScreenshotError && error.reason === "failed");
+    const elapsed = performance.now() - began;
+    assert.ok(elapsed >= 1_500 && elapsed < 10_000, `${elapsed} ms`);
+    // The page moves on; the stuck census ends, and nothing of it is left.
+    const loaded = page.waitForURL(url, { timeout: 30_000 });
+    for (const response of waiting) response.setHeader("content-type", "text/html").end(PAGE);
+    await loaded;
+    const decoded = decodePng((await capturePng(page)).png);
+    assert.deepEqual(decoded.pixel(200, 44), [0, 255, 0], "the ordinary field keeps its colour");
+    for (const top of [100, 180, 260, 340]) assert.deepEqual(decoded.pixel(200, top + 24), [0, 0, 0], `the secret field at ${top} is masked`);
+    // Unmasked again in the page itself.
+    assert.equal(await page.evaluate(() => document.querySelectorAll("x-pw-glass").length), 0);
+  } finally {
+    await browser.close();
+    server.closeAllConnections();
+    server.close();
   }
 });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cpuBusyPercent, netErrorCode, rendererAnswers, traceLine, traceMark, traceStart, traceWatchEventLoop } from "./navigation-trace.js";
+import { cpuBusyPercent, netErrorCode, PROBE_METHODS, probeBrowser, traceLine, traceMark, traceStart, traceWatchEventLoop } from "./navigation-trace.js";
 
 test("the timeline names stages with elapsed milliseconds and restarts", () => {
   traceStart(1_000);
@@ -87,8 +87,49 @@ test("#584: a failed navigation keeps only the engine's network error code", () 
   assert.equal(netErrorCode("Target page, context or browser has been closed"), "unknown");
 });
 
-test("#584: a renderer that answers, even with an error, is told apart from one that doesn't", async () => {
-  assert.equal(await rendererAnswers(() => Promise.resolve(1), 1_000), "answered");
-  assert.equal(await rendererAnswers(() => Promise.reject(new Error("closed")), 1_000), "answered");
-  assert.equal(await rendererAnswers(() => new Promise(() => {}), 20), "no answer");
+/// A CDP session that answers each method as told.
+function session(answer: (method: string) => Promise<unknown>) {
+  const seen: string[] = [];
+  return {
+    seen,
+    send(method: string) {
+      seen.push(method);
+      return answer(method);
+    },
+    async detach() {
+      seen.push("detach");
+    }
+  };
+}
+
+const never = () => new Promise<never>(() => {});
+
+test("#584: the probe sends two reads of the browser process, keeps no answer, and lets its session go", async () => {
+  const answering = session(() => Promise.resolve({ entries: [{ url: "https://example.test/?q=secret" }] }));
+  assert.deepEqual(await probeBrowser(async () => answering), ["browser_attach_answered", "browser_history_answered", "browser_version_answered"]);
+  assert.deepEqual(answering.seen, ["Page.getNavigationHistory", "Browser.getVersion", "detach"]);
+  assert.deepEqual([...PROBE_METHODS], ["Page.getNavigationHistory", "Browser.getVersion"]);
+});
+
+test("#584: no answer and a refusal are told apart from an answer, each on its own", async () => {
+  const half = session((method) => (method === "Browser.getVersion" ? Promise.resolve({}) : never()));
+  const began = performance.now();
+  assert.deepEqual(await probeBrowser(async () => half, 50), ["browser_attach_answered", "browser_history_no_answer", "browser_version_answered"]);
+  const refusing = session(() => Promise.reject(new Error("closed")));
+  assert.deepEqual(await probeBrowser(async () => refusing, 50), ["browser_attach_answered", "browser_history_error", "browser_version_error"]);
+  assert.deepEqual(await probeBrowser(() => Promise.reject(new Error("closed")), 50), ["browser_attach_error", "browser_history_not_sent", "browser_version_not_sent"]);
+  assert.ok(performance.now() - began < 1_000);
+});
+
+test("#584: one deadline for the whole probe; a session that attaches late is let go of and sent nothing", async () => {
+  const late = session(() => Promise.resolve({}));
+  let attach: () => void = () => {};
+  const attaching = new Promise<typeof late>((resolve) => (attach = () => resolve(late)));
+  assert.deepEqual(await probeBrowser(() => attaching, 20), ["browser_attach_no_answer", "browser_history_not_sent", "browser_version_not_sent"]);
+  attach();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(late.seen, ["detach"]);
+  // A detach that never ends holds nothing up.
+  const stuck = { ...session(() => Promise.resolve({})), detach: never };
+  assert.equal((await probeBrowser(async () => stuck, 1_000)).length, 3);
 });

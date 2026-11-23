@@ -15,7 +15,7 @@ import { encodeFrame, FETCH_TEXT_MEDIA, FrameDecoder, isVisibleArgv, MAX_EXTRACT
 import { CONTENT_STYLES, EXTRACT_DEFAULTS, extractMarkdown } from "./extract/index.js";
 import type { LayoutSnapshot } from "./extract/model.js";
 import { toPieces } from "./extract/pieces.js";
-import { netErrorCode, rendererAnswers, traceLine, traceMark, traceStart, traceWatchEventLoop } from "./navigation-trace.js";
+import { netErrorCode, probeBrowser, traceLine, traceMark, traceStart, traceWatchEventLoop } from "./navigation-trace.js";
 import { watchNavigation } from "./refusals.js";
 import { installRoutes } from "./routes.js";
 import { boundSnapshot } from "./snapshot.js";
@@ -34,7 +34,7 @@ import { waitForText } from "./actions/wait.js";
 import { uploadFile } from "./actions/upload.js";
 import { DialogLog } from "./actions/dialogs.js";
 import { NavigationError, TabError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy, type TabsState } from "./worker.js";
-import { capturePng, fullPageClip, runExclusive, ScreenshotError } from "./screenshot.js";
+import { capturePng, errorCode, fullPageClip, runBounded, ScreenshotBudget, ScreenshotError } from "./screenshot.js";
 import { denyDesktopPermissions, interceptFileChoosers } from "./desktop-guard.js";
 import { admitPopup, MAX_PENDING_POPUPS, MAX_TABS, NavigationWatch, TabRegistry } from "./tabs.js";
 import { captureOutline, OUTLINE_BUDGET_MS, readOnlyCdp, type BoundedOutline } from "./outline/capture.js";
@@ -242,8 +242,9 @@ const playwrightLauncher: Launcher = {
         }
         if ((error as Error).name === "TimeoutError") {
           // #438: where it stalled, for the host's failure diagnostics. #584: and whether
-          // the page's renderer answers at all (a constant expression, no page data read).
-          traceMark(`renderer_${(await rendererAnswers(() => page.evaluate("1"))).replace(" ", "_")}`);
+          // the engine's browser process answers. The renderer is not asked: while a
+          // navigation is pending it answers nothing even when healthy.
+          for (const mark of await probeBrowser(() => context.newCDPSession(page))) traceMark(mark);
           traceMark(`page_closed_${page.isClosed()}`);
           process.stderr.write(`orcel-browser-worker: ${traceLine()}
 `);
@@ -550,24 +551,27 @@ const playwrightLauncher: Launcher = {
         if (page.isClosed()) throw new ScreenshotError("failed");
         const loading = () => watches.get(page)?.loading === true;
         if (loading()) throw new ScreenshotError("busy");
-        return runExclusive(page, async () => {
+        // From here to the answer is one budget, under the host's deadline.
+        const budget = new ScreenshotBudget();
+        return runBounded(page, budget, async () => {
           const before = page.url();
           let clip: { x: number; y: number; width: number; height: number } | undefined;
           let truncated = false;
           if (fullPage) {
             // The engine's own layout metrics: no page script runs.
+            budget.enter("metrics");
             const session = await context.newCDPSession(page);
             let metrics: unknown;
             try {
               metrics = await session.send("Page.getLayoutMetrics");
-            } catch {
-              throw new ScreenshotError("failed");
+            } catch (error) {
+              throw budget.failure(errorCode(error));
             } finally {
               await session.detach().catch(() => {});
             }
             ({ clip, truncated } = fullPageClip(metrics));
           }
-          const shot = await capturePng(page, clip);
+          const shot = await capturePng(page, clip, budget);
           // A capture that raced a navigation, or a tab change, is of no one
           // document.
           if (loading() || page.isClosed() || page.url() !== before || tabs.active !== tab) throw new ScreenshotError("busy");

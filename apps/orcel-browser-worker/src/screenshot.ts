@@ -45,8 +45,17 @@ export const MAX_SCREENSHOT_HEIGHT = 4096;
 export const MAX_SCREENSHOT_PIECE_CHARS = 48 * 1024;
 /// The most pieces one screenshot is sent in (mirrors the host).
 export const MAX_SCREENSHOT_PIECES = 64;
-/// The worker's own budget for one capture, under the host's deadline.
+/// The longest Playwright's own capture may take.
 export const SCREENSHOT_TIMEOUT_MS = 10_000;
+/// The whole screenshot: waiting for the page's turn, the layout metrics, the
+/// census, the capture and the census again. The host ends the worker's
+/// lifetime when no reply came in its `WORKER_SCREENSHOT_TIMEOUT` (20 s,
+/// worker_launch.rs), so this stays well under it. A capture that takes its
+/// full 10 s leaves 5 s for everything else.
+export const SCREENSHOT_BUDGET_MS = 15_000;
+/// What the capture leaves of the budget for the census after it: a picture
+/// that cannot be checked is never returned.
+export const CENSUS_RESERVE_MS = 1_000;
 /// What a masked field is painted with: opaque black.
 export const MASK_COLOR = "#000000";
 
@@ -97,6 +106,90 @@ export type ScreenshotFailure = "busy" | "failed" | "oversized";
 export class ScreenshotError extends Error {
   constructor(readonly reason: ScreenshotFailure) {
     super(reason);
+  }
+}
+
+/// Where a screenshot was when it failed.
+export type ScreenshotStage = "queue" | "metrics" | "census_before" | "capture" | "census_after";
+
+const ERROR_CODES: ReadonlySet<string> = new Set(["TimeoutError", "TargetClosedError", "AbortError", "ProtocolError", "Error"]);
+
+/// An error's class as one of a closed set. The name can come from another
+/// process and the message can carry page content or a URL, so anything else
+/// is "other".
+export function errorCode(error: unknown): string {
+  const name = error instanceof Error ? error.name : "";
+  return ERROR_CODES.has(name) ? name : "other";
+}
+
+/// One line on stderr, like the worker's other diagnostics: closed names only.
+function reportToStderr(stage: ScreenshotStage, code: string): void {
+  process.stderr.write(`orcel-browser-worker: screenshot failed at ${stage}: ${code}\n`);
+}
+
+/// The one budget every step of a screenshot spends.
+///
+/// Not every step can be given a timeout: counting elements, an element's
+/// own box and a CDP command have none, and a stalled renderer answers none
+/// of them. So `within` answers the caller on time whatever the work does,
+/// and the work, which is not cancelled, finds the budget over at its next
+/// step and stops there. Its late result is dropped.
+export class ScreenshotBudget {
+  private stage: ScreenshotStage = "queue";
+  private over = false;
+  private reported = false;
+  private readonly deadline: number;
+
+  constructor(
+    ms: number = SCREENSHOT_BUDGET_MS,
+    private readonly report: (stage: ScreenshotStage, code: string) => void = reportToStderr,
+    private readonly clock: () => number = () => performance.now()
+  ) {
+    this.deadline = clock() + ms;
+  }
+
+  /// The whole milliseconds left, at least 1 (Playwright takes 0 as "no
+  /// timeout"), less what is kept back for later. With none left, the
+  /// screenshot has failed.
+  remaining(reserve = 0): number {
+    const left = Math.floor(this.deadline - this.clock()) - reserve;
+    if (this.over || left < 1) throw this.failure("budget");
+    return left;
+  }
+
+  /// Start a step, unless the budget is over.
+  enter(stage: ScreenshotStage): void {
+    this.remaining();
+    this.stage = stage;
+  }
+
+  /// The typed failure for this screenshot. Its reason is reported once, the
+  /// first time: work that fails after the budget ended adds nothing.
+  failure(code: string): ScreenshotError {
+    if (!this.reported) {
+      this.reported = true;
+      this.report(this.stage, code);
+    }
+    return new ScreenshotError("failed");
+  }
+
+  /// What `work` gives within the budget, else a typed failure.
+  async within<T>(work: Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        this.over = true;
+        reject(this.failure("budget"));
+      }, Math.max(0, this.deadline - this.clock()));
+    });
+    try {
+      const done = await Promise.race([work, deadline]);
+      // Work that ended late, in a process too busy to run the timer.
+      this.remaining();
+      return done;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }
 
@@ -173,6 +266,19 @@ export async function runExclusive<T>(key: object, task: () => Promise<T>): Prom
   }
 }
 
+/// Run `task` alone on `key`, answering within `budget`. The answer is on time
+/// even when the task is stuck, but the key stays held until the task itself
+/// ends: nothing else captures the page while a late capture may still be
+/// running or removing its masks. A task whose turn comes too late does nothing.
+export function runBounded<T>(key: object, budget: ScreenshotBudget, task: () => Promise<T>): Promise<T> {
+  return budget.within(
+    runExclusive(key, async () => {
+      budget.remaining();
+      return task();
+    })
+  );
+}
+
 /// The page surface a screenshot uses (a Playwright `Page`, or a test stub).
 export interface ShotBox {
   x: number;
@@ -181,7 +287,7 @@ export interface ShotBox {
   height: number;
 }
 export interface ShotElement {
-  boundingBox(): Promise<ShotBox | null>;
+  boundingBox(options: { timeout: number }): Promise<ShotBox | null>;
 }
 export interface ShotLocator {
   all(): Promise<ShotElement[]>;
@@ -193,12 +299,13 @@ export const MAX_CENSUS_FIELDS = 256;
 
 /// Where each secret field of one frame is (rounded CSS pixels; "none" for
 /// one not rendered), in document order.
-async function placesOf(locator: ShotLocator): Promise<string[]> {
+async function placesOf(locator: ShotLocator, budget: ScreenshotBudget): Promise<string[]> {
   const elements = await locator.all();
   if (elements.length > MAX_CENSUS_FIELDS) throw new ScreenshotError("failed");
   const places: string[] = [];
   for (const element of elements) {
-    const box = await element.boundingBox();
+    // The timeout covers only finding the element; `within` covers its box.
+    const box = await element.boundingBox({ timeout: budget.remaining() });
     places.push(box === null ? "none" : [box.x, box.y, box.width, box.height].map((value) => Math.round(value)).join(","));
   }
   return places;
@@ -214,8 +321,14 @@ export interface ShotPage {
 /// Capture `page`: the viewport, or with `clip` (a bounded full-page
 /// clip) the page from its top; every secret field in every frame masked.
 /// A failed capture (masking included) is a typed failure, never an
-/// unmasked picture.
-export async function capturePng(page: ShotPage, clip?: { x: number; y: number; width: number; height: number }): Promise<{ png: Buffer; width: number; height: number }> {
+/// unmasked picture. The census, the capture and the second census share
+/// `budget`, and no picture is returned unless both were read and equal.
+/// The caller holds the page and answers on time (`runBounded`).
+export async function capturePng(
+  page: ShotPage,
+  clip: { x: number; y: number; width: number; height: number } | undefined,
+  budget: ScreenshotBudget
+): Promise<{ png: Buffer; width: number; height: number }> {
   // The frames and where each secret field in each is, right before the
   // capture (Playwright resolves the mask locators inside the capture
   // itself). Places, not counts: a field added and another removed during
@@ -225,12 +338,15 @@ export async function capturePng(page: ShotPage, clip?: { x: number; y: number; 
   const mask = frames.map((frame) => frame.locator(selector));
   const census = async (): Promise<string> => {
     try {
-      return JSON.stringify(await Promise.all(mask.map(placesOf)));
-    } catch {
-      throw new ScreenshotError("failed");
+      return JSON.stringify(await Promise.all(mask.map((locator) => placesOf(locator, budget))));
+    } catch (error) {
+      throw budget.failure(errorCode(error));
     }
   };
+  budget.enter("census_before");
   const before = await census();
+  budget.enter("capture");
+  const timeout = Math.min(SCREENSHOT_TIMEOUT_MS, budget.remaining(CENSUS_RESERVE_MS));
   let png: Buffer;
   try {
     png = await page.screenshot({
@@ -241,11 +357,12 @@ export async function capturePng(page: ShotPage, clip?: { x: number; y: number; 
       animations: "disabled",
       caret: "hide",
       scale: "css",
-      timeout: SCREENSHOT_TIMEOUT_MS
+      timeout
     });
-  } catch {
-    throw new ScreenshotError("failed");
+  } catch (error) {
+    throw budget.failure(errorCode(error));
   }
+  budget.enter("census_after");
   // A frame attached or detached, or a secret field added or removed,
   // while the capture ran: it may hold an unmasked field. Refused.
   const after = page.frames();
