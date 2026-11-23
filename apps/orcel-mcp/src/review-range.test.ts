@@ -55,6 +55,30 @@ class Fixture {
     this.git("checkout", "--quiet", "--force", "--detach", this.base);
     return head;
   }
+  blob(content: string | Buffer): string {
+    return this.raw(["hash-object", "-w", "--stdin"], content).toString("utf8").trim();
+  }
+  raw(args: string[], input: string | Buffer): Buffer {
+    return execFileSync("git", ["-C", this.dir, ...args], { input, stdio: ["pipe", "pipe", "pipe"] });
+  }
+  /**
+   * A head made from Git objects alone: the base's tree with these index
+   * entries on top. Paths are bytes, so no file system has to accept them.
+   */
+  headOf(files: Array<{ path: string | Buffer; content: string | Buffer; mode?: string }>, subject = "head"): string {
+    const env = { ...process.env, GIT_INDEX_FILE: join(this.dir, ".git", "orcel-test-index") };
+    const run = (args: string[], input?: Buffer): string =>
+      execFileSync("git", ["-C", this.dir, "-c", "core.protectNTFS=false", ...args], { env, input: input ?? "", stdio: ["pipe", "pipe", "pipe"] }).toString("utf8").trim();
+    run(["read-tree", this.base]);
+    const list = files.map((file) =>
+      Buffer.concat([Buffer.from(`${file.mode ?? "100644"} ${file.mode === "160000" ? String(file.content) : this.blob(file.content)}\t`), Buffer.from(file.path), Buffer.from([0])])
+    );
+    run(["update-index", "-z", "--add", "--index-info"], Buffer.concat(list));
+    return this.commitTree(run(["write-tree"]), subject);
+  }
+  commitTree(tree: string, subject = "head"): string {
+    return this.git("commit-tree", tree, "-p", this.base, "-m", subject);
+  }
   run(head: string, options: { base?: string; env?: NodeJS.ProcessEnv } = {}): { status: number | null; stdout: string; stderr: string } {
     const result = spawnSync(process.execPath, [script, options.base ?? this.base, head, this.dir], {
       encoding: "utf8",
@@ -102,12 +126,12 @@ test("an empty diff is refused", () => {
 test("a binary file is refused, added, changed or deleted", () => {
   withFixture((f) => {
     const added = f.head(() => f.write("icon.bin", Buffer.from([1, 0, 2, 255])));
-    f.refuses(added, /binary file cannot be reviewed: icon\.bin/);
+    f.refuses(added, /binary file cannot be reviewed: "icon\.bin"/);
     const withBinary = f.base;
     f.git("checkout", "--quiet", "--detach", added);
     f.base = added;
-    f.refuses(f.head(() => f.write("icon.bin", Buffer.from([1, 0, 3]))), /binary file cannot be reviewed: icon\.bin/);
-    f.refuses(f.head(() => rmSync(join(f.dir, "icon.bin"))), /binary file cannot be reviewed: icon\.bin/);
+    f.refuses(f.head(() => f.write("icon.bin", Buffer.from([1, 0, 3]))), /binary file cannot be reviewed: "icon\.bin"/);
+    f.refuses(f.head(() => rmSync(join(f.dir, "icon.bin"))), /binary file cannot be reviewed: "icon\.bin"/);
     assert.notEqual(withBinary, added);
   });
 });
@@ -170,6 +194,131 @@ test("what git diff --check refuses is refused", () => {
     f.refuses(f.head(() => f.write("kept.txt", "one \ntwo\nthree\n")), /trailing whitespace/);
     f.refuses(f.head(() => f.write("kept.txt", "one\r\ntwo\r\nthree\r\n")), /trailing whitespace/);
     f.refuses(f.head(() => f.write("kept.txt", `one\n${"<".repeat(7)} ours\ntwo\nthree\n`)), /conflict marker/);
+  });
+});
+
+const ELF = Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0, 0, 0xff]);
+
+test("a path that is not valid UTF-8 is refused, with or without a text decoy for its replacement character", () => {
+  withFixture((f) => {
+    const invalid = Buffer.from([0x78, 0xff]);
+    const pair = f.headOf([{ path: invalid, content: ELF }, { path: "x\ufffd", content: "a decoy\n" }]);
+    assert.equal(f.raw(["diff", "--name-only", "-z", f.base, pair], "").includes(Buffer.from([0x78, 0xff, 0])), true);
+    f.refuses(pair, /a path is not valid UTF-8: "x\\u00ff"/);
+    f.refuses(f.headOf([{ path: invalid, content: ELF }]), /not valid UTF-8/);
+    f.refuses(f.headOf([{ path: invalid, content: "text\n" }]), /not valid UTF-8/);
+    // The literal replacement character is an ordinary name.
+    f.passes(f.headOf([{ path: "x\ufffd", content: "text\n" }]), 1);
+  });
+});
+
+test("a path with a leading byte order mark is its own path", () => {
+  withFixture((f) => {
+    f.passes(f.headOf([{ path: "\ufeffa.txt", content: "one\n" }, { path: "a.txt", content: "two\n" }]), 2);
+    f.refuses(f.headOf([{ path: "\ufeffa.txt", content: ELF }, { path: "a.txt", content: "decoy\n" }]), /binary file cannot be reviewed: "\\ufeffa\.txt"/);
+  });
+});
+
+test("a tree that lists a path twice is refused", () => {
+  withFixture((f) => {
+    const entry = (content: string | Buffer): Buffer => Buffer.concat([Buffer.from("100644 twice\0"), Buffer.from(f.blob(content), "hex")]);
+    const tree = f.raw(["hash-object", "-w", "-t", "tree", "--literally", "--stdin"], Buffer.concat([entry(ELF), entry("decoy\n")])).toString("utf8").trim();
+    f.refuses(f.commitTree(tree), /lists a path twice/);
+  });
+});
+
+test("a path whose literal selection covers another changed file is refused", () => {
+  withFixture((f) => {
+    f.refuses(f.head(() => {
+      rmSync(join(f.dir, "kept.txt"));
+      f.write("kept.txt/inside.txt", "text\n");
+    }), /literal path selection mismatch: "kept\.txt"/);
+  });
+});
+
+test("a submodule link is refused, added, changed or removed", () => {
+  withFixture((f) => {
+    const added = f.headOf([{ path: "sub", mode: "160000", content: f.base }]);
+    f.refuses(added, /submodule link cannot be reviewed: "sub"/);
+    f.git("checkout", "--quiet", "--detach", added);
+    const first = f.base;
+    f.base = added;
+    f.refuses(f.headOf([{ path: "sub", mode: "160000", content: added }]), /submodule link/);
+    f.refuses(f.commitTree(f.git("rev-parse", `${first}^{tree}`)), /submodule link/);
+  });
+});
+
+test("a NUL byte anywhere is binary, past the part Git looks at", () => {
+  withFixture((f) => {
+    const late = Buffer.concat([Buffer.from("text\n".repeat(4_000)), Buffer.from([0]), Buffer.from("\n")]);
+    assert.equal(f.raw(["diff", "--numstat", f.base, f.headOf([{ path: "late.txt", content: late }])], "").toString("utf8").startsWith("-"), false);
+    f.refuses(f.headOf([{ path: "late.txt", content: late }]), /binary file cannot be reviewed: "late\.txt"/);
+  });
+});
+
+test("what still counts as text, as the record lists it", () => {
+  withFixture((f) => {
+    f.passes(f.headOf([
+      { path: "latin1.txt", content: Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x0a]) },
+      { path: "bidi.txt", content: "a \u202e b\n" },
+      { path: "lfs.dat", content: `version https://git-lfs.github.com/spec/v1\noid sha256:${"0".repeat(64)}\nsize 1\n` },
+      { path: "link", mode: "120000", content: "kept.txt" },
+      { path: "run.sh", mode: "100755", content: "echo\n" },
+      { path: ".gitattributes", content: "* -whitespace\n" }
+    ]), 6);
+  });
+});
+
+test("the base's attributes decide the whitespace rule and nothing else", () => {
+  withFixture((f) => {
+    f.write(".gitattributes", "*.txt -diff whitespace=cr-at-eol\n*.bin diff\n");
+    f.base = f.commit("base with attributes");
+    f.passes(f.headOf([{ path: "crlf.txt", content: "one\r\n" }]), 1);
+    f.refuses(f.headOf([{ path: "long.txt", content: `${"x".repeat(10_000)}\n` }]), /does not fit/);
+    f.refuses(f.headOf([{ path: "a.bin", content: ELF }]), /binary file/);
+  });
+});
+
+test("GIT_ variables and user configuration decide nothing", () => {
+  withFixture((f) => {
+    const head = f.headOf([{ path: "kept.txt", content: "one \ntwo\nthree\n" }]);
+    const config = join(f.dir, ".git", "hostile-config");
+    writeFileSync(config, "[core]\n\twhitespace = -trailing-space,-blank-at-eol\n");
+    // The same settings as the user's own configuration file, out of sight of `git status`.
+    const home = mkdtempSync(join(tmpdir(), "orcel-review-range-home-"));
+    try {
+      writeFileSync(join(home, ".gitconfig"), "[core]\n\twhitespace = -trailing-space,-blank-at-eol\n");
+      f.refuses(head, /trailing whitespace/, { env: { ...process.env, HOME: home, USERPROFILE: home } });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+    f.refuses(head, /trailing whitespace/, {
+      env: {
+        ...process.env, GIT_CONFIG_GLOBAL: config, GIT_EXTERNAL_DIFF: "true", GIT_DIR: join(f.dir, "elsewhere"),
+        GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.whitespace", GIT_CONFIG_VALUE_0: "-trailing-space,-blank-at-eol"
+      }
+    });
+  });
+});
+
+test("no name or line of the candidate reads as a workflow command, hides text or floods the log", () => {
+  withFixture((f) => {
+    for (const head of [
+      f.headOf([{ path: "a\n::error::hello\u202e\u001b[31m##[group]x", content: ELF }]),
+      f.headOf([{ path: "kept.txt", content: "one\n::warning::hello ##[add-mask]x\u202e \n" }]),
+      // Git prints this name at the start of a line of its own.
+      f.headOf([{ path: "::error::name", content: "x \n" }]),
+      f.headOf([{ path: "many.txt", content: "::error::x \n".repeat(5_000) }])
+    ]) {
+      const { status, stdout, stderr } = f.run(head);
+      assert.equal(status, 1);
+      assert.equal(stdout, "");
+      assert.match(stderr, /^[\x20-\x7e\n]*$/);
+      assert.equal(stderr.includes("##["), false);
+      assert.equal(/^\s*::/m.test(stderr), false, stderr);
+      assert.deepEqual(stderr.trimEnd().split("\n").slice(1).filter((line) => !line.startsWith("| ")), []);
+      assert.ok(stderr.length < 8_000, String(stderr.length));
+    }
   });
 });
 

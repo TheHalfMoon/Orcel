@@ -153,6 +153,8 @@ act through one GitHub account, so GitHub could not tell one from another.
 **What the ruleset enforces** ("Deskal main protection", read 2026-11-23): a pull request; its required status checks, on a
 branch up to date with main; no deletion and no force-push of main; no bypass. `required_approving_review_count` is 0.
 `require_extra_approval_for_unattributed_changes` is true; what it does for this repository's pull requests is not verified.
+The required status checks carry no `integration_id`, so any check or commit status with one of those names counts,
+whoever posts it: an actor with push access could post one without running the job.
 
 **What nothing in the ruleset enforces**, so it holds only if people and sessions do it and record it:
 - the independent code review, and its record;
@@ -166,7 +168,8 @@ branch up to date with main; no deletion and no force-push of main; no bypass. `
 - post-merge verification, and the evidence in a closeout (Governance checks its form, not its truth);
 - the platform jobs that are not required checks: every macOS job, the native host, the contained tier, the approval
   helper, the Control Room client and shell, the document parser, Orcel Agent, the licence gates, the Linux and macOS
-  packages, the web job, BM-02 Tier C GUI, the authority install E2E and the Windows task timeline;
+  packages, the web job, BM-02 Tier C GUI, the authority service artifact and install E2E jobs, the document parser fuzz and the Windows task timeline;
+- that a required check was posted by its own workflow (above);
 - signed and signed-off commits, and normal merge commits (the ruleset also allows squash and rebase);
 - that D1 authorizes nothing.
 

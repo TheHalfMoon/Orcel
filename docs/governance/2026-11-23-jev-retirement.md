@@ -35,7 +35,7 @@ before merging; the closing pull request of a grain carries them into `review_ba
 regression tests, the judgment behind Alibaba Open Code Review, the manual review of the files it excludes, zero
 unresolved blocking findings, resolved review threads, the acceptance and exact-diff checks, founder approval,
 post-merge verification, the platform jobs that are not required checks, signed and signed-off commits, normal merge
-commits, or that D1 authorizes nothing. Diffcipline section 10 carries the full list, with what the ruleset does enforce.
+commits, that a required check was posted by its own workflow, or that D1 authorizes nothing. Diffcipline section 10 carries the full list, with what the ruleset does enforce.
 
 ## Affected gates
 
@@ -52,7 +52,7 @@ The ruleset "Deskal main protection" (24456712), read on 2026-11-23, requires te
 | Release qualification / windows-latest | Stays |
 | Relay container / ubuntu-latest | Stays |
 
-This change edits no ruleset and no GitHub setting. The change itself still passes Jev, because `pull_request_target` runs
+This change edits no ruleset and no GitHub setting. The change itself must still pass Jev, because `pull_request_target` runs
 the base branch's workflow. Between its merge and the ruleset edit, no pull request can merge: the required check would
 never report. That fails closed. The repository secret `TYPESAFE_API_KEY` is no longer read by any workflow; deleting it is
 left to the founder.
@@ -60,20 +60,36 @@ left to the founder.
 ## Implementation evidence
 
 - `.github/workflows/review-gates.yml`: the Jev job is removed. `permissions: contents: read` stays, because the OCR job
-  uses it.
+  uses it. The trigger now names `main` and adds `edited`, so a pull request moved to main from another base is
+  checked again against main.
 - **The range check**, `.github/scripts/check-review-range.mjs`. The Jev adapter also made deterministic refusals that no
   other required check made, so they now have their own step in the Alibaba OCR Delegation job, after the fork refusal
   and before the candidate checkout, with no Jev and no secret. The script and Git's attributes come from a checkout of
-  the exact base; the head is fetched as data. It refuses an empty diff, a binary file, a changed file with no text hunk
-  (mode-only, empty), a diff line that does not fit in 10,000 characters with its headers, whatever `git diff --check`
-  refuses, a base that is not the merge base, and any Git failure.
+  the exact base; the head is fetched as data. It refuses an empty diff, a path that is not valid UTF-8 or is
+  listed twice, a submodule link, a binary file (a NUL byte anywhere, or Git calls it binary), a changed file with no
+  text hunk (mode-only, empty), a diff line that does not fit in 10,000 characters with its headers, whatever
+  `git diff --check` refuses, a base that is not the merge base, and any Git failure. Each path is checked against the
+  modes and object ids of the file it was listed with. Its output is bounded plain ASCII.
+  - Stricter than the Jev adapter, which decoded paths loosely: a binary file named with an invalid byte passed when a
+    text file carried the name that decoding gives. A review of this change found it. Submodule links, and a NUL byte
+    after the first 8,000 bytes, passed too.
+  - **What still counts as text**: UTF-16 or another encoding without a NUL byte; invalid UTF-8 content; bidirectional
+    and other invisible characters; symbolic links (their target is the hunk); Git LFS pointers (the content they point
+    to is not in the diff). A reviewer has to look for these.
+  - Attributes: the hunks are read with none, so neither the base's nor the head's `.gitattributes` can hide content. The
+    whitespace check uses the base's, because byte-exact fixtures need their rule (`cr-at-eol`); a merged
+    `.gitattributes` change can therefore relax the whitespace check for later pull requests. Such a change is not gated
+    like `.opencodereview`: the repository has needed several, and a required check that refuses them could not be
+    satisfied by any later review.
+  - A path that changes from a file to a directory, or back, in one pull request is refused, as before: split it in two.
   - Renames: Jev's adapter did not refuse a rename. It listed the new path and read it as a whole addition; the deletion
     side was not read. The range check reads both sides whole. Only the rename of an empty file has nothing to read and
     is refused, as before.
   - The step first runs for the first pull request based on a main that contains it: `pull_request_target` takes the
     workflow, and the step takes the script, from the base.
 - `apps/orcel-mcp/src/review-range.test.ts`: the check against real repositories, each refusal, clean diffs, attributes
-  the head brings, and failing closed (no Git, no repository, a missing commit, a missing blob, bad arguments).
+  the head or the base brings, hostile names, a hostile Git environment, and failing closed (no Git, no repository, a
+  missing commit, a missing blob, bad arguments).
 - `apps/orcel-mcp/src/review-process.test.ts`: the workflow holds the Alibaba job alone, with its fork refusal, no
   credential, no added condition, no tolerated failure, its order, its pins and the OCR checksum; no open grain requires
   Jev and each requires the eight items; grains closed before the decision keep their Jev requirement and evidence.
@@ -115,6 +131,8 @@ requirement for work not yet done, this decision supersedes the Jev part of it.
   `required_approving_review_count` is 0 and `required_review_thread_resolution` is false;
   `require_extra_approval_for_unattributed_changes` is true, and what it does for this repository's pull requests is not
   verified. A missing or careless review is visible only in the pull request's record.
+- **A required check's name is not bound to its workflow.** The ruleset's checks carry no `integration_id`, so any check or
+  status of that name counts. Binding them is a ruleset change, left to the founder.
 - **D1 can be wrong in the dangerous direction.** D1-600M once called an authentication bypass low-risk. That is why it
   can never authorize anything.
 - **Review gates on one account.** Authors, reviewers and the merging session act through one GitHub account, so the

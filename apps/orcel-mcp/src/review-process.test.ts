@@ -26,11 +26,12 @@ const specs = readdirSync(join(repo, ".specgrain", "specs"))
 
 const gates = read(".github/workflows/review-gates.yml");
 
+const stripComments = (text: string): string => text.split("\n").filter((line) => !/^\s*#/.test(line)).join("\n");
+
 /** The job's steps, as text without comment lines. */
 function stepsOf(workflow: string): string[] {
   const start = workflow.indexOf("\n    steps:\n") + "\n    steps:\n".length;
-  const body = workflow.slice(start).split("\n").filter((line) => !/^\s*#/.test(line));
-  return body.join("\n").split(/^ {6}(?=- )/m).filter((step) => step.trim() !== "");
+  return stripComments(workflow.slice(start)).split(/^ {6}(?=- )/m).filter((step) => step.trim() !== "");
 }
 
 test("the review gates workflow is the Alibaba OCR job alone, read-only and with no credential", () => {
@@ -46,7 +47,21 @@ test("the review gates workflow is the Alibaba OCR job alone, read-only and with
     jobs.filter((line) => /^ {4}[^\s#]/.test(line)).map((line) => line.trim()),
     ["name: Alibaba OCR Delegation", "runs-on: ubuntu-latest", "timeout-minutes: 10", "env:", "steps:"]
   );
-  assert.match(gates, /\non:\n {2}pull_request_target:\n\n/);
+  assert.ok(
+    stripComments(gates).startsWith(
+      "name: Review Gates\n\non:\n  pull_request_target:\n    branches: [main]\n    types: [opened, synchronize, reopened, edited]\n\npermissions:\n  contents: read\n\nconcurrency:\n"
+    )
+  );
+  // The job's own environment: nothing there steers node, git or bash.
+  assert.ok(stripComments(gates).includes([
+    "    env:",
+    "      OCR_BIN: /tmp/orcel-ocr",
+    "      OCR_OUT: /tmp/orcel-ocr-output",
+    "      OCR_URL: https://github.com/alibaba/open-code-review/releases/download/v1.12.9/opencodereview-linux-amd64",
+    "      OCR_SHA256: 9105c7081b8362a1cb0167f1ddfd1437e147a0e3c9a5af89c03c8859a5b0f0e8",
+    "    steps:",
+    ""
+  ].join("\n")));
   assert.match(gates, /\npermissions:\n {2}contents: read\n\n/);
   assert.equal(gates.match(/permissions/g)?.length, 1);
   // secrets.X, secrets['X'], toJSON(secrets), github.token, github['token'].
@@ -85,31 +100,59 @@ test("the Alibaba OCR job's steps keep their order, conditions and pins", () => 
   assert.equal(uses.length, 4);
   for (const line of uses) assert.match(line, /uses: [\w./-]+@[0-9a-f]{40} # v\d+$/);
 
-  assert.match(fork, /HEAD_REPO: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}\n/);
-  assert.match(fork, /THIS_REPO: \$\{\{ github\.repository \}\}\n/);
-  assert.match(fork, /set -euo pipefail\n +if \[ "\$HEAD_REPO" != "\$THIS_REPO" \]; then\n +echo "::error::.*\n +exit 1\n +fi/);
-
-  // The range check: the base's script in the base checkout, the exact head as data.
-  for (const checkout of [baseCheckout, headCheckout]) assert.match(checkout, /persist-credentials: false/);
-  assert.match(baseCheckout, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}\n +path: review-range-base/);
-  assert.match(headCheckout, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
-  assert.match(range, /working-directory: review-range-base\n/);
-  assert.match(
-    range,
-    /BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \}\}\n +HEAD_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \}\}\n/
-  );
-  const rangeRun = [
+  // Whole steps, so no key, environment entry or command can be added unseen:
+  // the fork refusal, and the range check from the base with the head as data.
+  const whole = (...lines: string[]): string => `- ${lines.join("\n        ")}\n`;
+  assert.equal(fork, whole(
+    "name: Refuse a pull request from a fork",
+    "env:",
+    "  HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}",
+    "  THIS_REPO: ${{ github.repository }}",
+    "shell: bash",
+    "run: |",
+    "  set -euo pipefail",
+    '  if [ "$HEAD_REPO" != "$THIS_REPO" ]; then',
+    `    echo "::error::OCR delegation doesn't run for a pull request from a fork; it stays unqualified."`,
+    "    exit 1",
+    "  fi"
+  ));
+  assert.equal(step(1), whole("uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4", "with:", '  node-version: "24"'));
+  const checkout = "uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4";
+  assert.equal(baseCheckout, whole(
+    checkout,
+    "with:",
+    "  fetch-depth: 0",
+    "  persist-credentials: false",
+    "  ref: ${{ github.event.pull_request.base.sha }}",
+    "  path: review-range-base"
+  ));
+  assert.equal(range, whole(
+    "name: Refuse a diff that cannot be reviewed as text",
+    "working-directory: review-range-base",
+    "env:",
+    "  BASE_SHA: ${{ github.event.pull_request.base.sha }}",
+    "  HEAD_SHA: ${{ github.event.pull_request.head.sha }}",
+    "  PR_NUMBER: ${{ github.event.pull_request.number }}",
+    "shell: bash",
     "run: |",
     "  set -euo pipefail",
     '  test "$(git rev-parse HEAD)" = "$BASE_SHA"',
     '  git fetch --no-tags origin "refs/pull/$PR_NUMBER/head"',
     '  test "$(git rev-parse FETCH_HEAD)" = "$HEAD_SHA"',
     '  node .github/scripts/check-review-range.mjs "$BASE_SHA" "$HEAD_SHA" .'
-  ].join("\n        ");
-  assert.ok(range.trimEnd().endsWith(rangeRun), range);
+  ));
+  assert.equal(headCheckout, whole(
+    checkout,
+    "with:",
+    "  fetch-depth: 0",
+    "  persist-credentials: false",
+    "  ref: ${{ github.event.pull_request.head.sha }}"
+  ));
+  // Nothing later changes what an earlier step runs.
+  assert.equal(/GITHUB_(ENV|PATH|OUTPUT)/.test(gates), false);
+  assert.match(spec, /^- name: Generate deterministic delegation spec\n {8}env:\n {10}BASE_SHA: .*\n {10}HEAD_SHA: .*\n {8}shell: bash\n {8}run: \|\n {10}set -euo pipefail\n/);
 
   // OCR's checksum, checked before the binary is made executable or run.
-  assert.match(gates, /\n {6}OCR_SHA256: 9105c7081b8362a1cb0167f1ddfd1437e147a0e3c9a5af89c03c8859a5b0f0e8\n/);
   assert.equal(gates.match(/OCR_SHA256/g)?.length, 2);
   assert.match(
     install,
@@ -157,6 +200,7 @@ test("the normative review rule says what nothing enforces, and D1 authorizes no
   for (const text of [
     "Independent code review is a process rule. No GitHub check enforces it",
     "two separate reviews, each with its own record",
+    "The required status checks carry no `integration_id`",
     "Who records them: whoever merges the pull request, before merging",
     "It can never authorize a merge, clear a gate, stand in for a review above, or authorize a privileged operation."
   ]) assert.ok(rule.includes(text), text);
@@ -164,6 +208,7 @@ test("the normative review rule says what nothing enforces, and D1 authorizes no
   for (const text of [
     "independent code review", "targeted security review", "negative and adversarial regression tests",
     "manual review of the files Open Code Review excludes", "zero unresolved blocking findings",
-    "resolved review threads", "post-merge verification", "platform jobs that are not required checks"
+    "resolved review threads", "post-merge verification", "platform jobs that are not required checks",
+    "authority service artifact", "that a required check was posted by its own workflow"
   ]) assert.ok(unenforced.includes(text), text);
 });

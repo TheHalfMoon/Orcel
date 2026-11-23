@@ -2,6 +2,9 @@ name: Review Gates
 
 on:
   pull_request_target:
+    # `edited` covers a changed base, so a run made against another base never stands in.
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
