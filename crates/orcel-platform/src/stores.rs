@@ -5,8 +5,8 @@
 //! `release_blocker_sweep::state_stores_*` checks that the code keeps to this.
 //!
 //! A top-level store also owns its siblings, by one naming rule (see [`Store::owns`]): its
-//! `.lock` and `.rewrite`, an atomic write's `.<name>.tmp-*`, and the approval ledger's
-//! `.quarantine-*` and `.recovering-*`.
+//! `.lock` and `.rewrite`, an atomic write's `.<name>.tmp-*`, and the approval ledger's and the
+//! audit chain's `.quarantine-*` and `.recovering-*`.
 
 use std::path::{Path, PathBuf};
 

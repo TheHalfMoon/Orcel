@@ -1610,6 +1610,249 @@ fn chain_a_failed_sync_keeps_what_the_writer_verified() -> TestResult {
     Ok(())
 }
 
+/// A chain of an opening and three records whose third is edited, and a new
+/// writer that read it up to there and refused it.
+fn refused_chain(dir: &Path) -> Result<(PathBuf, ChainWriter, Vec<String>), String> {
+    let path = dir.join("audit-chain.jsonl");
+    write(&path, 3)?;
+    let whole = lines(&path)?;
+    let mut broken = whole.clone();
+    broken[3] = broken[3].replace("\"n\":2", "\"n\":8");
+    assert_ne!(broken, whole);
+    rewrite(&path, &broken)?;
+    let writer = ChainWriter::open(&path, ORCELD_LOG).map_err(|e| e.to_string())?;
+    refuses(&writer, &path, "broken at first")?;
+    Ok((path, writer, whole))
+}
+
+/// `writer` refuses to append, however often it is tried, and leaves the
+/// path as it is.
+fn refuses(writer: &ChainWriter, path: &Path, what: &str) -> TestResult {
+    let before = std::fs::read(path).ok();
+    for n in 0..3 {
+        let attempt = writer.append(draft(n));
+        if !matches!(attempt, Err(ChainError::Broken { .. })) {
+            return Err(format!("{what}, try {n}: {attempt:?}"));
+        }
+        assert_eq!(std::fs::read(path).ok(), before, "{what}, try {n}");
+    }
+    Ok(())
+}
+
+/// Without a holder, or with one that holds nothing, a first sync that read
+/// records and then failed still knows the file: it is not replaced by a new
+/// first file, by an unrelated one, or by itself with records it read cut or
+/// rewritten.
+#[test]
+fn chain_a_failed_first_sync_still_knows_the_file_it_read() -> TestResult {
+    for holder in [false, true] {
+        let dir = sandbox("first-sync-knows")?;
+        let (path, writer, whole) = refused_chain(&dir)?;
+        if holder {
+            writer.set_anchorer(Arc::new(Holding(crate::HeldState::default())));
+        }
+        std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+        refuses(&writer, &path, "removed")?;
+        std::fs::write(&path, b"").map_err(|e| e.to_string())?;
+        refuses(&writer, &path, "emptied")?;
+        std::fs::write(&path, b"garbage\n").map_err(|e| e.to_string())?;
+        refuses(&writer, &path, "garbage")?;
+        let other = dir.join("other.jsonl");
+        write(&other, 6)?;
+        rewrite(&path, &lines(&other)?)?;
+        refuses(&writer, &path, "replaced")?;
+        crate::open_after_reset(&path, ORCELD_LOG, json!({"event_digest": "e".repeat(64)}))
+            .map_err(|e| e.to_string())?;
+        refuses(&writer, &path, "a reset nobody vouches for")?;
+        // The same file, with records that were read cut or rewritten.
+        rewrite(&path, &whole[..2])?;
+        refuses(&writer, &path, "cut")?;
+        let mut torn = whole[..2].join("\n") + "\n";
+        torn.push_str("{\"torn");
+        std::fs::write(&path, torn).map_err(|e| e.to_string())?;
+        refuses(&writer, &path, "cut and torn")?;
+        assert_eq!(kept_files(&dir)?.len(), 1, "only the reset kept a file");
+        rewrite(&path, &whole[..2])?;
+        write(&path, 3)?;
+        assert_eq!(
+            lines(&path)?[..2],
+            whole[..2],
+            "another end of the same file"
+        );
+        refuses(&writer, &path, "rewritten")?;
+        // The file itself, repaired, is followed.
+        rewrite(&path, &whole)?;
+        let appended = writer.append(draft(9)).map_err(|e| e.to_string())?;
+        assert_eq!(appended.event.seq, 4);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    Ok(())
+}
+
+/// Each sync that fails further on in the file knows that much more of it.
+#[test]
+fn chain_a_failed_sync_knows_all_it_read() -> TestResult {
+    let dir = sandbox("sync-knows-more")?;
+    let path = dir.join("audit-chain.jsonl");
+    write(&path, 3)?;
+    let whole = lines(&path)?;
+    let writer = ChainWriter::open(&path, ORCELD_LOG).map_err(|e| e.to_string())?;
+    for broken in [1, 3] {
+        let mut now = whole.clone();
+        now[broken] = now[broken].replace("\"n\":", "\"n\":7");
+        rewrite(&path, &now)?;
+        refuses(&writer, &path, "broken")?;
+    }
+    rewrite(&path, &whole[..2])?;
+    refuses(&writer, &path, "cut")?;
+    rewrite(&path, &whole[..3])?;
+    let appended = writer.append(draft(9)).map_err(|e| e.to_string())?;
+    assert_eq!(appended.event.seq, 3);
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// A writer that follows a linked file checks that file against what the
+/// holder holds too.
+#[test]
+fn chain_a_followed_file_is_checked_against_the_held_anchor() -> TestResult {
+    let dir = sandbox("followed-held")?;
+    let path = dir.join("audit-chain.jsonl");
+    let writer = write(&path, 3)?;
+    let held = AnchorRef {
+        log: ORCELD_LOG.to_owned(),
+        file_id: events(&path)?[0].digest.clone(),
+        seq: 9,
+        digest: "0".repeat(64),
+    };
+    writer.set_anchorer(Arc::new(Holding(crate::HeldState {
+        anchor: Some(held),
+        reset: None,
+    })));
+    move_aside(&path, ORCELD_LOG).map_err(|e| e.to_string())?;
+    refuses(&writer, &path, "linked before the held record")?;
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// What the owner does about the file meanwhile is followed: moving it aside
+/// always, a linked file that drops a record that was read never.
+#[test]
+fn chain_a_failed_first_sync_follows_a_file_moved_aside() -> TestResult {
+    let dir = sandbox("first-sync-moved")?;
+    let (path, writer, whole) = refused_chain(&dir)?;
+    let broken = lines(&path)?;
+    rewrite(&path, &whole[..2])?;
+    move_aside(&path, ORCELD_LOG).map_err(|e| e.to_string())?;
+    refuses(&writer, &path, "a linked file without the last record read")?;
+    rewrite(&path, &broken)?;
+    let moved = move_aside(&path, ORCELD_LOG).map_err(|e| e.to_string())?;
+    assert_eq!(moved.link.ok_or("a link")?.previous_head_seq, 2);
+    let appended = writer.append(draft(9)).map_err(|e| e.to_string())?;
+    assert_eq!(appended.at.file_id, moved.file_id);
+    // And from then on it is the file this writer knows.
+    let appended = writer.append(draft(10)).map_err(|e| e.to_string())?;
+    assert_eq!(appended.event.seq, 2);
+    std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+    refuses(&writer, &path, "removed")?;
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// So is the file of an owner reset the holder reports, whether it holds the
+/// file's opening already or not; a file naming another reset is not.
+#[test]
+fn chain_a_failed_first_sync_follows_an_owner_reset() -> TestResult {
+    let digest = "e".repeat(64);
+    for anchored in [false, true] {
+        let dir = sandbox("first-sync-reset")?;
+        let (path, writer, _) = refused_chain(&dir)?;
+        let reset = |digest: &str| {
+            crate::open_after_reset(&path, ORCELD_LOG, json!({"event_digest": digest}))
+                .map_err(|e| e.to_string())
+        };
+        let other = reset(&"f".repeat(64))?;
+        writer.set_anchorer(Arc::new(ResetHolder(digest.clone())));
+        refuses(&writer, &path, "another reset")?;
+        let opened = reset(&digest)?;
+        let held = |file_id: &str| {
+            Arc::new(Holding(crate::HeldState {
+                anchor: Some(AnchorRef {
+                    log: ORCELD_LOG.to_owned(),
+                    file_id: file_id.to_owned(),
+                    seq: 0,
+                    digest: file_id.to_owned(),
+                }),
+                reset: None,
+            }))
+        };
+        if anchored {
+            writer.set_anchorer(held(&other.file_id));
+            refuses(&writer, &path, "the holder holds another reset's file")?;
+            writer.set_anchorer(held(&opened.file_id));
+        }
+        let appended = writer.append(draft(9)).map_err(|e| e.to_string())?;
+        assert_eq!(appended.at.file_id, opened.file_id);
+        let seconds = &events(&path)?[1];
+        let expected = match anchored {
+            false => AuditEventKind::Anchor,
+            true => AuditEventKind::Request,
+        };
+        assert_eq!(seconds.kind, expected, "the opening is anchored first");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    Ok(())
+}
+
+/// A file whose first record does not verify has no id to know it by: what
+/// replaces it is followed, also an unlinked first file.
+#[test]
+fn chain_a_file_without_a_first_record_is_not_known() -> TestResult {
+    for (what, run) in MOVERS {
+        let dir = sandbox("garbage-first")?;
+        let path = dir.join("audit-chain.jsonl");
+        std::fs::write(&path, b"garbage\n").map_err(|e| e.to_string())?;
+        let writer = ChainWriter::open(&path, ORCELD_LOG).map_err(|e| e.to_string())?;
+        refuses(&writer, &path, what)?;
+        let (_, file_id) = run(&path).map_err(|e| e.to_string())?;
+        let appended = writer.append(draft(9)).map_err(|e| e.to_string())?;
+        assert_eq!(appended.at.file_id, file_id, "{what}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    Ok(())
+}
+
+/// A failed write, or a panic in the middle of one, has the file read from
+/// its start again. Its records and its id are still known.
+#[test]
+fn chain_a_failed_write_forgets_nothing() -> TestResult {
+    for crash in [false, true] {
+        let dir = sandbox("write-failed")?;
+        let path = dir.join("audit-chain.jsonl");
+        let writer = write(&path, 3)?;
+        let whole = lines(&path)?;
+        let other = dir.join("other.jsonl");
+        write(&other, 6)?;
+        let fault = Fault::at("append", crash);
+        let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            writer.append(draft(50)).is_err()
+        }));
+        assert_eq!(failed.is_err(), crash);
+        drop(fault);
+        std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+        refuses(&writer, &path, "removed")?;
+        rewrite(&path, &lines(&other)?)?;
+        refuses(&writer, &path, "replaced")?;
+        rewrite(&path, &whole[..2])?;
+        refuses(&writer, &path, "cut")?;
+        rewrite(&path, &whole)?;
+        let appended = writer.append(draft(9)).map_err(|e| e.to_string())?;
+        assert_eq!(appended.event.seq, 4);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    Ok(())
+}
+
 /// The new files prepared beside the chain in `dir`.
 fn staged_files(dir: &Path) -> Result<usize, String> {
     let mut count = 0;
@@ -1717,6 +1960,112 @@ fn chain_a_reset_without_an_old_file_opens_one_whole_or_not_at_all() -> TestResu
     assert_eq!(events(&path)?.remove(0).digest, opened.file_id);
     assert_eq!(kept_files(&dir)?, Vec::<String>::new());
     let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// A file that appears where a reset found none is not replaced.
+#[test]
+fn chain_a_reset_without_an_old_file_replaces_none() -> TestResult {
+    let dir = sandbox("reset-appeared")?;
+    let path = dir.join("audit-chain.jsonl");
+    let appears = path.clone();
+    let fault = Fault::run("staged", move || std::fs::write(&appears, b"appeared"));
+    let reset = json!({"event_digest": "d".repeat(64)});
+    assert!(crate::open_after_reset(&path, ORCELD_LOG, reset).is_err());
+    drop(fault);
+    let now = std::fs::read(&path).map_err(|e| e.to_string())?;
+    assert_eq!(now, b"appeared");
+    assert_eq!(staged_files(&dir)?, 0);
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// The directory is synced after the swap, and an error there is reported
+/// as what it is: the new file is in place.
+#[test]
+fn chain_the_swap_is_synced_once_it_is_done() -> TestResult {
+    for (what, run) in MOVERS {
+        let dir = sandbox("swap-synced")?;
+        let path = dir.join("audit-chain.jsonl");
+        write(&path, 3)?;
+        let before = std::fs::read(&path).map_err(|e| e.to_string())?;
+        let fault = Fault::at("swapped", false);
+        let error = run(&path).err().ok_or("a failed sync")?.to_string();
+        drop(fault);
+        assert!(
+            error.contains("in place, but not synced"),
+            "{what}: {error}"
+        );
+        assert_eq!(staged_files(&dir)?, 0);
+        let kept = kept_files(&dir)?;
+        assert_eq!(kept.len(), 1);
+        assert_eq!(
+            std::fs::read(dir.join(&kept[0])).map_err(|e| e.to_string())?,
+            before
+        );
+        assert_eq!(events(&path)?[0].detail["moved_aside"]["file"], kept[0]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    Ok(())
+}
+
+/// A read-only file is refused with the reason and the remedy, and nothing
+/// is moved or left behind.
+#[cfg(windows)]
+#[test]
+fn chain_a_read_only_file_is_refused_with_its_remedy() -> TestResult {
+    for (what, run) in MOVERS {
+        let dir = sandbox("replace-read-only")?;
+        let path = dir.join("audit-chain.jsonl");
+        write(&path, 3)?;
+        let before = std::fs::read(&path).map_err(|e| e.to_string())?;
+        let writable = std::fs::metadata(&path)
+            .map_err(|e| e.to_string())?
+            .permissions();
+        let mut permissions = writable.clone();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&path, permissions).map_err(|e| e.to_string())?;
+        let error = run(&path).err().ok_or("read-only")?.to_string();
+        assert!(error.contains("read-only attribute"), "{what}: {error}");
+        assert_eq!(std::fs::read(&path).map_err(|e| e.to_string())?, before);
+        assert_eq!(kept_files(&dir)?, Vec::<String>::new());
+        assert_eq!(staged_files(&dir)?, 0);
+        std::fs::set_permissions(&path, writable).map_err(|e| e.to_string())?;
+        run(&path).map_err(|e| e.to_string())?;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    Ok(())
+}
+
+/// A junction at the chain's path is there, and refused, also when it leads
+/// nowhere (one is made without the privilege a symbolic link takes).
+#[cfg(windows)]
+#[test]
+fn chain_a_junction_is_not_replaced_or_taken_for_a_missing_file() -> TestResult {
+    for (what, run) in MOVERS {
+        for exists in [true, false] {
+            let dir = sandbox("replace-junction")?;
+            let path = dir.join("audit-chain.jsonl");
+            let target = dir.join("elsewhere");
+            if exists {
+                std::fs::create_dir(&target).map_err(|e| e.to_string())?;
+            }
+            let made = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .args([&path, &target])
+                .stdout(std::process::Stdio::null())
+                .status()
+                .map_err(|e| e.to_string())?;
+            assert!(made.success());
+            let error = run(&path).err().ok_or("a junction")?.to_string();
+            assert!(error.contains("not a regular file"), "{what}: {error}");
+            assert!(std::fs::symlink_metadata(&path).is_ok());
+            assert_eq!(target.exists(), exists);
+            assert_eq!(staged_files(&dir)?, 0);
+            let _ = std::fs::remove_dir(&path);
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
     Ok(())
 }
 

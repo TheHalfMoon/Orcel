@@ -12,7 +12,7 @@
 use std::collections::hash_map::RandomState;
 use std::fs::{File, OpenOptions};
 use std::hash::{BuildHasher, Hasher};
-use std::io::{self, Write};
+use std::io::{self, Seek as _, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -125,8 +125,17 @@ fn exclusive_rename_unsupported(error: &io::Error) -> bool {
 /// `MOVEFILE_COPY_ALLOWED`: one rename, or an error.
 #[cfg(windows)]
 fn exclusive_rename(from: &Path, to: &Path) -> io::Result<()> {
+    move_file(from, to, Default::default())
+}
+
+/// `MoveFileExW`, written through.
+#[cfg(windows)]
+fn move_file(
+    from: &Path,
+    to: &Path,
+    flags: windows::Win32::Storage::FileSystem::MOVE_FILE_FLAGS,
+) -> io::Result<()> {
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::WIN32_ERROR;
     use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_WRITE_THROUGH};
     let (from, to) = (verbatim(from)?, verbatim(to)?);
     // SAFETY: both paths are NUL-terminated and outlive the call.
@@ -134,14 +143,92 @@ fn exclusive_rename(from: &Path, to: &Path) -> io::Result<()> {
         MoveFileExW(
             PCWSTR(from.as_ptr()),
             PCWSTR(to.as_ptr()),
-            MOVEFILE_WRITE_THROUGH,
+            flags | MOVEFILE_WRITE_THROUGH,
         )
     }
-    // The windows crate's own conversion loses the error's kind.
-    .map_err(|error| match WIN32_ERROR::from_error(&error) {
+    .map_err(windows_error)
+}
+
+/// The windows crate's own conversion loses the error's kind.
+#[cfg(windows)]
+fn windows_error(error: windows::core::Error) -> io::Error {
+    match windows::Win32::Foundation::WIN32_ERROR::from_error(&error) {
         Some(code) => io::Error::from_raw_os_error(code.0 as i32),
         None => error.into(),
-    })
+    }
+}
+
+/// Moves `from` to `to` in the same directory, replacing a file there in one
+/// rename, also while others have it open. On Windows the rename is written
+/// through, and a read-only file is not replaced; on Unix the caller makes
+/// it durable with [`sync_parent_dir`].
+pub fn rename_replace(from: &Path, to: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::ERROR_ACCESS_DENIED;
+        use windows::Win32::Storage::FileSystem::MOVEFILE_REPLACE_EXISTING;
+        match move_file(from, to, MOVEFILE_REPLACE_EXISTING) {
+            // Perhaps only because someone has the file at `to` open.
+            Err(error) if error.raw_os_error() == Some(ERROR_ACCESS_DENIED.0 as i32) => {
+                posix_replace(from, to).map_err(|_| error)
+            }
+            done => done,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::rename(from, to)
+    }
+}
+
+/// The rename that takes the name of a file others have open, as
+/// `std::fs::rename` does it, through a write-through handle.
+#[cfg(windows)]
+fn posix_replace(from: &Path, to: &Path) -> io::Result<()> {
+    use std::os::windows::fs::OpenOptionsExt as _;
+    use std::os::windows::io::AsRawHandle as _;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{
+        FileRenameInfoEx, SetFileInformationByHandle, DELETE, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_FLAG_WRITE_THROUGH, FILE_RENAME_INFO, SYNCHRONIZE,
+    };
+    const REPLACE_IF_EXISTS: u32 = 1;
+    const POSIX_SEMANTICS: u32 = 2;
+    let file = OpenOptions::new()
+        .access_mode(DELETE.0 | SYNCHRONIZE.0)
+        .custom_flags(FILE_FLAG_WRITE_THROUGH.0 | FILE_FLAG_OPEN_REPARSE_POINT.0)
+        .open(from)?;
+    let name = verbatim(to)?;
+    let name_at = std::mem::offset_of!(FILE_RENAME_INFO, FileName);
+    let size = (name_at + size_of_val(name.as_slice())).max(size_of::<FILE_RENAME_INFO>());
+    let too_long = |_| io::Error::from(io::ErrorKind::InvalidInput);
+    let name_bytes = u32::try_from((name.len() - 1) * 2).map_err(too_long)?;
+    let info_bytes = u32::try_from(size).map_err(too_long)?;
+    // u64 elements keep the FILE_RENAME_INFO aligned.
+    let mut buffer = vec![0_u64; size.div_ceil(8)];
+    let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+    // SAFETY: `buffer` is zeroed, aligned for FILE_RENAME_INFO and holds at
+    // least `size` bytes: the fields and, from `name_at`, all of `name`.
+    unsafe {
+        (*info).Anonymous.Flags = REPLACE_IF_EXISTS | POSIX_SEMANTICS;
+        (*info).FileNameLength = name_bytes;
+        std::ptr::copy_nonoverlapping(
+            name.as_ptr(),
+            info.cast::<u8>().add(name_at).cast::<u16>(),
+            name.len(),
+        );
+    }
+    // SAFETY: the handle is open for the call, as `file` outlives it, and
+    // `info` points to `info_bytes` readable bytes.
+    unsafe {
+        SetFileInformationByHandle(
+            HANDLE(file.as_raw_handle()),
+            FileRenameInfoEx,
+            info.cast(),
+            info_bytes,
+        )
+    }
+    .map_err(windows_error)
 }
 
 /// `path` as an absolute, NUL-terminated `\\?\` path, so a long one works as
@@ -195,23 +282,29 @@ fn link_then_unlink_with(
 /// process that writes to the directory without taking the caller's lock can
 /// still remove `from` in between, as it could remove the file itself.
 fn remove_spare_name(from: &Path, to: &Path) {
-    let (Ok(from), Ok(named)) = (
-        std::fs::symlink_metadata(from),
-        std::fs::symlink_metadata(to),
-    ) else {
-        return;
-    };
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt as _;
+        let (Ok(from), Ok(named)) = (
+            std::fs::symlink_metadata(from),
+            std::fs::symlink_metadata(to),
+        ) else {
+            return;
+        };
         if (from.dev(), from.ino()) != (named.dev(), named.ino()) {
             return;
         }
     }
     #[cfg(windows)]
     {
-        let _ = (from, named);
-        if !matches!(crate::acl::hard_link_count(to), Ok(2..)) {
+        let mut options = OpenOptions::new();
+        options.read(true);
+        not_through_a_link(&mut options);
+        if options
+            .open(from)
+            .and_then(|from| is_at(&from, to))
+            .is_err()
+        {
             return;
         }
     }
@@ -238,42 +331,101 @@ impl KeptFile {
     }
 }
 
-/// Keeps the regular file at `from` under the name `to` as well, durably,
-/// without moving it: as a hard link, or as a copy where the filesystem has
-/// none. Whatever is at `to` is never replaced or followed
+/// Opens the regular file at `path` so that [`keep_file_as`] can keep it. A
+/// link there is refused, not followed, and so is anything else that is not
+/// a regular file. Keeping the file flushes it, which on Windows needs a
+/// handle that may write: a read-only file is refused there.
+pub fn open_to_keep(path: &Path) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(cfg!(windows));
+    not_through_a_link(&mut options);
+    let file = options.open(path).map_err(|error| {
+        if error.kind() != io::ErrorKind::PermissionDenied {
+            return error;
+        }
+        let remedy = if cfg!(windows) {
+            "clear its read-only attribute, and check that its permissions let you write to it"
+        } else {
+            "check that its permissions let you read it"
+        };
+        io::Error::new(
+            error.kind(),
+            format!("it cannot be opened to flush it to disk: {error}; {remedy}"),
+        )
+    })?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "it is a link or not a regular file",
+        ));
+    }
+    Ok(file)
+}
+
+/// Opens what is at the path, never what a link there leads to, and never
+/// waits for a pipe's other end.
+fn not_through_a_link(options: &mut OpenOptions) {
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(options, libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    #[cfg(windows)]
+    std::os::windows::fs::OpenOptionsExt::custom_flags(
+        options,
+        windows::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT.0,
+    );
+    #[cfg(not(any(unix, windows)))]
+    let _ = options;
+}
+
+/// Keeps `file`, which [`open_to_keep`] opened at `from`, under the name `to`
+/// as well, durably, without moving it: as a hard link, or as a copy, read
+/// from `file` itself, where the filesystem has no hard links. Any other
+/// failure to link is an error, and so is a `from` that is not `file` any
+/// longer: what took its place is never copied, and a link to it is taken
+/// away again. Whatever is at `to` is never replaced or followed
 /// ([`io::ErrorKind::AlreadyExists`]). On an error nothing is kept, or at
 /// most a whole copy.
-pub fn keep_file_as(from: &Path, to: &Path) -> io::Result<KeptFile> {
-    keep_file_with(from, to, |from, to| std::fs::hard_link(from, to))
+///
+/// A process that writes to the directory without taking the caller's lock
+/// can still put another file at `from` later, as it could remove the file.
+pub fn keep_file_as(file: &File, from: &Path, to: &Path) -> io::Result<KeptFile> {
+    keep_file_with(
+        file,
+        from,
+        to,
+        |from, to| std::fs::hard_link(from, to),
+        File::sync_all,
+        sync_parent_dir,
+    )
 }
 
 fn keep_file_with(
+    file: &File,
     from: &Path,
     to: &Path,
     link: impl FnOnce(&Path, &Path) -> io::Result<()>,
+    flush: impl FnOnce(&File) -> io::Result<()>,
+    sync: impl FnOnce(&Path) -> io::Result<()>,
 ) -> io::Result<KeptFile> {
     let copied = match link(from, to) {
         Ok(()) => false,
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return Err(error),
-        Err(_) => {
-            copy_to_new(from, to)?;
+        Err(error) if hard_links_unsupported(&error) => {
+            copy_to_new(file, to, || {})?;
             true
         }
+        Err(error) => return Err(error),
     };
     let kept = KeptFile {
         from: from.to_path_buf(),
         to: to.to_path_buf(),
         copied,
     };
-    // The linked file's bytes may not be on disk yet. Flushing needs a write
-    // handle on Windows.
-    let flushed = OpenOptions::new()
-        .read(true)
-        .write(cfg!(windows))
-        .open(to)
-        .and_then(|file| file.sync_all())
-        .and_then(|()| sync_parent_dir(to));
-    match flushed {
+    // The linked file's bytes may not be on disk yet; a copy's are.
+    let flushed = if copied {
+        Ok(())
+    } else {
+        is_at(file, to).and_then(|()| flush(file))
+    };
+    match flushed.and_then(|()| sync(to)) {
         Ok(()) => Ok(kept),
         Err(error) => {
             kept.remove_spare();
@@ -282,23 +434,143 @@ fn keep_file_with(
     }
 }
 
-/// Copies `from` to `to`, which must not exist yet, owner-only on Unix. A
-/// partial copy is removed.
-fn copy_to_new(from: &Path, to: &Path) -> io::Result<()> {
-    let mut source = File::open(from)?;
+/// Whether the error says that the filesystem has no hard links, as against
+/// every other reason why one was not made. `EPERM` is what Linux answers for
+/// such a filesystem (and for another user's file, or from a system call
+/// filter: what is copied then is the checked file all the same).
+fn hard_links_unsupported(error: &io::Error) -> bool {
+    #[cfg(target_os = "linux")]
+    let unsupported = [libc::EPERM, libc::ENOTSUP, libc::ENOSYS];
+    #[cfg(all(unix, not(target_os = "linux")))]
+    let unsupported = [libc::ENOTSUP, libc::EOPNOTSUPP, libc::ENOSYS];
+    // ERROR_INVALID_FUNCTION (FAT and exFAT) and ERROR_NOT_SUPPORTED.
+    #[cfg(windows)]
+    let unsupported = [1, 50];
+    #[cfg(not(any(unix, windows)))]
+    let unsupported: [i32; 0] = [];
+    error
+        .raw_os_error()
+        .is_some_and(|code| unsupported.contains(&code))
+}
+
+/// An error unless `file` is what has the name `path`.
+fn is_at(file: &File, path: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    let same = {
+        use std::os::unix::fs::MetadataExt as _;
+        let (file, named) = (file.metadata()?, std::fs::symlink_metadata(path)?);
+        (file.dev(), file.ino()) == (named.dev(), named.ino())
+    };
+    #[cfg(windows)]
+    let same = {
+        let mut options = OpenOptions::new();
+        options.read(true);
+        not_through_a_link(&mut options);
+        identity(file)? == identity(&options.open(path)?)?
+    };
+    #[cfg(not(any(unix, windows)))]
+    let same = {
+        let _ = (file, path);
+        false
+    };
+    if same {
+        Ok(())
+    } else {
+        Err(io::Error::other("another file took the file's place"))
+    }
+}
+
+/// The volume and the file on it.
+#[cfg(windows)]
+fn identity(file: &File) -> io::Result<(u32, u32, u32)> {
+    use std::os::windows::io::AsRawHandle as _;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: the handle is open for the call, as `file` outlives it; `info`
+    // is a valid out pointer.
+    unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle()), &mut info) }
+        .map_err(windows_error)?;
+    Ok((
+        info.dwVolumeSerialNumber,
+        info.nFileIndexHigh,
+        info.nFileIndexLow,
+    ))
+}
+
+/// An error unless both files were opened in one directory: a path whose
+/// directory was swapped meanwhile leads to another one. Checked on Windows
+/// only; no elevated command keeps a file on Unix.
+fn in_one_directory(a: &File, b: &File) -> io::Result<()> {
+    #[cfg(windows)]
+    if directory_of(a)? != directory_of(b)? {
+        return Err(io::Error::other("another directory took the file's place"));
+    }
+    #[cfg(not(windows))]
+    let _ = (a, b);
+    Ok(())
+}
+
+/// The directory the system opened `file` in.
+#[cfg(windows)]
+fn directory_of(file: &File) -> io::Result<Vec<u16>> {
+    use std::os::windows::io::AsRawHandle as _;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{
+        GetFinalPathNameByHandleW, FILE_NAME_OPENED, GETFINALPATHNAMEBYHANDLE_FLAGS, VOLUME_NAME_NT,
+    };
+    // No path is longer than this, NUL included.
+    let mut path = vec![0_u16; 0x8000];
+    // SAFETY: the handle is open for the call, as `file` outlives it.
+    let length = unsafe {
+        GetFinalPathNameByHandleW(
+            HANDLE(file.as_raw_handle()),
+            &mut path,
+            GETFINALPATHNAMEBYHANDLE_FLAGS(FILE_NAME_OPENED.0 | VOLUME_NAME_NT.0),
+        )
+    } as usize;
+    if length == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    path.truncate(length);
+    path.iter()
+        .rposition(|unit| *unit == u16::from(b'\\'))
+        .map(|end| path[..end].to_vec())
+        .ok_or_else(|| io::Error::other("the file's directory is not known"))
+}
+
+/// Copies all of `source` to `to`, which must not exist yet and is made in
+/// the same directory, owner-only on Unix, and flushes it. A partial copy is
+/// removed, and so is one of a file whose length changed (`read` runs when
+/// the bytes have been read).
+fn copy_to_new(source: &File, to: &Path, read: impl FnOnce()) -> io::Result<()> {
+    let mut source = source;
+    // A reparse point that is no link: its own bytes are not the file's.
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+        if source.metadata()?.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+            return Err(io::Error::other("a reparse point is not copied"));
+        }
+    }
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     owner_only(&mut options);
     let mut copy = options.open(to)?;
-    let copied = io::copy(&mut source, &mut copy)
-        .and_then(|bytes| Ok((bytes, source.metadata()?.len())))
-        .and_then(|(bytes, length)| {
-            if bytes == length {
-                copy.sync_all()
-            } else {
-                Err(io::Error::other("the file changed while it was copied"))
-            }
-        });
+    let fill = || {
+        in_one_directory(source, &copy)?;
+        source.rewind()?;
+        let bytes = io::copy(&mut source, &mut copy)?;
+        read();
+        if bytes != source.metadata()?.len() {
+            return Err(io::Error::other("the file changed while it was copied"));
+        }
+        copy.sync_all()
+    };
+    let copied = fill();
     drop(copy);
     if copied.is_err() {
         let _ = std::fs::remove_file(to);
@@ -668,17 +940,32 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// What a filesystem without hard links answers.
+    fn no_hard_links() -> io::Error {
+        #[cfg(unix)]
+        let code = libc::ENOTSUP;
+        #[cfg(not(unix))]
+        let code = 1;
+        io::Error::from_raw_os_error(code)
+    }
+
+    fn copy_as(file: &File, from: &Path, to: &Path) -> io::Result<KeptFile> {
+        let no_link = |_: &Path, _: &Path| Err(no_hard_links());
+        keep_file_with(file, from, to, no_link, File::sync_all, sync_parent_dir)
+    }
+
+    type Keep = fn(&Path, &Path) -> io::Result<KeptFile>;
+
     /// Both ways to keep a file: a hard link, and the copy a filesystem
     /// without hard links gets.
-    fn keepers() -> [fn(&Path, &Path) -> io::Result<KeptFile>; 2] {
-        [keep_file_as, |from, to| {
-            keep_file_with(from, to, |_, _| Err(io::ErrorKind::Unsupported.into()))
-        }]
-    }
+    const KEEPERS: [Keep; 2] = [
+        |from, to| keep_file_as(&open_to_keep(from)?, from, to),
+        |from, to| copy_as(&open_to_keep(from)?, from, to),
+    ];
 
     #[test]
     fn a_file_is_kept_whole_and_where_it_is() {
-        for (index, keep) in keepers().iter().enumerate() {
+        for (index, keep) in KEEPERS.iter().enumerate() {
             let dir = sandbox(&format!("keep-{index}"));
             let (from, to) = (dir.join("from"), dir.join("to"));
             std::fs::write(&from, b"one").expect("from");
@@ -714,7 +1001,7 @@ mod tests {
 
     #[test]
     fn keeping_a_file_never_replaces_or_follows_what_is_there() {
-        for (index, keep) in keepers().iter().enumerate() {
+        for (index, keep) in KEEPERS.iter().enumerate() {
             let dir = sandbox(&format!("keep-taken-{index}"));
             let (from, to) = (dir.join("from"), dir.join("to"));
             std::fs::write(&from, b"new").expect("from");
@@ -742,6 +1029,294 @@ mod tests {
             assert!(!dir.join("none").exists());
             let _ = std::fs::remove_dir_all(dir);
         }
+    }
+
+    /// Only a filesystem that has no hard links leads to a copy; any other
+    /// failure to link keeps nothing.
+    #[test]
+    fn only_unsupported_hard_links_lead_to_a_copy() {
+        let dir = sandbox("keep-link-error");
+        let (from, to) = (dir.join("from"), dir.join("to"));
+        std::fs::write(&from, b"one").expect("from");
+        let file = open_to_keep(&from).expect("open");
+        // Access denied, not found, disk full, too many links, I/O error.
+        #[cfg(windows)]
+        let others = [5, 2, 112, 1142, 1117];
+        #[cfg(unix)]
+        let others = [
+            libc::EACCES,
+            libc::ENOENT,
+            libc::ENOSPC,
+            libc::EMLINK,
+            libc::EIO,
+        ];
+        let others = others.map(io::Error::from_raw_os_error);
+        let unnumbered = [io::ErrorKind::Unsupported, io::ErrorKind::Other].map(io::Error::from);
+        for error in others.into_iter().chain(unnumbered) {
+            let expected = error.to_string();
+            let no_link = |_: &Path, _: &Path| Err(error);
+            let failed = keep_file_with(&file, &from, &to, no_link, File::sync_all, |_| Ok(()))
+                .expect_err("the error");
+            assert_eq!(failed.to_string(), expected);
+            assert!(std::fs::symlink_metadata(&to).is_err(), "{expected}");
+        }
+        #[cfg(windows)]
+        let unsupported = [1, 50];
+        #[cfg(target_os = "linux")]
+        let unsupported = [libc::EPERM, libc::ENOTSUP, libc::ENOSYS];
+        #[cfg(all(unix, not(target_os = "linux")))]
+        let unsupported = [libc::ENOTSUP, libc::EOPNOTSUPP, libc::ENOSYS];
+        for (index, code) in unsupported.into_iter().enumerate() {
+            let to = dir.join(format!("copy-{index}"));
+            let no_link = |_: &Path, _: &Path| Err(io::Error::from_raw_os_error(code));
+            let kept = keep_file_with(&file, &from, &to, no_link, File::sync_all, |_| Ok(()))
+                .expect("a copy");
+            assert!(kept.copied);
+            assert_eq!(std::fs::read(&to).expect("copy"), b"one", "{code}");
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Another file that took the checked file's place is neither kept nor
+    /// copied, and the checked file is copied whole wherever its reader was.
+    #[test]
+    fn a_file_that_took_the_place_is_never_kept_or_copied() {
+        let dir = sandbox("keep-swapped");
+        let (from, to) = (dir.join("from"), dir.join("to"));
+        std::fs::write(&from, b"one").expect("from");
+        let file = open_to_keep(&from).expect("open");
+        io::copy(&mut &file, &mut io::sink()).expect("read to its end");
+        std::fs::rename(&from, dir.join("moved")).expect("moved");
+        std::fs::write(&from, b"secret").expect("another");
+        assert!(keep_file_as(&file, &from, &to).is_err());
+        assert!(std::fs::symlink_metadata(&to).is_err());
+        assert_eq!(std::fs::read(&from).expect("from"), b"secret");
+        assert!(copy_as(&file, &from, &to).expect("a copy").copied);
+        assert_eq!(std::fs::read(&to).expect("to"), b"one");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A copy is made where the checked file is, not in a directory that
+    /// took the place of that one.
+    #[cfg(windows)]
+    #[test]
+    fn a_copy_is_never_made_in_another_directory() {
+        let dir = sandbox("keep-directory");
+        std::fs::create_dir(dir.join("other")).expect("other");
+        let from = dir.join("from");
+        std::fs::write(&from, b"one").expect("from");
+        let file = open_to_keep(&from).expect("open");
+        let to = dir.join("other").join("to");
+        assert!(copy_as(&file, &from, &to).is_err());
+        assert!(std::fs::symlink_metadata(&to).is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A link is never opened to be kept, whether it leads anywhere or not,
+    /// nor is a directory.
+    #[test]
+    fn only_a_regular_file_is_opened_to_be_kept() {
+        let dir = sandbox("keep-open");
+        assert!(open_to_keep(&dir).is_err(), "a directory");
+        assert_eq!(
+            open_to_keep(&dir.join("missing"))
+                .expect_err("missing")
+                .kind(),
+            io::ErrorKind::NotFound
+        );
+        let victim = dir.join("victim");
+        std::fs::write(&victim, b"secret").expect("victim");
+        for target in [victim.clone(), dir.join("nowhere")] {
+            let link = dir.join(format!("link-{}", target.exists()));
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&target, &link).expect("link");
+            // Without the privilege to make one there is nothing to test.
+            #[cfg(windows)]
+            if std::os::windows::fs::symlink_file(&target, &link).is_err() {
+                continue;
+            }
+            assert_ne!(
+                open_to_keep(&link).expect_err("a link").kind(),
+                io::ErrorKind::NotFound
+            );
+        }
+        // Windows lets everyone make a junction. One that leads nowhere is
+        // there all the same.
+        #[cfg(windows)]
+        for target in [dir.clone(), dir.join("nowhere")] {
+            let link = dir.join(format!("junction-{}", target.exists()));
+            junction(&target, &link);
+            assert_ne!(
+                open_to_keep(&link).expect_err("a junction").kind(),
+                io::ErrorKind::NotFound
+            );
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt as _;
+            let pipe = dir.join("pipe");
+            let name = std::ffi::CString::new(pipe.as_os_str().as_bytes()).expect("name");
+            // SAFETY: the path is NUL-terminated and outlives the call.
+            assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+            let refused = open_to_keep(&pipe).expect_err("a pipe, without waiting for it");
+            assert_eq!(refused.kind(), io::ErrorKind::InvalidInput);
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(windows)]
+    fn junction(target: &Path, link: &Path) {
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .args([link, target])
+            .stdout(std::process::Stdio::null())
+            .status()
+            .expect("mklink");
+        assert!(status.success());
+        assert!(std::fs::symlink_metadata(link).is_ok());
+    }
+
+    /// Why a read-only file is not kept, and what to do about it.
+    #[cfg(windows)]
+    #[test]
+    fn a_read_only_file_is_refused_with_its_remedy() {
+        let dir = sandbox("keep-read-only");
+        let from = dir.join("from");
+        std::fs::write(&from, b"one").expect("from");
+        let writable = std::fs::metadata(&from).expect("meta").permissions();
+        let mut permissions = writable.clone();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&from, permissions).expect("read-only");
+        let error = open_to_keep(&from).expect_err("read-only");
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        for part in ["flush it to disk", "read-only attribute", "permissions"] {
+            assert!(error.to_string().contains(part), "{error}");
+        }
+        std::fs::set_permissions(&from, writable).expect("writable");
+        open_to_keep(&from).expect("open");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A kept file's bytes are on disk before its new name is.
+    #[test]
+    fn a_kept_file_is_flushed_before_its_name() {
+        let dir = sandbox("keep-order");
+        let (from, to) = (dir.join("from"), dir.join("to"));
+        std::fs::write(&from, b"one").expect("from");
+        let file = open_to_keep(&from).expect("open");
+        let steps = std::cell::RefCell::new(Vec::new());
+        let keep = |flushes: bool, syncs: bool| {
+            steps.take();
+            let done = |step, ok: bool| {
+                steps.borrow_mut().push(step);
+                assert!(to.exists(), "{step} comes after the link");
+                if ok {
+                    Ok(())
+                } else {
+                    Err(io::Error::other(step))
+                }
+            };
+            keep_file_with(
+                &file,
+                &from,
+                &to,
+                |from, to| std::fs::hard_link(from, to),
+                |_| done("flush", flushes),
+                |synced| {
+                    assert_eq!(synced, to);
+                    done("sync", syncs)
+                },
+            )
+        };
+        for (flushes, syncs, failed) in [(false, true, "flush"), (true, false, "sync")] {
+            let error = keep(flushes, syncs).expect_err("injected");
+            assert_eq!(error.to_string(), failed);
+            assert!(std::fs::symlink_metadata(&to).is_err(), "{failed}");
+        }
+        keep(true, true).expect("kept").remove_spare();
+        assert_eq!(steps.take(), ["flush", "sync"]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A copy of a file that grew or shrank meanwhile is not the file.
+    #[test]
+    fn a_copy_of_a_file_that_changed_meanwhile_is_removed() {
+        let dir = sandbox("keep-changed");
+        let (from, to) = (dir.join("from"), dir.join("to"));
+        for now in ["one and more", "o"] {
+            std::fs::write(&from, b"one").expect("from");
+            let file = open_to_keep(&from).expect("open");
+            let error = copy_to_new(&file, &to, || {
+                std::fs::write(&from, now).expect("changed");
+            })
+            .expect_err("changed");
+            assert!(error.to_string().contains("changed"), "{error}");
+            assert!(!to.exists(), "{now}");
+            copy_to_new(&file, &to, || {}).expect("the next try");
+            assert_eq!(std::fs::read(&to).expect("to"), now.as_bytes());
+            std::fs::remove_file(&to).expect("to");
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The replacing rename takes the name of a file that is open, and leaves
+    /// everything as it was when it fails.
+    #[test]
+    fn a_replacing_rename_replaces_a_file_also_while_it_is_open() {
+        use std::io::Read as _;
+        let dir = sandbox("replace");
+        let (from, to) = (dir.join("from"), dir.join("to"));
+        for open in [false, true] {
+            std::fs::write(&from, b"new").expect("from");
+            std::fs::write(&to, b"old").expect("to");
+            let reader = open.then(|| File::open(&to).expect("reader"));
+            rename_replace(&from, &to).expect("replaced");
+            assert!(!from.exists());
+            assert_eq!(std::fs::read(&to).expect("to"), b"new");
+            if let Some(mut reader) = reader {
+                let mut read = Vec::new();
+                reader.read_to_end(&mut read).expect("read on");
+                assert_eq!(read, b"old");
+            }
+        }
+        std::fs::write(&from, b"new").expect("from");
+        std::fs::create_dir(dir.join("folder")).expect("folder");
+        assert!(rename_replace(&from, &dir.join("folder")).is_err());
+        assert_eq!(std::fs::read(&from).expect("from"), b"new");
+        assert!(dir.join("folder").is_dir());
+        #[cfg(windows)]
+        {
+            let writable = std::fs::metadata(&to).expect("meta").permissions();
+            let mut permissions = writable.clone();
+            permissions.set_readonly(true);
+            std::fs::set_permissions(&to, permissions).expect("read-only");
+            let error = rename_replace(&from, &to).expect_err("read-only");
+            assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+            assert_eq!(std::fs::read(&to).expect("to"), b"new");
+            std::fs::set_permissions(&to, writable).expect("writable");
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Both renames on Windows take names longer than MAX_PATH.
+    #[cfg(windows)]
+    #[test]
+    fn a_replacing_rename_takes_a_long_path() {
+        let dir = sandbox("replace-long");
+        let mut deep = dir.clone();
+        while deep.as_os_str().len() < 300 {
+            deep.push("d".repeat(50));
+        }
+        std::fs::create_dir_all(&deep).expect("deep");
+        let (from, to) = (deep.join("from"), deep.join("to"));
+        for replace in [rename_replace, posix_replace] {
+            std::fs::write(&from, b"new").expect("from");
+            std::fs::write(&to, b"old").expect("to");
+            let _reader = File::open(&to).expect("reader");
+            replace(&from, &to).expect("replaced");
+            assert_eq!(std::fs::read(&to).expect("to"), b"new");
+        }
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// Only a directory that cannot be synced at all is let off.

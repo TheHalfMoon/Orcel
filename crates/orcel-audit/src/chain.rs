@@ -17,8 +17,28 @@
 //! owner reset, [`open_after_reset`] opens a first file that names it.) The
 //! old file gets its second name and the new one is whole on disk before one
 //! rename puts it in place: a crash at any point leaves the old file or the
-//! new one at the chain's path, never neither. At worst it leaves a second
-//! name of the old file and an unused `<chain>.recovering-*` file beside it.
+//! new one at the chain's path, never neither.
+//!
+//! Such a crash can leave files beside the chain, which nothing removes
+//! later: an unused `<chain>.recovering-*` file (on a Unix filesystem without
+//! an exclusive rename perhaps a second name of a reset's new file), and a
+//! `.quarantine-moved-*` or `.quarantine-reset-*` name no opening record
+//! names: a second name of the file that was at the chain's path, or, where
+//! the filesystem has no hard links, a copy of it as it was then (a failed
+//! swap leaves that copy too). They hold up neither writers nor another
+//! run. While a second name is there,
+//! [`check_migration_entry`](orcel_platform::paths::check_migration_entry)
+//! refuses both names, and with them a migration of that state root (and on
+//! macOS the install check of it). The remedy, once the chain verifies: stop
+//! every orceld, and delete the `<chain>.recovering-*` files, and of the
+//! `.quarantine-moved-*` and `.quarantine-reset-*` names those that no opening
+//! record (of the chain, or of any file kept beside it) gives as
+//! `moved_aside.file`. A name that one gives is evidence the verifier needs.
+//!
+//! Only a regular file is replaced. A link at the chain's path, which a
+//! writer does follow, is refused by both operations: move what it leads to
+//! there first. So is a file that cannot be flushed, which on Windows takes
+//! a handle that may write: clear its read-only attribute first.
 //!
 //! Appending takes an OS lock on `<chain>.lock` (several orcelds append to
 //! one file), brings this writer's view up to the file's end (verifying
@@ -26,11 +46,18 @@
 //! one whole line and `sync_data`s it before returning. A file that shrank,
 //! was replaced by an unlinked file, or whose added records do not chain,
 //! is refused: nothing is appended and the caller gets
-//! [`ChainError::Broken`]. A torn last line (a crash in the middle of a
-//! write) is moved to `<chain>.quarantine-<ms>-<pid>-<token>`, cut from the
-//! file and recorded as a `rotation` event before anything else is appended,
-//! so the cut is itself in the chain. A last line that is a whole valid event
-//! without its line end is not what a crash leaves, and is refused.
+//! [`ChainError::Broken`]. That holds from the first record this writer read,
+//! also when bringing its view up to date, or a write, failed half-way (then
+//! the file an owner reset opened is followed too, while the holder vouches
+//! for it). It does not hold for a file whose first record does not verify,
+//! which has no id to know it by, nor, without an anchor holder, across a
+//! restart.
+//!
+//! A torn last line (a crash in the middle of a write) is moved to
+//! `<chain>.quarantine-<ms>-<pid>-<token>`, cut from the file and recorded as
+//! a `rotation` event before anything else is appended, so the cut is itself
+//! in the chain. A last line that is a whole valid event without its line end
+//! is not what a crash leaves, and is refused.
 //!
 //! Kept evidence is never replaced: a file or tail moved aside only takes a
 //! name nothing has, and after [`ASIDE_ATTEMPTS`] taken names the operation
@@ -46,7 +73,7 @@
 //! it whole once per process); a writer follows one linked replacement, and
 //! refuses a file two replacements on until it restarts.
 
-use crate::anchor::{AnchorOutcome, Anchorer, LocalMarker};
+use crate::anchor::{AnchorOutcome, Anchorer, HeldState, LocalMarker};
 use crate::redact::{bounded, field_text, sha256_hex};
 use crate::{MAX_FIELD_CHARS, MAX_TARGET_CHARS};
 use orcel_contracts::event::{
@@ -56,7 +83,8 @@ use orcel_contracts::job::ExecutionState;
 use orcel_contracts::lease::DispatchAuthority;
 use orcel_contracts::Contract;
 use orcel_platform::files::{
-    keep_file_as, rename_no_replace, sync_parent_dir, unique_token, KeptFile,
+    keep_file_as, open_to_keep, rename_no_replace, rename_replace, sync_parent_dir, unique_token,
+    KeptFile,
 };
 use serde_json::{json, Value};
 use std::fmt;
@@ -401,6 +429,31 @@ impl<R: BufRead> Scanner<R> {
     }
 }
 
+/// A file this writer read, up to a record that verified.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Known {
+    file_id: String,
+    head_seq: u64,
+    head: String,
+}
+
+impl Known {
+    /// Refuses the file `file_id` with the records before `next_seq` if it is
+    /// this one and lacks a record that was read.
+    fn cut_from(&self, file_id: Option<&str>, next_seq: u64) -> Result<(), ChainError> {
+        if file_id == Some(self.file_id.as_str()) && next_seq <= self.head_seq {
+            return Err(ChainError::Broken {
+                seq: next_seq,
+                reason: format!(
+                    "the file ends before the head this writer read (seq {}): records were cut",
+                    self.head_seq
+                ),
+            });
+        }
+        Ok(())
+    }
+}
+
 /// This writer's view of the file: everything before `len` verified.
 #[derive(Clone)]
 struct Cursor {
@@ -421,6 +474,10 @@ struct Cursor {
     /// file conflicts with the head the holder holds. Fail closed until the
     /// operator restores the file the holder knows.
     refused: Option<String>,
+    /// While the file is read from its start again: the file this writer read
+    /// before. Only that file, or one that continues it, takes its place,
+    /// until a sync succeeds.
+    known: Option<Known>,
 }
 
 impl Cursor {
@@ -435,6 +492,40 @@ impl Cursor {
             reset: None,
             opening_unanchored: false,
             refused: None,
+            known: None,
+        }
+    }
+
+    /// The file as far as this cursor read it.
+    fn read(&self) -> Option<Known> {
+        self.file_id.clone().map(|file_id| Known {
+            file_id,
+            head_seq: self.next_seq.saturating_sub(1),
+            head: self.head.clone(),
+        })
+    }
+
+    /// The file whose place only one that continues it takes.
+    fn known(&self) -> Option<Known> {
+        self.known.clone().or_else(|| self.read())
+    }
+
+    /// Reads the file from its start next, and still knows which it is.
+    fn start_over(&mut self) {
+        let known = self.known();
+        *self = Self::empty();
+        self.known = known;
+    }
+
+    /// Remembers what a failed sync read, unless this cursor has a file.
+    fn remember(&mut self, read: Option<Known>) {
+        let Some(read) = read.filter(|_| self.file_id.is_none()) else {
+            return;
+        };
+        let further =
+            |known: &Known| known.file_id == read.file_id && known.head_seq <= read.head_seq;
+        if self.known.as_ref().is_none_or(further) {
+            self.known = Some(read);
         }
     }
 }
@@ -486,13 +577,22 @@ pub(crate) fn held_conflict(
     }
 }
 
-/// The opening event of the file at `path`, if it has a whole first line.
-fn opening_of(path: &Path) -> io::Result<Option<(AuditEvent, Option<ChainLink>)>> {
-    let file = match File::open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
+/// Whether the holder holds the reset that `opening` starts from, or that
+/// very record: the owner reset the log, and this file is the one that did.
+fn reset_vouched(held: Option<&HeldState>, opening: &AuditEvent) -> bool {
+    let reset = opening.detail["anchor_reset"]["event_digest"].as_str();
+    let (Some(held), Some(reset)) = (held, reset) else {
+        return false;
     };
+    match (&held.reset, &held.anchor) {
+        (Some(pending), _) => pending == reset,
+        (None, Some(anchor)) => anchor.file_id == opening.digest,
+        (None, None) => false,
+    }
+}
+
+/// The opening event of `file`, if it has a whole first line that verifies.
+fn opening_of(file: &File) -> io::Result<Option<(AuditEvent, Option<ChainLink>)>> {
     let mut scanner = Scanner::new(BufReader::new(file));
     Ok(match scanner.step()? {
         Step::Event(event, _) => Some((*event, scanner.link)),
@@ -583,8 +683,10 @@ pub(crate) mod forced {
     use std::cell::{Cell, RefCell};
     use std::collections::VecDeque;
 
+    type Action = Box<dyn FnMut() -> std::io::Result<()>>;
+
     thread_local! {
-        static FAULT: Cell<Option<(&'static str, bool)>> = const { Cell::new(None) };
+        static FAULT: RefCell<Option<(&'static str, Action)>> = const { RefCell::new(None) };
         static NOW_MS: Cell<Option<u64>> = const { Cell::new(None) };
         static ASIDE_TOKENS: RefCell<VecDeque<String>> = const { RefCell::new(VecDeque::new()) };
     }
@@ -597,13 +699,12 @@ pub(crate) mod forced {
         ASIDE_TOKENS.with_borrow_mut(VecDeque::pop_front)
     }
 
-    /// What goes wrong at `step` of replacing a chain file, if anything.
+    /// What happens or goes wrong at `step`, if anything.
     pub(super) fn step(step: &'static str) -> std::io::Result<()> {
-        match FAULT.get() {
-            Some((at, true)) if at == step => std::panic::panic_any("crashed"),
-            Some((at, false)) if at == step => Err(std::io::ErrorKind::StorageFull.into()),
+        FAULT.with_borrow_mut(|fault| match fault {
+            Some((at, action)) if *at == step => action(),
             _ => Ok(()),
-        }
+        })
     }
 
     /// Makes one step fail, or (a panic, which nothing here handles) crash,
@@ -612,7 +713,20 @@ pub(crate) mod forced {
 
     impl Fault {
         pub(crate) fn at(step: &'static str, crash: bool) -> Self {
-            FAULT.set(Some((step, crash)));
+            Self::run(step, move || {
+                if crash {
+                    std::panic::panic_any("crashed");
+                }
+                Err(std::io::ErrorKind::StorageFull.into())
+            })
+        }
+
+        /// Runs `action` at the step.
+        pub(crate) fn run(
+            step: &'static str,
+            action: impl FnMut() -> std::io::Result<()> + 'static,
+        ) -> Self {
+            FAULT.set(Some((step, Box::new(action))));
             Self(())
         }
     }
@@ -716,14 +830,30 @@ pub(crate) fn chain_file_exists(path: &Path) -> Result<bool, ChainError> {
     }
 }
 
+/// The chain file at `path`, opened to be kept, if there is one (see
+/// [`chain_file_exists`]).
+fn open_old(path: &Path) -> Result<Option<File>, ChainError> {
+    chain_file_exists(path)?
+        .then(|| open_to_keep(path).map_err(|error| io_error("open the chain", error)))
+        .transpose()
+}
+
+/// The old file [`replace_file`] keeps.
+struct Old {
+    file: File,
+    /// The kept name's part.
+    what: &'static str,
+    /// What keeping it is called.
+    action: &'static str,
+    /// Why it ended.
+    stopped: String,
+}
+
 /// How [`replace_file`] opens the new file.
 struct Replacement<'a> {
     log: &'a str,
     link: Option<&'a ChainLink>,
     reset: Option<Value>,
-    /// The kept name's part, what keeping it is called and why the old file
-    /// ended; `None` when there is no old file.
-    old: Option<(&'static str, &'static str, String)>,
 }
 
 /// Puts a new file with its opening record at `path`, under the chain's lock:
@@ -733,12 +863,16 @@ struct Replacement<'a> {
 /// copy of the old file stays). Returns the kept name and the new file's id.
 fn replace_file(
     path: &Path,
+    old: Option<Old>,
     replacement: Replacement<'_>,
 ) -> Result<(Option<String>, String), ChainError> {
-    let (kept, moved) = match &replacement.old {
-        Some((what, action, stopped)) => {
-            let (name, kept) = keep_aside(path, what, action, |to| keep_file_as(path, to))?;
-            let moved = json!({"file": &name, "stopped": stopped});
+    // The old file is closed before it is replaced.
+    let (kept, moved) = match old {
+        Some(old) => {
+            let (name, kept) = keep_aside(path, old.what, old.action, |to| {
+                keep_file_as(&old.file, path, to)
+            })?;
+            let moved = json!({"file": &name, "stopped": old.stopped});
             (Some((name, kept)), Some(moved))
         }
         None => (None, None),
@@ -756,7 +890,8 @@ fn replace_file(
             return Err(error);
         }
     };
-    sync_parent_dir(path)
+    step("swapped")
+        .and_then(|()| sync_parent_dir(path))
         .map_err(|error| io_error("the new chain file is in place, but not synced", error))?;
     Ok((name, file_id))
 }
@@ -773,7 +908,7 @@ fn write_and_swap(
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
     let (name, _) = keep_aside(path, "recovering-", ACTION, |to| options.open(to))?;
     let staged = path.with_file_name(name);
-    let has_old = replacement.old.is_some();
+    let has_old = moved.is_some();
     let swapped = ChainWriter::open(&staged, replacement.log)
         .map_err(|error| io_error(ACTION, error))
         .and_then(|writer| {
@@ -784,7 +919,7 @@ fn write_and_swap(
             let swap = || {
                 step("staged")?;
                 if has_old {
-                    std::fs::rename(&staged, path)
+                    rename_replace(&staged, path)
                 } else {
                     rename_no_replace(&staged, path)
                 }
@@ -968,62 +1103,76 @@ impl ChainWriter {
     /// line, opens an empty file, and checks a file read from its start
     /// against the anchor the holder holds. All of it or none: on an error
     /// `cursor` is as it was, so the next sync reads and checks again, and
-    /// still knows the file this writer verified.
+    /// still knows the file this writer verified, or at least read.
     fn sync(&self, cursor: &mut Cursor) -> Result<(), ChainError> {
         let before = cursor.clone();
         let synced = self.sync_to_end(cursor);
-        if synced.is_err() {
+        if synced.is_ok() {
+            cursor.known = None;
+        } else {
+            let read = cursor.read();
             *cursor = before;
+            cursor.remember(read);
         }
         synced
     }
 
     fn sync_to_end(&self, cursor: &mut Cursor) -> Result<(), ChainError> {
+        // A writer reading the file from its start (a new process, a failed
+        // sync or write, or a linked replacement) checks it against the
+        // anchor the holder holds.
+        let mut held = None;
         if !cursor.verified {
-            *cursor = Cursor::empty();
-        }
-        if let Some(known) = cursor.file_id.clone() {
-            match opening_of(&self.path).map_err(|error| io_error("read the chain", error))? {
-                Some((opening, _)) if opening.digest == known => {}
-                Some((_, Some(link))) if link.previous_file_id == known => {
-                    // Moved aside and continued by a linked file, which must
-                    // keep every record this writer verified.
-                    let verified_head = cursor.next_seq.saturating_sub(1);
-                    if link.previous_head_seq < verified_head
-                        || (link.previous_head_seq == verified_head
-                            && link.previous_head_digest != cursor.head)
-                    {
-                        return Err(ChainError::Broken {
-                            seq: cursor.next_seq,
-                            reason: format!(
-                                "the linked file continues from seq {}, before the head this \
-                                 writer verified (seq {verified_head}): records were dropped",
-                                link.previous_head_seq
-                            ),
-                        });
-                    }
-                    *cursor = Cursor::empty();
-                }
-                Some(_) => {
-                    return Err(ChainError::Broken {
-                        seq: cursor.next_seq,
-                        reason: "the chain file was replaced by a file that does not link to it"
-                            .to_owned(),
-                    })
-                }
-                None => {
-                    return Err(ChainError::Broken {
-                        seq: cursor.next_seq,
-                        reason: "the chain file was removed or emptied".to_owned(),
-                    })
-                }
-            }
+            cursor.start_over();
+            held = self.anchorer().held(&self.log);
         }
         let file = match File::open(&self.path) {
             Ok(file) => Some(file),
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
             Err(error) => return Err(io_error("open the chain", error)),
         };
+        if let Some(known) = cursor.known() {
+            let opening = match &file {
+                Some(file) => {
+                    opening_of(file).map_err(|error| io_error("read the chain", error))?
+                }
+                None => None,
+            };
+            let replaced = |reason: String| ChainError::Broken {
+                seq: known.head_seq + 1,
+                reason,
+            };
+            match opening {
+                Some((opening, _)) if opening.digest == known.file_id => {}
+                Some((_, Some(link))) if link.previous_file_id == known.file_id => {
+                    // Moved aside and continued by a linked file, which must
+                    // keep every record this writer verified.
+                    if link.previous_head_seq < known.head_seq
+                        || (link.previous_head_seq == known.head_seq
+                            && link.previous_head_digest != known.head)
+                    {
+                        return Err(replaced(format!(
+                            "the linked file continues from seq {}, before the head this \
+                             writer verified (seq {}): records were dropped",
+                            link.previous_head_seq, known.head_seq
+                        )));
+                    }
+                    if cursor.verified {
+                        cursor.start_over();
+                        held = self.anchorer().held(&self.log);
+                    }
+                }
+                // A writer that has to read from the start (no other asked the
+                // holder) follows the owner's reset.
+                Some((opening, _)) if reset_vouched(held.as_ref(), &opening) => {}
+                Some(_) => {
+                    return Err(replaced(
+                        "the chain file was replaced by a file that does not link to it".to_owned(),
+                    ))
+                }
+                None => return Err(replaced("the chain file was removed or emptied".to_owned())),
+            }
+        }
         let end = match &file {
             Some(file) => file
                 .metadata()
@@ -1040,14 +1189,6 @@ impl ChainWriter {
                 ),
             });
         }
-        // A writer reading the file from its start (a new process, or a
-        // linked replacement) checks it against the anchor the holder holds.
-        let from_start = cursor.len == 0;
-        let held = if from_start {
-            self.anchorer().held(&self.log)
-        } else {
-            None
-        };
         let mut digest_at_held = None;
         let mut opening_anchored = false;
         if let Some(mut file) = file.filter(|_| end > cursor.len) {
@@ -1060,6 +1201,17 @@ impl ChainWriter {
                     .map_err(|error| io_error("read the chain", error))?
                 {
                     Step::Event(event, length) => {
+                        if cursor.known.as_ref().is_some_and(|known| {
+                            scanner.file_id.as_deref() == Some(known.file_id.as_str())
+                                && event.seq == known.head_seq
+                                && event.digest != known.head
+                        }) {
+                            return Err(ChainError::Broken {
+                                seq: event.seq,
+                                reason: "the record is not the one this writer read (rewritten)"
+                                    .to_owned(),
+                            });
+                        }
                         if held
                             .as_ref()
                             .and_then(|held| held.anchor.as_ref())
@@ -1108,12 +1260,18 @@ impl ChainWriter {
                                     .to_owned(),
                             });
                         }
+                        if let Some(known) = &cursor.known {
+                            known.cut_from(cursor.file_id.as_deref(), cursor.next_seq)?;
+                        }
                         cursor.verified = true;
                         self.quarantine_tail(cursor, &bytes)?;
                         break;
                     }
                 }
             }
+        }
+        if let Some(known) = &cursor.known {
+            known.cut_from(cursor.file_id.as_deref(), cursor.next_seq)?;
         }
         cursor.verified = true;
         self.open_file_if_empty(cursor, None, None, None)?;
@@ -1263,8 +1421,8 @@ impl ChainWriter {
             }
         }
         line.push(b'\n');
-        let written = crate::open_options()
-            .open(&self.path)
+        let written = step("append")
+            .and_then(|()| crate::open_options().open(&self.path))
             .and_then(|mut file| file.write_all(&line).and_then(|()| file.sync_data()));
         if let Err(error) = written {
             // Part of the line may be on disk: read the file again next time.
@@ -1311,9 +1469,9 @@ pub struct MovedAside {
 /// file held stays, and the gap is recorded.
 pub fn move_aside(path: &Path, log: &str) -> Result<MovedAside, ChainError> {
     let _lock = lock(&lock_path_of(path))?;
-    chain_file_exists(path)?;
-    let file = File::open(path).map_err(|error| io_error("open the chain", error))?;
-    let mut scanner = Scanner::new(BufReader::new(file));
+    let file =
+        open_old(path)?.ok_or_else(|| ChainError::Io("there is no chain file".to_owned()))?;
+    let mut scanner = Scanner::new(BufReader::new(&file));
     let mut stopped = "end".to_owned();
     loop {
         match scanner
@@ -1337,19 +1495,18 @@ pub fn move_aside(path: &Path, log: &str) -> Result<MovedAside, ChainError> {
         previous_head_seq: scanner.next_seq.saturating_sub(1),
         previous_head_digest: scanner.head.clone(),
     });
-    // Closed before the file is replaced.
-    drop(scanner);
     let (moved_to, file_id) = replace_file(
         path,
+        Some(Old {
+            file,
+            what: "quarantine-moved-",
+            action: "move the chain aside",
+            stopped: bounded(&stopped, MAX_FIELD_CHARS).into_owned(),
+        }),
         Replacement {
             log,
             link: link.as_ref(),
             reset: None,
-            old: Some((
-                "quarantine-moved-",
-                "move the chain aside",
-                bounded(&stopped, MAX_FIELD_CHARS).into_owned(),
-            )),
         },
     )?;
     Ok(MovedAside {
@@ -1376,20 +1533,19 @@ pub struct ResetOpened {
 /// `reset_by_owner`, never silently intact.
 pub fn open_after_reset(path: &Path, log: &str, reset: Value) -> Result<ResetOpened, ChainError> {
     let _lock = lock(&lock_path_of(path))?;
-    let old = chain_file_exists(path)?.then(|| {
-        (
-            "quarantine-reset-",
-            "move the abandoned chain aside",
-            "abandoned by an owner anchor reset".to_owned(),
-        )
+    let old = open_old(path)?.map(|file| Old {
+        file,
+        what: "quarantine-reset-",
+        action: "move the abandoned chain aside",
+        stopped: "abandoned by an owner anchor reset".to_owned(),
     });
     let (moved_to, file_id) = replace_file(
         path,
+        old,
         Replacement {
             log,
             link: None,
             reset: Some(reset),
-            old,
         },
     )?;
     Ok(ResetOpened { moved_to, file_id })

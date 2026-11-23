@@ -378,8 +378,11 @@ First try to keep the trail:
 1. `orceld audit-verify` (not elevated) says why. If the file is only broken (an edit, a torn tail, a cut),
    `orceld audit-move-aside` keeps it and opens a new file linked to its last verifiable record; the service
    accepts that continuation, no reset needed.
+   It refuses a chain path that is a link (move the file it leads to there first) and a read-only file
+   (clear the attribute first), and so does the reset below.
 2. If the original file still exists somewhere (a backup, the `.quarantine-*` files beside the chain),
-   restore it instead.
+   restore it instead. An orceld that is already running refuses a restored file that is older than, or other
+   than, the one it read: restart it.
 
 Only when the file the service holds anchors of is gone for good, reset the anchor:
 
@@ -404,6 +407,13 @@ Only when the file the service holds anchors of is gone for good, reset the anch
    a pending reset can be reset again with the same checks and box, and the new reset replaces the old. Only that file is accepted: until its first anchor, the
    service refuses any other first file (one that does not name the reset record, or a long chain grown
    before it asked), and `orceld audit-verify` reports such a file as broken.
+   A crash in the middle of `audit-move-aside` or of this command leaves the old or the new file at the chain
+   path, never neither, and at most `audit-chain.jsonl.recovering-*` and an extra `.quarantine-moved-*` or
+   `.quarantine-reset-*` name beside it. They stop neither orceld nor another run, but `orcel state migrate`
+   refuses a state root in which the chain file has such a second name. Once `orceld audit-verify` is
+   satisfied, with every client stopped, delete the `.recovering-*` files and only those
+   `.quarantine-moved-*` and `.quarantine-reset-*` names that no file's first record gives as
+   `moved_aside.file`; every other `.quarantine-*` file is evidence.
 7. Start your client again. `orceld audit-verify` now reports `reset_by_owner` (exit code 8), never a silent
    `intact`, and names the reset record; the next anchors the service holds are of the new file. The abandoned
    file stays refused by id.
