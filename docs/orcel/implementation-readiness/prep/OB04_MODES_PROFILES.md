@@ -107,15 +107,40 @@ This is about Orcel's own calls. A page is a different matter: it gets no async 
 
 The contract (`apps/orcel-mcp/src/tool_contract.ts`), orceld's profile gate (`BROWSER_FULL_SHAPES`), the host's exposure list (`BROWSER_FULL_MCP_TOOLS`, `BROWSER_FULL_TOOL_SHAPES`) and `docs/p16/TOOL_CONTRACT.md` list the same 15 broker tools; `browser-full.test.ts` checks that they agree. Remote mapping stays disabled: the profile gate refuses every broker shape for a remote request.
 
-## 5. browser_structured through the broker: deferred
+## 5. browser_structured through the broker
 
-Routing the 12 `browser_structured` shapes through the broker is not low-risk, so it is deferred:
+Done on `browser/structured-via-broker`, with every `browser_structured` reply unchanged. The earlier deferral named three risks; each is handled by what the move leaves out.
 
-- **Behaviour would change.** A structured lifetime would take a broker device slot (4 per device across every orceld). Then a `browser_structured` request could be refused where it is accepted today, and a `browser_full` session could be refused because a structured page holds a slot. The grain requires `browser_structured` to keep SG-000108 behaviour exactly.
-- **Identity does not map.** Structured shapes name a `page_id` from the shared page store (`live/pages.jsonl`), not a broker session. Mapping them needs an implicit per-client session and a translation of page ids. That touches the SG-000120 journal and recovery path (`live/intents.jsonl`) and the takeover gate's tickets, all of which are keyed to the structured slot today.
-- **Receipts and budgets would appear.** Broker sessions add receipts and action budgets. Structured replies would change unless both were hidden, and hiding them is a second code path, not "the same behaviour".
+**What moved.** The structured browser (one host, one lifetime, one page per orceld) is no longer a thread-local slot in `live_dispatch.rs`. It is the Session Broker's structured worker (`Broker::structured_worker` in `browser_broker.rs`), held beside the `browser_full` sessions. Every structured request reaches it through `BrokerSlot`. It now gets this broker bookkeeping:
 
-The broker and the structured slot already share every authority: the profile gate, policy, the takeover gate, the approval broker and the live host. Only the session bookkeeping differs. The move belongs with OB-05, whose receipts on the audit chain change the reply contract anyway, or with a packet that may change `browser_structured` replies.
+- **Cleanup on every exit path.** When orceld's input closes, on any exit path, `end_browser_sessions` ends the broker sessions and shuts the structured worker down. Before, nothing ended it explicitly; it was left to the thread-local slot's teardown at process exit.
+- **Emergency stop in this orceld.** The emergency revoke's first step (`advance_epoch_and_stop_browsers`) now ends the structured worker too. Before, a structured page lived through an emergency stop.
+- **Emergency stop across processes.** Each structured request reads the verified approval epoch first. When it moved since the broker last saw one (an emergency revoke in any orceld), every session and the structured worker end, as `check_epoch` does for a broker action. The request then runs on a new worker, exactly as after a lost host: `browser.page/open` opens a page, and a request on the old page id gets the same `TARGET_STALE` a lost host gives. A `browser_full` action that sees the moved epoch ends the structured worker as well.
+- **Leftover sweep.** The first structured request starts the broker, and with it the sweep of session folders and evidence that exited orcelds left. The structured worker's own profile and staging folders keep the host's #298 sweep, as before.
+
+**What did not move, and why.** Each of these would change a structured reply, so none applies:
+
+- **Budgets and the device slot.** The structured worker is not a broker session. It has no session id and no device slot, does not count against the per-client cap, and has no action budget. Any of these would add an `OUTPUT_LIMIT` refusal where a structured request is accepted today, or refuse a `browser_full` session because a structured page holds a slot.
+- **The fail-closed epoch refusal.** A broker action whose epoch read cannot be verified is refused `APPROVAL_UNAVAILABLE` and ends every session. A structured request never had that refusal, so an unverified read changes nothing for it: the structured worker keeps running, and a `browser_full` action's unverified read ends only the broker sessions.
+- **Identity, state and the takeover gate.** Structured shapes still name a `page_id` from the shared page store. They keep `live/pages.jsonl`, the SG-000120 journal `live/intents.jsonl` (so `recovered_downloads` still reports an earlier run's lost downloads), the profile, staging and host folders under `live/`, and the build's takeover-gate switch. They do not move into a session folder that ends with the session.
+- **OB-05 receipts.** Structured actions get no receipts on the audit chain, even unreturned ones. An OB-05 intent is written before dispatch, and a chain that refuses it refuses the action, which would be a new structured refusal. A best-effort receipt would be a second receipt meaning: `orceld audit-verify --receipts` and `scripts/browser-full-e2e.mjs` check receipts inside broker sessions (start, sequence, end), and a structured worker has no session. Structured actions keep the request-level dispatch record and their SG-000120 journal.
+
+The approvals, the rules and the route are untouched. Each consequential action still asks its own SOFT approval, never covered by a Full Access lease. The engine still runs headless, with one page, a throwaway profile per launch and one origin per lifetime. The profile gate still admits structured shapes only for a local request.
+
+**How "unchanged" is proven.** The structured dispatch reads its browser through a `Slot` and the `StructuredBrowser` trait (exactly `LiveBrowser`'s methods). Two golden tests in `live_dispatch.rs` (`ob04_every_structured_reply_is_unchanged`, `ob04_every_structured_refusal_is_unchanged`, `live-browser-dev` builds) drive it with a scripted browser. They pin, byte for byte, every reply and refusal of the twelve shapes, the host actions each asked for, and whether the request reached the browser at all. The cases cover:
+
+- open with recovered downloads, navigate, observe, click, download preview and download (off-origin, over-long and non-plain links, a page store that cannot follow);
+- fill, select, check, Enter, the text wait and verify;
+- the agent URL sanitizer in both modes, and every malformed request.
+
+They were captured on the thread-local slot in the first commit and pass unchanged in the second, where the scripted browser is the broker's structured worker.
+
+**Residuals.**
+
+- If the broker's own state folder (`live/broker`) cannot be made a real directory, or the system has no randomness for an instance id, a structured request is now refused `PROVIDER_UNAVAILABLE` (or `INTERNAL_ERROR`) with the broker's message. Before, it could still have run.
+- Each structured request now reads the approval ledger's epoch. That costs a read, and it changes no reply.
+- After an emergency stop, the next structured request on the old page id is refused `TARGET_STALE`, as after a lost host. Before, the page lived on. This is the emergency stop itself, not a change in any reply's shape or values.
+- No live run. The golden tests use a scripted browser; the real-Edge structured journeys (`live_dispatch::native`, the SG-000122 form journey) were not rerun on this branch.
 
 ## 6. Tests
 
@@ -130,6 +155,7 @@ The broker and the structured slot already share every authority: the profile ga
   - The scripted consent: profile use and the Visible window.
   - Worker: `desktop-guard.native.test.ts` (permission state on the installed Edge, file chooser intercepted) and `shadow.test.ts`.
 - Scripted end-to-end (`scripts/browser-full-e2e.mjs`, section 7).
+- `browser_structured` through the broker (section 5): the two golden tests in `live_dispatch.rs`, and three `browser_broker` tests (the structured worker is kept, replaced and never a session; it ends on every exit path and on emergency stop; a moved epoch ends it while an unverified read refuses nothing).
 
 ## 7. Scripted end-to-end run
 

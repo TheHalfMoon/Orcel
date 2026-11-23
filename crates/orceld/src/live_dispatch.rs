@@ -137,14 +137,7 @@ mod live {
     use orcel_browser_host::WorkerHostLaunch;
     use orcel_provider_browser::PageRecord;
     use serde_json::json;
-    use std::cell::RefCell;
     use std::path::{Path, PathBuf};
-
-    thread_local! {
-        /// orceld serves one request at a time on one thread: the browser
-        /// (one host, at most one lifetime and one page) lives across them.
-        static BROWSER: RefCell<Option<LiveBrowser>> = const { RefCell::new(None) };
-    }
 
     fn string<'a>(request: &'a RequestEnvelope, name: &str) -> Result<&'a str, ProviderError> {
         request
@@ -214,28 +207,6 @@ mod live {
                 intents: root.join("intents.jsonl"),
             },
         )
-    }
-
-    /// Run `action` on the live browser, starting one (or replacing one
-    /// whose host is gone) first.
-    fn with_browser<T>(
-        action: impl FnOnce(&mut LiveBrowser) -> Result<T, ProviderError>,
-    ) -> Result<T, ProviderError> {
-        BROWSER.with(|cell| {
-            let mut slot = cell.borrow_mut();
-            if slot.as_mut().is_some_and(|browser| !browser.is_usable()) {
-                if let Some(old) = slot.take() {
-                    let _ = old.shutdown();
-                }
-            }
-            if slot.is_none() {
-                *slot = Some(start()?);
-            }
-            match slot.as_mut() {
-                Some(browser) => action(browser),
-                None => Err(super::unavailable()),
-            }
-        })
     }
 
     /// The live browser actions a `browser_structured` reply is built from:
@@ -471,16 +442,25 @@ mod live {
         ) -> Result<T, ProviderError>;
     }
 
-    /// orceld's own slot.
-    struct ThreadSlot;
+    /// orceld's slot (SG-000135 OB-04): the browser lives in the Session
+    /// Broker, beside the `browser_full` sessions, so it ends with them on
+    /// every exit path, on an emergency stop in this orceld, and when the
+    /// verified approval epoch moved (an emergency revoke in any orceld).
+    /// The first request starts the broker, and with it the sweep of what
+    /// exited orcelds left. Starting, keeping and replacing the browser are
+    /// as before, and no budget, slot or receipt applies to it.
+    struct BrokerSlot<'a, A> {
+        approval: &'a A,
+    }
 
-    impl Slot for ThreadSlot {
+    impl<A: ApprovalBroker> Slot for BrokerSlot<'_, A> {
         type Browser = LiveBrowser;
         fn with<T>(
             &mut self,
             action: impl FnOnce(&mut LiveBrowser) -> Result<T, ProviderError>,
         ) -> Result<T, ProviderError> {
-            with_browser(action)
+            let epoch = crate::browser_broker::verified_epoch(self.approval);
+            super::full::with_broker(|broker| action(broker.structured_worker(epoch, start)?))
         }
     }
 
@@ -489,7 +469,7 @@ mod live {
         approval: &impl ApprovalBroker,
         request: &RequestEnvelope,
     ) -> Result<Value, ProviderError> {
-        dispatch_in(&mut ThreadSlot, workspace, approval, request)
+        dispatch_in(&mut BrokerSlot { approval }, workspace, approval, request)
     }
 
     /// Every `browser_structured` reply, built on the browser `slot` holds.
@@ -879,13 +859,15 @@ mod live {
     }
 
     /// SG-000135 OB-04: every `browser_structured` reply, pinned. A scripted
-    /// browser stands in for the host; the replies, the errors and the host
-    /// actions each shape asked for are compared byte for byte with what
-    /// `dispatch_in` produced before the structured slot moved into the
-    /// Session Broker.
+    /// browser stands in for the host, held as the Session Broker's
+    /// structured worker; the replies, the errors and the host actions each
+    /// shape asked for are compared byte for byte with what `dispatch_in`
+    /// produced on the thread-local slot before the move (commit "test: pin
+    /// every browser_structured reply before it moves into the broker").
     #[cfg(test)]
     mod golden {
         use super::*;
+        use crate::browser_broker::{Broker, Budgets};
         use crate::live_browser::{DownloadIntent, Reconciled, Recovered};
         use orcel_approval::test_support::FixedApprovalBroker;
         use orcel_approval::ApprovalDecision;
@@ -1164,22 +1146,47 @@ mod live {
             }
         }
 
-        /// The slot the golden requests run on.
+        impl crate::browser_broker::SessionWorker for Scripted {
+            fn is_usable(&mut self) -> bool {
+                true
+            }
+            fn shutdown(self) -> bool {
+                true
+            }
+            fn switch_state(&mut self) -> crate::browser_mode_switch::SwitchState {
+                Default::default()
+            }
+        }
+
+        /// The slot the golden requests run on: the Session Broker's own
+        /// `browser_structured` worker (SG-000135 OB-04), which the scripted
+        /// browser becomes on the first request that reaches it.
         struct TestSlot {
-            browser: Scripted,
+            broker: Broker<Scripted>,
+            pending: Option<Scripted>,
             entered: usize,
         }
 
         impl TestSlot {
-            fn new(browser: Scripted) -> Self {
+            fn new(browser: Scripted, root: &Path) -> Self {
+                let broker = Broker::start(
+                    root.join("broker"),
+                    "00000000000000b4".into(),
+                    Budgets::DEFAULT,
+                )
+                .expect("a broker in the test's own root");
                 Self {
-                    browser,
+                    broker,
+                    pending: Some(browser),
                     entered: 0,
                 }
             }
 
             fn browser(&mut self) -> &mut Scripted {
-                &mut self.browser
+                if let Some(browser) = self.broker.structured_mut() {
+                    return browser;
+                }
+                self.pending.as_mut().expect("the scripted browser")
             }
         }
 
@@ -1190,7 +1197,13 @@ mod live {
                 action: impl FnOnce(&mut Scripted) -> Result<T, ProviderError>,
             ) -> Result<T, ProviderError> {
                 self.entered += 1;
-                action(&mut self.browser)
+                let pending = &mut self.pending;
+                let browser = self.broker.structured_worker(Some(1), || {
+                    pending.take().ok_or_else(|| {
+                        ProviderError::new(FailureCode::InternalError, "scripted: started twice")
+                    })
+                })?;
+                action(browser)
             }
         }
 
@@ -1221,7 +1234,7 @@ mod live {
                     .map(|path| path.to_string_lossy().into_owned())
                     .unwrap_or_default();
                 Self {
-                    slot: TestSlot::new(browser),
+                    slot: TestSlot::new(browser, &root),
                     workspace: Workspace {
                         id: "ws-ob04-golden".into(),
                         root: root.clone(),
@@ -1664,7 +1677,7 @@ mod full {
         Ok(out)
     }
 
-    fn with_broker<T>(
+    pub(super) fn with_broker<T>(
         action: impl FnOnce(&mut Broker<LiveBrowser>) -> Result<T, ProviderError>,
     ) -> Result<T, ProviderError> {
         BROKER.with(|cell| {
