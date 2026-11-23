@@ -1,8 +1,10 @@
 # SG-000132 slice 10: standing approvals (WP1-14)
 
-Status: implemented and tested on branch `authority/wp1-14-standing`; not installed. Nothing in this slice was
-installed or run elevated, no UAC, Windows Hello or Orcel dialog was shown or answered, and no system, registry,
-firewall or ACL setting changed. Earlier: [SG132_SLICE1.md](SG132_SLICE1.md) to [SG132_SLICE9.md](SG132_SLICE9.md).
+Status: merged as #844 (`11978921`); not installed. A fresh-context review of #844 then FAILED (the folders were
+checked only as text, section 1.3); its findings are fixed on branch `authority/standing-folder-enforcement`. No
+standing approval can be issued until the indicator (WP1-12) exists, before and after those fixes. Nothing in this
+slice was installed or run elevated, no UAC, Windows Hello or Orcel dialog was shown or answered, and no system,
+registry, firewall or ACL setting changed. Earlier: [SG132_SLICE1.md](SG132_SLICE1.md) to [SG132_SLICE9.md](SG132_SLICE9.md).
 
 **What this slice does:** the engineering of WP1-14 ([UNIFIED_INTEGRATION_SPEC.md](UNIFIED_INTEGRATION_SPEC.md)
 section 8.2: "Standing approvals (4.15)", dependencies WP1-10 and WP1-12, `cargo test -p orcel-authority standing_`
@@ -61,10 +63,14 @@ satisfies all of these is that **a standing approval is issued with its lease, t
   ask on every call (the 2026-11-19 amendment). Reads and the lease-covered writes never ask, and deletion does not
   exist; none of them can be named.
 - **Folders** (`roots`): 1 to 8, each inside the lease's roots; every path a covered dispatch names must lie inside
-  one of them.
+  one of them, as text (orceld and the service) and as what it resolves to (the worker, section 1.3). Text compares
+  without regard to the case of ASCII letters only: folders are printable ASCII, and a Unicode case fold matched names
+  NTFS keeps apart (U+212A, the Kelvin sign, lowercases to `k`).
 - **Programs** (`commands`): required with `run` (1 to 8), none without it; absolute `.exe` paths inside the folders,
   each **pinned** (review of #844 at `6b7324ce`): the owner CLI records, at grant, the SHA-256 of the program's
-  contents and its file identity (volume serial number and file index), and the service's box shows both. There is
+  contents and its file identity (volume serial number and file index), and the service's box shows both. A pin is of
+  that one file, not of the code that runs: DLLs, a `.local`, a configuration or manifest, `._pth` or `pyvenv.cfg`
+  beside the program, and its arguments are not pinned, and the box says so (residual 2). There is
   no "any program in the folders": the folders lie inside the lease's roots, where `fc_fs_write` and `fc_fs_mkdir`
   run without a prompt (the 2026-11-19 amendment), so a path alone would cover a program replaced or built there
   later. SG-000096's "command patterns" are read as exact pinned programs: no wildcard, no argument pattern. This
@@ -79,7 +85,7 @@ program among the action's paths and equal to a pinned one (same path, SHA-256 a
 expired.
 
 The grant pins the program's real path (resolved through links and junctions, without the `\\?\` prefix; a network
-path is refused), so the box shows the file that runs. A program over 512 MiB is never hashed or pinned
+path is refused), so the box shows the file that is started. A program over 512 MiB is never hashed or pinned
 (`MAX_PINNED_PROGRAM_BYTES`), so its runs ask each time.
 
 The pin is checked three times: orceld first compares the run's program path with the paths the approvals in effect
@@ -90,6 +96,38 @@ whose contents or file changed, is not covered, and the person is asked); the se
 without write or delete sharing until the start, and refuses (`TARGET_STALE`, nothing started) if the contents or
 file differ from the pin it was handed.
 
+### 1.3 The real folders (fresh-context review of #844)
+
+Up to #844 the folders were compared only as text and the worker was given the lease's roots. Git climbed from a
+folder to the repository above it (`git_add` with `repository=...\standing` and `paths=["prod/x.txt"]`, then
+`git_commit`, changed the repository outside the standing folder), and junctions, linked worktrees, a run's working
+folder through a junction and U+212A for `k` were covered too. Nine tests through the real worker showed it on
+`15cc5247` (section 8). Now:
+
+- **Bound in the request.** The service's `Authorize` answer names the covering approval's folders
+  (`standing_roots`); orceld runs nothing unless they are exactly the folders it listed for that approval (an older
+  service names none, so nothing runs covered under it), and hands them to the worker as
+  `WorkerRequest.covered` (folders, and for a run the pin) in place of the earlier `pinned`. The calling client has no
+  say in either. An older worker refuses the field and a newer one refuses `pinned` (`deny_unknown_fields`).
+- **Only real folders.** The worker keeps the folders that resolve to their own path inside the lease's resolved roots
+  (no junction or link anywhere on the path, no short name, no substituted drive); one that does not covers nothing,
+  and with none left the operation refuses (`PATH_ESCAPE`). Each kept folder is held open without delete sharing, and
+  checked by its handle, while the operation runs.
+- **In place of the lease's roots.** The program, the working folder and the repository resolve inside those folders.
+  The Git provider's workspace root is the standing folder, so Git's discovery stops there and the top level, Git
+  folder and common folder must lie inside that one folder (a linked worktree of a repository elsewhere refuses, also
+  when that repository is in another standing folder).
+- **Exactly the top level.** `repository` must be the repository's own resolved top level; a folder inside it is
+  refused, never climbed from.
+- **What is staged and committed.** Every path named by `git_add` and `git_unstage`, and every path whose staged entry
+  differs from HEAD for `git_commit`, is link-free from the top level down; a file to stage has one name (no hard
+  link). The commit refuses an index that is not the one checked.
+- **Git's own folder** holds no link or junction (refs, logs, objects) and no file with more than one name outside
+  `objects`, `modules` and `lfs`, so Git writes nothing through them; over 20,000 entries it is not covered.
+
+Outside these the covered operation is refused; a lexical mismatch (a path outside the folders as text) is asked, as
+before. An operation that is not covered behaves as it did. Residual 10 says what is left.
+
 ## 2. The indicator dependency: fail closed
 
 Spec 4.15 says a standing approval is "shown on the indicator", and section 8.2 makes WP1-14 depend on WP1-12. The
@@ -97,9 +135,12 @@ indicator is not built (the Design session owns its visual design), and no reque
 (`Heartbeat` stays unaccepted, as in slice 1). So the service fails closed:
 
 - `StandingBegin` is refused with `INDICATOR_UNAVAILABLE` unless an indicator heartbeat of the caller's Windows user
-  and logon session is under 5 s old (spec 4.14's threshold, `INDICATOR_HEARTBEAT_MS`); nothing is recorded.
+  and logon session is under 5 s old (spec 4.14's threshold, `INDICATOR_HEARTBEAT_MS`) by the service's monotonic
+  clock (`GetTickCount64`, sleep included; setting the PC's clock neither keeps one alive nor ends it), and not from
+  the future; nothing is recorded.
 - `StandingComplete` checks again before issuing; a heartbeat that went stale after the box issues nothing.
-- `Authorize` naming a standing approval is refused with `INDICATOR_UNAVAILABLE` without a live heartbeat.
+- `Authorize` naming a standing approval is refused with `INDICATOR_UNAVAILABLE` without a live heartbeat, and so is
+  the `DispatchActive` that follows it.
 - `List` marks each standing approval `in_effect` only while it is in force and the heartbeat is live; orceld uses
   only those, so every action asks as before.
 
@@ -132,7 +173,9 @@ approvals usable with nothing shown on screen.
 - **Ending:** a standing approval ends with its lease (revoke, Stop from any process of the session, session lock,
   sign-out or disconnect, expiry, an epoch move, a re-enrollment), with its own expiry, and with `StandingRevoke`
   (any process of the same user and logon session; it only removes authority and adds one to the revocation
-  counter; the lease stays). The service sweeps after every request and every tick, marks each ended approval with
+  counter; the lease stays). `DispatchActive` refuses a covered dispatch whose approval ended since `Authorize`
+  (`LEASE_INVALID`, the suspended worker never runs), and the jobs of running dispatches it covered are terminated
+  with it, as a lease's are with the lease; the lease's other jobs go on (review of #844). The service sweeps after every request and every tick, marks each ended approval with
   its reason (`revoked`, `stopped`, `expired`, `epoch_moved`, ...) and writes a `standing` audit record for it.
 - **Status:** `standing_approvals` reports whether the caller's indicator is alive, the heartbeat threshold and the
   coverable operations; the `deferred` list says standing approvals are not in effect without the indicator.
@@ -145,9 +188,10 @@ approvals usable with nothing shown on screen.
   (`covering_standing`); if one does, the person is not asked and `Authorize` names it; otherwise the person is asked
   through the Windows approval dialog, as before. A remote caller (the entry's own flag, now passed through
   `fc_requests::dispatch`) and a request with no identified client are never covered. For a run, orceld pins the
-  program first and names that pin in the claim and in the worker request (`WorkerRequest.pinned`). A refused standing
-  `Authorize` runs nothing and is not re-asked; an answer that does not name the same `standing_id` runs nothing
-  either. Everything else (reads, lease-covered writes, desktop input, browser actions) is unchanged.
+  program first and names that pin in the claim and in the worker request (`WorkerRequest.covered`, with the folders,
+  section 1.3). A refused standing
+  `Authorize` runs nothing and is not re-asked; an answer that does not name the same `standing_id` and folders runs
+  nothing either. Everything else (reads, lease-covered writes, desktop input, browser actions) is unchanged.
 - `fc.status` lists this client's standing approvals in effect (operations, folders, programs, expiry), so the agent
   can tell the person which actions will not ask.
 - `orcel full-control standing grant --client <cl-ref> --task <label> --root <path>... --operations <list>
@@ -168,6 +212,10 @@ approvals usable with nothing shown on screen.
 | Admin or Remote through a standing approval | Refused at grant and at `Authorize` | `standing_admin_remote_and_browser_are_refused` |
 | Browser actions through a standing approval | Origins refused; a browser lease cannot carry one; an `Authorize` with an origin is not covered | `standing_admin_remote_and_browser_are_refused`; `standing_covers_only_its_scope_client_and_task` |
 | A covered program replaced or rewritten inside the folders (lease-covered writes need no prompt), or a program built there later | Runs need pinned programs; orceld, the service and the worker each compare contents (SHA-256) and file identity; a mismatch asks per action, or (at the worker) starts nothing | `standing_program_pins_bind_contents_and_file`; `standing_covers_only_its_scope_client_and_task`; `standing_scope_must_fit_its_lease_and_one_identified_client`; `fc_dispatch_standing_covers_a_run_only_with_its_pinned_contents_and_file`; `fc_worker_tests::windows::fc_worker_a_standing_run_starts_only_its_pinned_program` |
+| A folder that is inside as text and outside on disk: Git climbing to the repository above, a junction (repository, working folder, staged path, Git's own folder, the standing folder itself), a linked worktree, a hard link, a Unicode case lookalike | The worker holds a covered operation to the approval's real folders (section 1.3); text compares ASCII case only | `fc_worker_tests::windows::fc_worker_standing_*` (12, through the real worker); `wp110_job_ids_and_dispatch_paths_are_checked_lexically` |
+| orceld trusts folders the service did not confirm | The `Authorize` answer must name exactly the listed folders | `fc_dispatch_a_refused_or_unconfirmed_standing_authorize_runs_nothing` |
+| A standing approval ended after `Authorize` | `DispatchActive` refuses; its running jobs end with it | `standing_ended_before_the_resume_stops_the_dispatch`; `standing_revoke_and_expiry_end_its_running_jobs_only` |
+| A heartbeat kept alive by the PC's clock, or from the future | Monotonic age, never negative | `standing_indicator_age_is_monotonic_and_never_negative` |
 | Out-of-scope program, folder, operation, capability, executor | `check_cover` refuses, at the service and at orceld (which then asks) | `standing_covers_only_its_scope_client_and_task`; `full_control_dispatch_tests::fc_dispatch_standing_mismatches_ask_as_before` |
 | Another client, task or lease | Refused; the dispatcher asks | `standing_covers_only_its_scope_client_and_task`; `fc_dispatch_standing_mismatches_ask_as_before` |
 | A scope wider than its lease, or an unidentified client | Refused at grant and by the CLI | `standing_scope_must_fit_its_lease_and_one_identified_client`; `orcel-lifecycle` `standing_grant_requests_are_checked_as_the_service_checks_them` |
@@ -192,9 +240,18 @@ All of these wait for WP1-12 (no heartbeat exists, so the installed service refu
 ## 7. Residuals
 
 1. **Nothing is in effect until WP1-12.** By design (section 2).
-2. **Arguments are not bound.** A covered run may pass any arguments to a pinned program, and a covered commit or
-   branch any message or name. Pinning narrows a run to exact bytes; nothing narrows its arguments, and a pinned
-   program that itself reads files (a compiler, a script interpreter) does whatever those files say.
+2. **A pin is of one file, not of the code that runs. TO BE DECIDED BEFORE WP1-12.** Pinned: the program file's
+   contents and identity. Not pinned: DLLs beside the program or found through `PATH`, a `.local` folder or file, its
+   configuration (`.config`, `.ini`) or manifest, `._pth` and `pyvenv.cfg` (they redirect a Python), anything it reads
+   (a build file, a script, a compiler's sources), and its arguments; a covered commit or branch takes any message or
+   name. Programs lie inside the standing folders and so inside the lease's roots, where `fc_fs_write` and
+   `fc_fs_mkdir` run without a prompt, so under one lease an agent can write such a file (`write_text` writes text; a
+   DLL needs a covered program that writes one) and then start the pinned program. Within its folders and time, a
+   covered `run` therefore amounts to running code the agent chose. Refusing a pinned program whose folder the lease
+   can write without a prompt was considered and not done: every lease `orcel full-control standing grant` asks for
+   covers file writes over all its roots, so it would refuse every `run`, which neither spec 4.15 nor SG-000096 says.
+   Options for the decision: such a refusal with a lease that separates write roots from program roots, pinning the
+   program's whole folder, or leaving `run` out of standing approvals. Until WP1-12 nothing can be in effect.
 3. **orceld's claims.** Which path is the program, its pin at `Authorize`, and whether the caller is remote are
    orceld's claims (orceld is the configured trusted image, as for every `Authorize` claim); the service records them
    as session-asserted. The pin at grant is computed by the owner CLI, a same-user process: a program swapped before
@@ -213,10 +270,29 @@ All of these wait for WP1-12 (no heartbeat exists, so the installed service refu
 9. **An error asks nothing.** When orceld cannot list the standing approvals (`port.standing()` fails, for example
    the service is unreachable), the dispatch is refused rather than falling back to the per-action prompt: the
    service's `Authorize` would refuse anyway, so asking would only cost the person a prompt for nothing.
+10. **Section 1.3 against another program of the same user.** The worker checks and holds the standing folders, the
+    working folder, the top level and Git's folders, so none can be renamed or replaced while used, but a folder or
+    file *below* them can be swapped for a link by another process between the check and Git's use of it (the lease's
+    own roots have had the same window since WP1-15). A covered program that runs is not confined to the folders: it
+    runs as the user, in its Job Object. A covered operation that fails section 1.3 is refused rather than asked.
 
 ## 8. Tests
 
-At head (Windows, unelevated):
+Before the fix, on `15cc5247` (Windows, unelevated), nine tests through the real worker FAILED, each "silently
+covered (0 prompts)": `fc_worker_standing_git_add_never_climbs_to_the_repository_above_its_folder`, `..._unstage_...`,
+`..._branch_...`, `fc_worker_standing_git_commit_never_commits_what_is_staged_outside_its_folder`,
+`fc_worker_standing_git_never_follows_a_junction_out_of_its_folder`,
+`fc_worker_standing_folder_that_is_now_a_junction_covers_nothing`,
+`fc_worker_standing_git_never_uses_a_worktree_of_a_repository_outside_its_folder`,
+`fc_worker_standing_folders_are_not_matched_by_a_case_lookalike`,
+`fc_worker_standing_run_never_works_in_a_folder_outside_through_a_junction`. After it they pass. The service's fixes
+were checked by removing each in turn: its test then fails.
+
+At `authority/standing-folder-enforcement` (Windows, unelevated): `cargo test -p orcel-authority --lib` 92;
+`cargo test -p orceld --bin orceld -- fc_ full_control sg132` 86 (12 `fc_worker_standing_*`); `cargo test -p
+orcel-provider-git` 67; clippy with `-D warnings` on the four crates changed.
+
+At #844's head (Windows, unelevated):
 
 - `cargo test -p orcel-authority`: 89 unit tests (9 `standing_`, the pin test with the size cap and the real path), 12 `console_harness` (1 for this slice), 7
   `dispatch_jobs`, 11 `install_script`.
@@ -229,7 +305,8 @@ At head (Windows, unelevated):
 
 ## 9. Next steps
 
-1. WP1-12: the indicator and its `Heartbeat` (the Design session's visual design); then the founder runs of section 6.
+1. Residual 2 decided, then WP1-12: the indicator and its `Heartbeat` (the Design session's visual design); then the
+   founder runs of section 6.
 2. The MCP descriptions of the asking tools once a standing approval can be in effect (residual 6).
 3. Founder decisions if wanted: argument patterns (residual 2), high-impact browser standing approvals, remote
    coverage.

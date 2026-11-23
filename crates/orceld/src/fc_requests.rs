@@ -228,7 +228,7 @@ impl WorkerLauncher for NoWorker {
         _job: &JobGrant,
         _roots: &[String],
         _op: &WorkerOp,
-        _pinned: Option<&orcel_authority::core::standing::PinnedProgram>,
+        _covered: Option<&crate::fc_worker::CoveredBy>,
         _confirm: &dyn Fn() -> Result<(), ProviderError>,
     ) -> Result<Value, ProviderError> {
         Err(ProviderError::new(

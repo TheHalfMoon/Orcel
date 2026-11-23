@@ -164,6 +164,42 @@ impl GitProvider {
         self.base_state(&repo, index.stdout)
     }
 
+    /// Review of #844: every path whose index entry differs from HEAD (both
+    /// names of a rename, gitlinks included), repository-relative: what a
+    /// commit now would change. Refuses a name that is not UTF-8.
+    pub fn staged_paths(&self, relative: &str) -> Result<Vec<String>, GitProviderError> {
+        let repo = self.repository_root(relative)?;
+        let changed = self.run_git(
+            &repo,
+            &[
+                "diff",
+                "--cached",
+                "--name-only",
+                "-z",
+                "--no-renames",
+                "--ignore-submodules=none",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-color",
+            ],
+        )?;
+        if changed.stdout_truncated {
+            return Err(provider_error(
+                "staged path evidence exceeded the bounded output limit",
+            ));
+        }
+        let paths: Vec<String> = changed
+            .stdout
+            .split('\0')
+            .filter(|path| !path.is_empty())
+            .map(str::to_owned)
+            .collect();
+        if paths.iter().any(|path| path.contains('\u{FFFD}')) {
+            return Err(invalid("a staged path's name is not UTF-8"));
+        }
+        Ok(paths)
+    }
+
     pub fn create_branch(
         &self,
         relative: &str,

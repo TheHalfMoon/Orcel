@@ -47,6 +47,16 @@ pub struct GitProvider {
     /// The Git program: `git` (found by the OS's program search) unless
     /// [`GitProvider::with_program`] named an absolute path.
     program: PathBuf,
+    /// [`GitProvider::only_at_top_level`].
+    top_level_only: bool,
+}
+
+/// Where a repository is, resolved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepositoryPlace {
+    pub top_level: PathBuf,
+    pub git_dir: PathBuf,
+    pub common_dir: PathBuf,
 }
 
 #[derive(Debug)]
@@ -72,7 +82,21 @@ impl GitProvider {
         Ok(Self {
             workspace_root: root,
             program: PathBuf::from("git"),
+            top_level_only: false,
         })
+    }
+
+    /// Review of #844: every operation refuses a folder that is not itself
+    /// the repository's top level (no climbing from a folder inside it).
+    pub fn only_at_top_level(mut self) -> Self {
+        self.top_level_only = true;
+        self
+    }
+
+    /// The repository's top level and its Git and common directories,
+    /// resolved and checked as every operation checks them.
+    pub fn locate(&self, relative: &str) -> Result<RepositoryPlace, GitProviderError> {
+        self.place(relative)
     }
 
     /// As [`GitProvider::new`], running the Git program at `program`, an
@@ -172,6 +196,10 @@ impl GitProvider {
     }
 
     fn repository_root(&self, relative: &str) -> Result<PathBuf, GitProviderError> {
+        self.place(relative).map(|place| place.top_level)
+    }
+
+    fn place(&self, relative: &str) -> Result<RepositoryPlace, GitProviderError> {
         let candidate =
             std::fs::canonicalize(self.workspace_root.join(relative)).map_err(|error| {
                 GitProviderError::new(
@@ -202,6 +230,12 @@ impl GitProvider {
             )
         })?;
         self.ensure_within(&repo)?;
+        if self.top_level_only && repo != candidate {
+            return Err(GitProviderError::new(
+                FailureCode::PathEscape,
+                "the folder is not the repository's top level; name the top level itself",
+            ));
+        }
         // A `.git` file can name a repository anywhere: the working tree is inside the
         // workspace, but the history and objects a read shows, and a commit, fetch or push
         // changes, would be another repository's.
@@ -214,8 +248,7 @@ impl GitProvider {
                 "--git-common-dir",
             ],
         )?;
-        let mut seen = 0;
-        let mut common = None;
+        let mut found = Vec::new();
         for dir in dirs.stdout.lines().filter(|line| !line.trim().is_empty()) {
             let dir = std::fs::canonicalize(dir.trim()).map_err(|error| {
                 GitProviderError::new(
@@ -229,23 +262,21 @@ impl GitProvider {
                     "the repository's Git data is outside the trusted workspace",
                 ));
             }
-            seen += 1;
-            common = Some(dir);
+            found.push(dir);
         }
-        if seen != 2 {
+        let Ok([git_dir, common_dir]) = <[PathBuf; 2]>::try_from(found) else {
             return Err(GitProviderError::new(
                 FailureCode::InvalidRequest,
                 "Git did not report the repository's Git directories",
             ));
-        }
+        };
         // Alternates make Git read objects from another store, anywhere.
-        if common.is_some_and(|common| {
-            common
-                .join("objects")
-                .join("info")
-                .join("alternates")
-                .exists()
-        }) {
+        if common_dir
+            .join("objects")
+            .join("info")
+            .join("alternates")
+            .exists()
+        {
             return Err(GitProviderError::new(
                 FailureCode::PathEscape,
                 "the repository borrows objects from another store (objects/info/alternates)",
@@ -259,7 +290,11 @@ impl GitProvider {
             &mut |dirs| self.ignored_dirs(&repo, dirs),
             &mut |dirs| self.tracked_dirs(&repo, dirs),
         )?;
-        Ok(repo)
+        Ok(RepositoryPlace {
+            top_level: repo,
+            git_dir,
+            common_dir,
+        })
     }
 
     /// Which of `dirs` (repository-relative, `/`-separated) the

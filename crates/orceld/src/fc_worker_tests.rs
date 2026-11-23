@@ -19,7 +19,7 @@ fn request_bytes(token: &str, op: WorkerOp, roots: Vec<String>) -> Vec<u8> {
         token: token.to_owned(),
         roots,
         op,
-        pinned: None,
+        covered: None,
     })
     .expect("encode")
 }
@@ -49,6 +49,12 @@ fn fc_worker_acts_only_inside_a_job_and_echoes_the_token() {
         br#"{"contract":"other/1","token":"t","roots":[],"op":{"op":"stat","path":"C:\\x"}}"#
             .to_vec(),
         br#"{"contract":"orcel.fc-worker/1","token":"t","roots":[],"op":{"op":"delete_tree","path":"C:\\x"}}"#
+            .to_vec(),
+        // Review of #844: an older orceld's `pinned` (a pin without the
+        // standing folders), and a standing cover without its folders.
+        br#"{"contract":"orcel.fc-worker/1","token":"t","roots":[],"op":{"op":"stat","path":"C:\\x"},"pinned":{"path":"C:\\x.exe","sha256":"","identity":""}}"#
+            .to_vec(),
+        br#"{"contract":"orcel.fc-worker/1","token":"t","roots":[],"op":{"op":"stat","path":"C:\\x"},"covered":{}}"#
             .to_vec(),
         vec![b' '; crate::fc_worker::MAX_FRAME_BYTES + 2],
     ] {
@@ -152,6 +158,8 @@ mod windows {
         /// carried, and the acknowledgements received.
         handles: RefCell<BTreeMap<String, u64>>,
         acked: RefCell<Vec<String>>,
+        /// WP1-14: the standing approvals the service reports in effect.
+        standing: Vec<StandingApproval>,
     }
 
     impl JobPort {
@@ -171,6 +179,7 @@ mod windows {
                 outcomes: RefCell::new(Vec::new()),
                 handles: RefCell::new(BTreeMap::new()),
                 acked: RefCell::new(Vec::new()),
+                standing: Vec::new(),
             }
         }
 
@@ -206,15 +215,20 @@ mod windows {
             Ok(vec![self.lease.clone()])
         }
         fn standing(&self) -> Result<Vec<StandingApproval>, ProviderError> {
-            Ok(Vec::new())
+            Ok(self.standing.clone())
         }
         fn authorize(
             &self,
             lease_id: &str,
             _executor: ExecutorClass,
             _claims: AuthorizeClaims,
-            _standing: Option<&StandingClaim>,
+            standing: Option<&StandingClaim>,
         ) -> Result<Value, ProviderError> {
+            let named = standing.and_then(|claim| {
+                self.standing
+                    .iter()
+                    .find(|approval| approval.id == claim.standing_id)
+            });
             let (id, handle) = self.make_job(JobProfile::Dispatch);
             let authorization = format!("az-{}", &format!("{}{}", unique(), unique())[..32]);
             self.handles
@@ -232,6 +246,8 @@ mod windows {
                 "lease_id": lease_id,
                 "job_id": id,
                 "job_handle": handle,
+                "standing_id": named.map(|approval| approval.id.clone()),
+                "standing_roots": named.map(|approval| approval.roots.clone()),
             }))
         }
         fn outcome(
@@ -627,6 +643,7 @@ mod windows {
                 std::fs::write("late.txt", "the job did not end me").expect("late");
             }
             "exit7" => std::process::exit(7),
+            "touch" => std::fs::write("touched.txt", "ran here").expect("touch"),
             _ => std::process::exit(3),
         }
     }
@@ -791,7 +808,14 @@ mod windows {
         let program = root.join(HELPER_EXE).display().to_string();
         let op = helper_op(&root, &cwd, 20_000, 4_096);
         let pinned = orcel_authority::core::standing::pin_program(&program).expect("pin");
-        let ran = crate::fc_worker::perform_pinned(&op, &roots, Some(&pinned)).expect("pinned run");
+        let covered = |program: Option<&orcel_authority::core::standing::PinnedProgram>| {
+            crate::fc_worker::CoveredBy {
+                roots: roots.clone(),
+                program: program.cloned(),
+            }
+        };
+        let ran = crate::fc_worker::perform_covered(&op, &roots, Some(&covered(Some(&pinned))))
+            .expect("pinned run");
         assert_eq!(ran["exit_code"], 7);
         for changed in [
             orcel_authority::core::standing::PinnedProgram {
@@ -803,18 +827,26 @@ mod windows {
                 ..pinned.clone()
             },
         ] {
-            let refused = crate::fc_worker::perform_pinned(&op, &roots, Some(&changed));
+            let refused =
+                crate::fc_worker::perform_covered(&op, &roots, Some(&covered(Some(&changed))));
             assert_eq!(
                 refused.err().map(|e| e.code),
                 Some(FailureCode::TargetStale)
             );
         }
-        // A pin on any other operation is refused.
+        // A covered run without its pin, and a pin on any other operation,
+        // are refused; so is a read that claims to be covered.
+        assert_eq!(
+            crate::fc_worker::perform_covered(&op, &roots, Some(&covered(None)))
+                .err()
+                .map(|e| e.code),
+            Some(FailureCode::InvalidRequest)
+        );
         let stat = WorkerOp::Stat {
             path: program.clone(),
         };
         assert_eq!(
-            crate::fc_worker::perform_pinned(&stat, &roots, Some(&pinned))
+            crate::fc_worker::perform_covered(&stat, &roots, Some(&covered(Some(&pinned))))
                 .err()
                 .map(|e| e.code),
             Some(FailureCode::InvalidRequest)
@@ -1385,6 +1417,398 @@ mod windows {
             root.join("marker-pre-commit").exists(),
             "plain Git runs the planted hook"
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // -----------------------------------------------------------------
+    // Fresh-context review of #844: a standing approval's folders are the
+    // real folders, checked by the worker. Each test drives the real worker
+    // through the dispatcher with a standing approval in effect; the person
+    // declines every prompt, so `Ok` means "silently covered".
+    // -----------------------------------------------------------------
+
+    /// A standing approval over `folders` for every coverable operation.
+    fn standing_over(port: &JobPort, folders: &[&Path]) -> StandingApproval {
+        StandingApproval {
+            contract: orcel_authority::core::standing::STANDING_CONTRACT.to_owned(),
+            id: format!("sa-{}", "5".repeat(32)),
+            lease_id: port.lease.lease_id.clone(),
+            principal_id: port.lease.principal_id.clone(),
+            task: port.lease.task.clone(),
+            executors: vec![ExecutorClass::ShellProcess],
+            operations: orcel_authority::core::standing::STANDING_OPERATIONS
+                .iter()
+                .map(|name| (*name).to_owned())
+                .collect(),
+            roots: folders
+                .iter()
+                .map(|folder| folder.display().to_string())
+                .collect(),
+            origins: Vec::new(),
+            commands: Vec::new(),
+            issued_at_ms: 1,
+            expires_at_ms: u64::MAX,
+        }
+    }
+
+    /// `op` as the lease's client, with a person who declines every prompt;
+    /// the result and how often the person was asked.
+    fn run_covered(port: &JobPort, op: &WorkerOp) -> (Result<Value, ProviderError>, usize) {
+        let launcher = JobLauncher::with_program(orceld_exe());
+        let capability = match op {
+            WorkerOp::Run { .. } => "fc.process",
+            _ => "fc.git",
+        };
+        let request = request(capability, op.name(), serde_json::to_value(op).expect("op"));
+        let approval = FakeApproval {
+            deny: true,
+            ..FakeApproval::default()
+        };
+        let result = run_in_worker(
+            port,
+            &launcher,
+            &approval,
+            &request,
+            Some(&port.lease.principal_id),
+            false,
+            5,
+        );
+        let asked = approval.asked.borrow().len();
+        (result, asked)
+    }
+
+    /// Git's output for a test's own check.
+    fn git_text(cwd: &Path, args: &[&str]) -> String {
+        let output =
+            std::process::Command::new(crate::fc_worker::exec::git_program().expect("Git"))
+                .args(args)
+                .current_dir(cwd)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .output()
+                .expect("git");
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
+    /// A repository at `repo` with `prod/x.txt` committed, and `prod/x.txt`
+    /// changed since in the working tree.
+    fn product_repository(repo: &Path) {
+        std::fs::create_dir_all(repo.join("prod")).expect("prod");
+        std::fs::create_dir_all(repo.join("standing")).expect("standing");
+        setup_git(repo, &["init", "-q", "-b", "main"]);
+        setup_git(repo, &["config", "user.email", "orcel@example.invalid"]);
+        setup_git(repo, &["config", "user.name", "Orcel Test"]);
+        setup_git(repo, &["config", "core.autocrlf", "false"]);
+        std::fs::write(repo.join("prod").join("x.txt"), "one\n").expect("x");
+        setup_git(repo, &["add", "prod/x.txt"]);
+        setup_git(repo, &["commit", "-q", "-m", "initial"]);
+        std::fs::write(repo.join("prod").join("x.txt"), "two\n").expect("x");
+    }
+
+    fn junction(link: &Path, target: &Path) {
+        let made = std::process::Command::new("cmd")
+            .args(["/d", "/c", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .expect("mklink");
+        assert!(made.status.success(), "a junction needs no privilege");
+    }
+
+    /// Everything a covered git change could have changed in `repo`.
+    fn repository_state(repo: &Path) -> String {
+        format!(
+            "{}|{}|{}",
+            git_text(repo, &["for-each-ref"]),
+            git_text(repo, &["symbolic-ref", "HEAD"]),
+            git_text(repo, &["ls-files", "--stage"])
+        )
+    }
+
+    /// Nothing was silently covered: the operation was refused (or asked,
+    /// and the person declined) and `repo` is as it was.
+    fn assert_not_covered(port: &JobPort, op: &WorkerOp, repo: &Path) {
+        let before = repository_state(repo);
+        let (result, asked) = run_covered(port, op);
+        assert!(
+            result.is_err(),
+            "silently covered ({asked} prompts): {op:?} answered {result:?}"
+        );
+        assert_eq!(repository_state(repo), before, "{op:?} changed it");
+        assert!(port.held.borrow().is_empty(), "the job ended");
+    }
+
+    fn add_op(repository: &Path, path: &str) -> WorkerOp {
+        WorkerOp::GitAdd {
+            repository: repository.display().to_string(),
+            paths: vec![path.to_owned()],
+        }
+    }
+
+    fn commit_op(repository: &Path) -> WorkerOp {
+        WorkerOp::GitCommit {
+            repository: repository.display().to_string(),
+            message: "covered".to_owned(),
+        }
+    }
+
+    fn branch_op(repository: &Path) -> WorkerOp {
+        WorkerOp::GitBranchCreate {
+            repository: repository.display().to_string(),
+            branch: "covered".to_owned(),
+        }
+    }
+
+    #[test]
+    fn fc_worker_standing_git_add_never_climbs_to_the_repository_above_its_folder() {
+        let root = root();
+        let repo = root.join("repo");
+        product_repository(&repo);
+        let mut port = JobPort::new(&root);
+        port.standing = vec![standing_over(&port, &[&repo.join("standing")])];
+        assert_not_covered(&port, &add_op(&repo.join("standing"), "prod/x.txt"), &repo);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fc_worker_standing_git_unstage_never_climbs_to_the_repository_above_its_folder() {
+        let root = root();
+        let repo = root.join("repo");
+        product_repository(&repo);
+        setup_git(&repo, &["add", "prod/x.txt"]);
+        let mut port = JobPort::new(&root);
+        port.standing = vec![standing_over(&port, &[&repo.join("standing")])];
+        let op = WorkerOp::GitUnstage {
+            repository: repo.join("standing").display().to_string(),
+            paths: vec!["prod/x.txt".to_owned()],
+        };
+        assert_not_covered(&port, &op, &repo);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fc_worker_standing_git_commit_never_commits_what_is_staged_outside_its_folder() {
+        let root = root();
+        let repo = root.join("repo");
+        product_repository(&repo);
+        setup_git(&repo, &["add", "prod/x.txt"]);
+        let mut port = JobPort::new(&root);
+        port.standing = vec![standing_over(&port, &[&repo.join("standing")])];
+        assert_not_covered(&port, &commit_op(&repo.join("standing")), &repo);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fc_worker_standing_git_branch_never_climbs_to_the_repository_above_its_folder() {
+        let root = root();
+        let repo = root.join("repo");
+        product_repository(&repo);
+        let mut port = JobPort::new(&root);
+        port.standing = vec![standing_over(&port, &[&repo.join("standing")])];
+        assert_not_covered(&port, &branch_op(&repo.join("standing")), &repo);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fc_worker_standing_git_never_follows_a_junction_out_of_its_folder() {
+        let root = root();
+        let repo = root.join("repo");
+        product_repository(&repo);
+        let folder = root.join("standing");
+        std::fs::create_dir_all(&folder).expect("folder");
+        junction(&folder.join("link"), &repo);
+        let mut port = JobPort::new(&root);
+        port.standing = vec![standing_over(&port, &[&folder])];
+        assert_not_covered(&port, &add_op(&folder.join("link"), "prod/x.txt"), &repo);
+        setup_git(&repo, &["add", "prod/x.txt"]);
+        assert_not_covered(&port, &commit_op(&folder.join("link")), &repo);
+        assert_not_covered(&port, &branch_op(&folder.join("link")), &repo);
+        let _ = std::fs::remove_dir(folder.join("link"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The folder itself replaced by a junction since the grant: the box
+    /// showed one folder, the name leads to another.
+    #[test]
+    fn fc_worker_standing_folder_that_is_now_a_junction_covers_nothing() {
+        let root = root();
+        let repo = root.join("repo");
+        product_repository(&repo);
+        let folder = root.join("standing");
+        junction(&folder, &repo);
+        let mut port = JobPort::new(&root);
+        port.standing = vec![standing_over(&port, &[&folder])];
+        assert_not_covered(&port, &add_op(&folder, "prod/x.txt"), &repo);
+        assert_not_covered(&port, &branch_op(&folder), &repo);
+        let _ = std::fs::remove_dir(&folder);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A linked worktree inside the folder: its history, refs and objects
+    /// are the repository's outside it.
+    #[test]
+    fn fc_worker_standing_git_never_uses_a_worktree_of_a_repository_outside_its_folder() {
+        let root = root();
+        let repo = root.join("repo");
+        product_repository(&repo);
+        let folder = root.join("standing");
+        std::fs::create_dir_all(&folder).expect("folder");
+        let worktree = folder.join("wt");
+        setup_git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "linked",
+                &worktree.display().to_string(),
+            ],
+        );
+        std::fs::write(worktree.join("y.txt"), "y\n").expect("y");
+        setup_git(&worktree, &["add", "y.txt"]);
+        let mut port = JobPort::new(&root);
+        port.standing = vec![standing_over(&port, &[&folder])];
+        assert_not_covered(&port, &commit_op(&worktree), &repo);
+        assert_not_covered(&port, &branch_op(&worktree), &repo);
+        assert_not_covered(&port, &add_op(&worktree, "prod/x.txt"), &worktree);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// U+212A (Kelvin sign) lowercases to `k`, but NTFS keeps it apart.
+    #[test]
+    fn fc_worker_standing_folders_are_not_matched_by_a_case_lookalike() {
+        let root = root();
+        let folder = root.join("kit");
+        std::fs::create_dir_all(&folder).expect("folder");
+        let other = root.join("\u{212A}it");
+        product_repository(&other);
+        assert!(!folder.join(".git").exists(), "NTFS keeps them apart");
+        let mut port = JobPort::new(&root);
+        port.standing = vec![standing_over(&port, &[&folder])];
+        assert_not_covered(&port, &add_op(&other, "prod/x.txt"), &other);
+        assert_not_covered(&port, &branch_op(&other), &other);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A covered run's working folder through a junction out of the folder.
+    #[test]
+    fn fc_worker_standing_run_never_works_in_a_folder_outside_through_a_junction() {
+        let (root, outside) = helper_root("outside", "touch");
+        let folder = root.join("standing");
+        std::fs::create_dir_all(&folder).expect("folder");
+        std::fs::copy(root.join(HELPER_EXE), folder.join(HELPER_EXE)).expect("helper");
+        junction(&folder.join("link"), &outside);
+        let mut port = JobPort::new(&root);
+        let mut approval = standing_over(&port, &[&folder]);
+        let program = folder.join(HELPER_EXE).display().to_string();
+        approval.commands =
+            vec![orcel_authority::core::standing::pin_program(&program).expect("pin")];
+        port.standing = vec![approval];
+        let op = helper_op(&folder, &folder.join("link"), 20_000, 4_096);
+        let (result, asked) = run_covered(&port, &op);
+        assert!(
+            result.is_err(),
+            "silently covered ({asked} prompts): {result:?}"
+        );
+        assert!(!outside.join("touched.txt").exists(), "the program ran");
+        let _ = std::fs::remove_dir(folder.join("link"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The whole folder is a repository: covered, nobody is asked.
+    #[test]
+    fn fc_worker_standing_git_covers_the_repository_that_is_its_folder() {
+        let root = root();
+        let repo = root.join("repo");
+        product_repository(&repo);
+        let mut port = JobPort::new(&root);
+        port.standing = vec![standing_over(&port, &[&repo])];
+        for op in [
+            add_op(&repo, "prod/x.txt"),
+            commit_op(&repo),
+            branch_op(&repo),
+        ] {
+            let (result, asked) = run_covered(&port, &op);
+            assert!(result.is_ok(), "{op:?}: {result:?}");
+            assert_eq!(asked, 0);
+        }
+        std::fs::write(repo.join("prod").join("x.txt"), "three\n").expect("x");
+        let (result, _) = run_covered(&port, &add_op(&repo, "prod/x.txt"));
+        assert!(result.is_ok(), "{result:?}");
+        let (result, asked) = run_covered(
+            &port,
+            &WorkerOp::GitUnstage {
+                repository: repo.display().to_string(),
+                paths: vec!["prod/x.txt".to_owned()],
+            },
+        );
+        assert!(result.is_ok() && asked == 0, "{result:?}");
+        assert!(git_text(&repo, &["log", "--format=%s", "-1"]).contains("covered"));
+        // A folder inside it is refused, not climbed from; without the
+        // standing approval it is asked as before.
+        assert_not_covered(&port, &branch_op(&repo.join("standing")), &repo);
+        port.standing.clear();
+        let (_, asked) = run_covered(&port, &branch_op(&repo.join("standing")));
+        assert_eq!(asked, 1, "uncovered: asked as before");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Paths staged or committed through a junction inside the repository.
+    #[test]
+    fn fc_worker_standing_git_never_stages_or_commits_through_a_junction() {
+        let root = root();
+        let repo = root.join("repo");
+        product_repository(&repo);
+        let outside = root.join("outside");
+        std::fs::create_dir_all(&outside).expect("outside");
+        std::fs::write(outside.join("o.txt"), "outside\n").expect("o");
+        std::fs::create_dir_all(repo.join("in")).expect("in");
+        std::fs::write(repo.join("in").join("o.txt"), "inside\n").expect("in");
+        setup_git(&repo, &["add", "in/o.txt"]);
+        std::fs::remove_dir_all(repo.join("in")).expect("swap");
+        junction(&repo.join("in"), &outside);
+        junction(&repo.join("link"), &outside);
+        let mut port = JobPort::new(&root);
+        port.standing = vec![standing_over(&port, &[&repo])];
+        for op in [add_op(&repo, "link/o.txt"), commit_op(&repo)] {
+            assert_not_covered(&port, &op, &repo);
+        }
+        // A hard link inside names a file outside.
+        std::fs::hard_link(outside.join("o.txt"), repo.join("hard.txt")).expect("hard link");
+        assert_not_covered(&port, &add_op(&repo, "hard.txt"), &repo);
+        let _ = std::fs::remove_dir(repo.join("in"));
+        let _ = std::fs::remove_dir(repo.join("link"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Git's own folder leading outside: refs through a junction, the
+    /// reflog through a hard link.
+    #[test]
+    fn fc_worker_standing_git_never_writes_through_links_in_its_own_folder() {
+        let root = root();
+        let repo = root.join("repo");
+        product_repository(&repo);
+        setup_git(&repo, &["add", "prod/x.txt"]);
+        let outside = root.join("outside");
+        std::fs::create_dir_all(&outside).expect("outside");
+        let heads = repo.join(".git").join("refs").join("heads");
+        let mut port = JobPort::new(&root);
+        port.standing = vec![standing_over(&port, &[&repo])];
+        std::fs::rename(heads.join("main"), outside.join("main")).expect("move");
+        std::fs::remove_dir(&heads).expect("heads");
+        junction(&heads, &outside);
+        assert_not_covered(&port, &commit_op(&repo), &repo);
+        assert_not_covered(&port, &branch_op(&repo), &repo);
+        std::fs::remove_dir(&heads).expect("junction");
+        std::fs::create_dir(&heads).expect("heads");
+        std::fs::rename(outside.join("main"), heads.join("main")).expect("move back");
+        let log = repo.join(".git").join("logs").join("HEAD");
+        std::fs::hard_link(&log, outside.join("log")).expect("hard link");
+        assert_not_covered(&port, &commit_op(&repo), &repo);
+        std::fs::remove_file(outside.join("log")).expect("unlink");
+        let (result, asked) = run_covered(&port, &commit_op(&repo));
+        assert!(result.is_ok() && asked == 0, "{result:?}");
         let _ = std::fs::remove_dir_all(&root);
     }
 

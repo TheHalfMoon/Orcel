@@ -201,6 +201,7 @@ pub fn start(config: RunConfig) -> Result<Runtime, AuthorityError> {
         // into `client_slot` while impersonating it.
         jobs: Box::new(super::jobs::ServiceJobs::new(client_slot.clone())),
         clock: crate::now_ms,
+        monotonic: crate::monotonic_ms,
     };
     let core = AuthorityCore::open(
         config.mode,

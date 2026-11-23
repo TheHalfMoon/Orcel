@@ -32,6 +32,12 @@ use std::sync::{Arc, Mutex};
 
 thread_local! {
     static NOW: Cell<u64> = const { Cell::new(1_000_000) };
+    /// The monotonic clock: [`advance`] moves both.
+    static MONOTONIC: Cell<u64> = const { Cell::new(500_000) };
+}
+
+fn monotonic() -> u64 {
+    MONOTONIC.with(Cell::get)
 }
 
 fn clock() -> u64 {
@@ -40,6 +46,7 @@ fn clock() -> u64 {
 
 fn advance(ms: u64) {
     NOW.with(|now| now.set(now.get() + ms));
+    MONOTONIC.with(|now| now.set(now.get() + ms));
 }
 
 struct KeyedHashSigner;
@@ -314,6 +321,7 @@ fn open_in(mode: RunMode, dir: &Path, events: &Events) -> Result<AuthorityCore, 
             entropy: Box::new(Counter(AtomicU64::new(0))),
             jobs: Box::new(FakeJobs),
             clock,
+            monotonic,
         },
     )
     .map_err(|e| e.to_string())
@@ -2540,6 +2548,9 @@ fn wp110_job_ids_and_dispatch_paths_are_checked_lexically() {
         r"E:\work",
         r"C:\work\..\x",
         r"C:\work\x:y",
+        // Review of #844: U+212A lowercases to `k`; NTFS keeps it apart.
+        "C:\\wor\u{212A}",
+        "C:\\wor\u{212A}\\a.txt",
         "",
     ] {
         assert!(!path_within_roots(outside, &roots), "{outside}");

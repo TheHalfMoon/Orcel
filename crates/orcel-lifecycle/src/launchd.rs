@@ -12,10 +12,15 @@
 //!
 //! In that mode launchd connects standard error to the socket too, where
 //! orceld's log lines would break the JSON-lines stream (seen on the hosted
-//! runner). So the agent runs `/bin/sh -c 'umask 077; exec 2>>"$1"; exec "$0"'`
-//! with the `orceld` path and a log file under the install's `logs` folder:
-//! standard error goes to that file, created 0600, and the shell then becomes
-//! `orceld`, as `StandardError=journal` keeps it off the socket on Linux. The
+//! runner). So the agent runs `/bin/sh -c` with a constant script ending in
+//! `exec 2>>"$1"; exec "$0"`, the `orceld` path and a log file under the
+//! install's `logs` folder: standard error goes to that file and the shell
+//! then becomes `orceld`, as `StandardError=journal` keeps it off the socket
+//! on Linux. The file is created 0600, and one already there (0644 from an
+//! earlier version) is made 0600 at each start. A log that is a link, a
+//! folder, a FIFO or anything else but a plain file is never opened: that
+//! start's standard error goes to `/dev/null` instead, and orceld still
+//! starts. The
 //! script sets the umask itself because the plist's `Umask` key did not take
 //! effect on the hosted runner (the log came out 0644); the key stays as well.
 //! Like `UMask=0077` on Linux, it applies to everything orceld creates.
@@ -26,10 +31,19 @@
 //! there is no hook to bound the log when launchd starts `orceld`. So the
 //! shell stays.
 //!
-//! The log is bounded: when it is over [`MAX_STDERR_LOG`] it is moved to
-//! `orceld-agent.log.1` (replacing an older one), both when the agent is
-//! written ([`rotate_log`], at install, update and rollback) and by the shell
-//! each time launchd starts `orceld`. The shell's own standard error goes to
+//! The log's size is checked, not capped while it is written: when it is
+//! over [`MAX_STDERR_LOG`] it is moved to `orceld-agent.log.1` (replacing an
+//! older one), both when the agent is written ([`rotate_log`], at install,
+//! update and rollback) and by the shell each time launchd starts `orceld`.
+//! When it cannot be moved aside (`orceld-agent.log.1` is a link, a folder or
+//! anything else but a plain file, or the move fails) that start logs to
+//! `/dev/null`, so no start adds to an oversized log. What one `orceld`
+//! writes while it runs is not limited. Two starts at once may both find the
+//! log oversized: the later move can then replace the `.1` just made with a
+//! nearly empty log, or fail and log to `/dev/null`, so older or a few new
+//! lines are lost; neither grows a file. The checks are on names, in the
+//! install's own 0700 `logs` folder: they are not a defense against another
+//! program of the same user. The shell's own standard error goes to
 //! `/dev/null` first, so nothing it might print reaches the socket.
 //!
 //! The plist is generated here, from pure inputs, so its content is tested on
@@ -50,11 +64,13 @@ pub const SOCKET_FILE: &str = "orceld.sock";
 /// `sun_path` holds 104 bytes on macOS, the terminating NUL included.
 const MAX_SOCKET_PATH: usize = 103;
 /// The shell, by absolute path, and its script: an owner-only umask, the
-/// shell's own standard error to `/dev/null`, the log (`$1`) moved to
-/// `$1.1` when it is over 1 MiB, standard error to the log, then become
-/// `orceld` (`$0`). `stat` and `mv` by absolute path.
+/// shell's own standard error to `/dev/null`; a log (`$1`) that is not a
+/// plain file is left alone (`$1` becomes `/dev/null`), another is made 0600
+/// and, over 1 MiB, moved to `$1.1` (or, if that cannot be, left alone too);
+/// standard error to the log, then become `orceld` (`$0`). `chmod`, `stat`
+/// and `mv` by absolute path; constant, with positional paths only.
 const SHELL: &str = "/bin/sh";
-const SHELL_SCRIPT: &str = r#"umask 077; exec 2>/dev/null; if [ "$(/usr/bin/stat -f %z "$1")" -gt 1048576 ]; then /bin/mv -f "$1" "$1.1"; fi; exec 2>>"$1"; exec "$0""#;
+const SHELL_SCRIPT: &str = r#"umask 077; exec 2>/dev/null; if [ -L "$1" ] || { [ -e "$1" ] && [ ! -f "$1" ]; }; then set -- /dev/null; else /bin/chmod 600 "$1"; if [ "$(/usr/bin/stat -f %z "$1")" -gt 1048576 ]; then if [ -L "$1.1" ] || { [ -e "$1.1" ] && [ ! -f "$1.1" ]; }; then set -- /dev/null; else /bin/mv -f "$1" "$1.1" || set -- /dev/null; fi; fi; fi; exec 2>>"$1"; exec "$0""#;
 /// The agent's standard error log inside the install's `logs` folder.
 pub const STDERR_LOG: &str = "orceld-agent.log";
 /// The size over which the log is moved aside (the shell script's 1048576).
@@ -63,6 +79,7 @@ pub const MAX_STDERR_LOG: u64 = 1024 * 1024;
 /// Moves `log` to `<log>.1`, replacing an older one, when it is over `limit`
 /// bytes; returns whether it did. A missing log is nothing to do. Only a
 /// regular file is moved: anything else there is an error, left in place.
+/// On Unix the file is made 0600 first (an earlier version's could be 0644).
 pub fn rotate_log(log: &Path, limit: u64) -> Result<bool, LifecycleError> {
     let metadata = match std::fs::symlink_metadata(log) {
         Ok(metadata) => metadata,
@@ -82,6 +99,12 @@ pub fn rotate_log(log: &Path, limit: u64) -> Result<bool, LifecycleError> {
     }
     if metadata.len() <= limit {
         return Ok(false);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(log, std::fs::Permissions::from_mode(0o600))
+            .map_err(|error| LifecycleError::io(format!("protect {}", log.display()), error))?;
     }
     let mut aside = log.as_os_str().to_owned();
     aside.push(".1");
@@ -292,7 +315,7 @@ mod tests {
         for needle in [
             "<key>Label</key>\n  <string>ai.orcel.orceld</string>",
             // Standard error to the log file, never the socket; then orceld.
-            "<array>\n    <string>/bin/sh</string>\n    <string>-c</string>\n    <string>umask 077; exec 2&gt;/dev/null; if [ &quot;$(/usr/bin/stat -f %z &quot;$1&quot;)&quot; -gt 1048576 ]; then /bin/mv -f &quot;$1&quot; &quot;$1.1&quot;; fi; exec 2&gt;&gt;&quot;$1&quot;; exec &quot;$0&quot;</string>\n    <string>/Users/ana/Library/Application Support/Orcel/versions/0.2.0/orceld</string>\n    <string>/Users/ana/Library/Application Support/Orcel/logs/orceld-agent.log</string>\n  </array>",
+            "<array>\n    <string>/bin/sh</string>\n    <string>-c</string>\n    <string>umask 077; exec 2&gt;/dev/null; if [ -L &quot;$1&quot; ] || { [ -e &quot;$1&quot; ] &amp;&amp; [ ! -f &quot;$1&quot; ]; }; then set -- /dev/null; else /bin/chmod 600 &quot;$1&quot;; if [ &quot;$(/usr/bin/stat -f %z &quot;$1&quot;)&quot; -gt 1048576 ]; then if [ -L &quot;$1.1&quot; ] || { [ -e &quot;$1.1&quot; ] &amp;&amp; [ ! -f &quot;$1.1&quot; ]; }; then set -- /dev/null; else /bin/mv -f &quot;$1&quot; &quot;$1.1&quot; || set -- /dev/null; fi; fi; fi; exec 2&gt;&gt;&quot;$1&quot;; exec &quot;$0&quot;</string>\n    <string>/Users/ana/Library/Application Support/Orcel/versions/0.2.0/orceld</string>\n    <string>/Users/ana/Library/Application Support/Orcel/logs/orceld-agent.log</string>\n  </array>",
             "<key>inetdCompatibility</key>\n  <dict>\n    <key>Wait</key>\n    <false/>",
             "<key>SockFamily</key>\n      <string>Unix</string>",
             "<key>SockPathName</key>\n      <string>/var/folders/ab/xyz/T/orcel/orceld.sock</string>",
@@ -416,6 +439,90 @@ mod tests {
         );
         std::fs::create_dir(&log).unwrap();
         assert!(rotate_log(&log, 0).is_err(), "a folder is left in place");
+    }
+
+    /// The script itself, run as launchd runs it: what it does with a log
+    /// that is missing, 0644, oversized, a link, a FIFO or a folder, and with
+    /// an `.1` it cannot replace.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_shell_script_writes_only_to_a_plain_owner_only_log() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = crate::test_support::temp_dir("launchd-script");
+        let program = dir.join("orceld");
+        std::fs::write(&program, "#!/bin/sh\necho ready >&2\necho answer\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let log = dir.join(STDERR_LOG);
+        let aside = dir.join("orceld-agent.log.1");
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let run = || {
+            let output = std::process::Command::new(SHELL)
+                .arg("-c")
+                .arg(SHELL_SCRIPT)
+                .arg(&program)
+                .arg(&log)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            // Nothing but the program's answer, and nothing on stderr.
+            assert_eq!(output.stdout, b"answer\n");
+            assert_eq!(output.stderr, b"");
+        };
+        run();
+        assert_eq!(std::fs::read(&log).unwrap(), b"ready\n");
+        assert_eq!(mode(&log), 0o600, "created owner-only");
+        std::fs::set_permissions(&log, std::fs::Permissions::from_mode(0o644)).unwrap();
+        run();
+        assert_eq!(mode(&log), 0o600, "an earlier 0644 log");
+        assert_eq!(std::fs::read(&log).unwrap(), b"ready\nready\n");
+
+        let oversized = vec![b'x'; MAX_STDERR_LOG as usize + 1];
+        std::fs::write(&log, &oversized).unwrap();
+        std::fs::set_permissions(&log, std::fs::Permissions::from_mode(0o644)).unwrap();
+        run();
+        assert_eq!(std::fs::read(&aside).unwrap(), oversized);
+        assert_eq!(mode(&aside), 0o600);
+        assert_eq!(std::fs::read(&log).unwrap(), b"ready\n");
+
+        // An oversized log that cannot be moved aside is not added to.
+        let elsewhere = dir.join("elsewhere");
+        std::fs::write(&elsewhere, b"kept").unwrap();
+        std::fs::remove_file(&aside).unwrap();
+        for make_folder in [true, false] {
+            std::fs::write(&log, &oversized).unwrap();
+            if make_folder {
+                std::fs::create_dir(&aside).unwrap();
+            } else {
+                std::os::unix::fs::symlink(&elsewhere, &aside).unwrap();
+            }
+            run();
+            assert_eq!(std::fs::read(&log).unwrap(), oversized);
+            assert_eq!(std::fs::read(&elsewhere).unwrap(), b"kept");
+            if make_folder {
+                assert_eq!(std::fs::read_dir(&aside).unwrap().count(), 0);
+                std::fs::remove_dir(&aside).unwrap();
+            } else {
+                std::fs::remove_file(&aside).unwrap();
+            }
+        }
+
+        // A log that is a link, a FIFO or a folder is never opened.
+        std::fs::remove_file(&log).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &log).unwrap();
+        run();
+        assert_eq!(std::fs::read(&elsewhere).unwrap(), b"kept");
+        std::fs::remove_file(&log).unwrap();
+        let made = std::process::Command::new("/usr/bin/mkfifo")
+            .arg(&log)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        run();
+        std::fs::remove_file(&log).unwrap();
+        std::fs::create_dir(&log).unwrap();
+        run();
+        assert_eq!(std::fs::read_dir(&log).unwrap().count(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

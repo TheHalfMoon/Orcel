@@ -95,9 +95,9 @@ pub fn operation_capability(operation: &str) -> Option<&'static str> {
 }
 
 /// Whether two program paths name the same file, compared as the roots are
-/// (case-insensitive, either slash).
+/// (ASCII case-insensitive, either slash).
 pub fn same_program(left: &str, right: &str) -> bool {
-    let normalize = |text: &str| text.replace('/', "\\").to_lowercase();
+    let normalize = |text: &str| text.replace('/', "\\").to_ascii_lowercase();
     normalize(left) == normalize(right)
 }
 
@@ -107,7 +107,11 @@ pub fn same_program(left: &str, right: &str) -> bool {
 /// inode elsewhere, as `orceld fc-worker` spells it). The folders lie inside
 /// the lease's roots, where file writes run without a prompt, so a path
 /// alone would cover whatever is written there later; a pinned program
-/// covers only these exact bytes in this exact file. Computed by the owner
+/// covers only these exact bytes in this exact file. It pins that one file
+/// and nothing else the process loads or reads: DLLs, a `.local` folder or
+/// file, a configuration or manifest, `._pth` or `pyvenv.cfg` beside the
+/// program, and the arguments are not pinned (SG132_SLICE10.md residual 2).
+/// Computed by the owner
 /// CLI at grant (`pin_program`) and shown in the service's box; checked
 /// again by orceld before it skips the per-action approval, by the service
 /// at `Authorize` (against orceld's claim), and by the worker on the file it
@@ -601,9 +605,11 @@ pub struct StandingRecord {
     pub ended_by: Option<String>,
 }
 
-/// One indicator heartbeat the service observed (in memory only). Only the
-/// test seam makes one until WP1-12 adds the indicator's `Heartbeat`, so
-/// outside tests the list stays empty and standing approvals fail closed.
+/// One indicator heartbeat the service observed (in memory only), at the
+/// service's monotonic clock: a change of the PC's clock neither extends nor
+/// revives one. Only the test seam makes one until WP1-12 adds the
+/// indicator's `Heartbeat`, so outside tests the list stays empty and
+/// standing approvals fail closed.
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct IndicatorBeat {
@@ -613,12 +619,16 @@ pub(super) struct IndicatorBeat {
 }
 
 impl AuthorityCore {
-    /// Whether an indicator heartbeat of this user's logon session is live.
-    pub(super) fn indicator_alive(&self, sid: &str, logon_session_id: u64, now: u64) -> bool {
+    /// Whether an indicator heartbeat of this user's logon session is live,
+    /// by the monotonic clock. A heartbeat from the future is not one.
+    pub(super) fn indicator_alive(&self, sid: &str, logon_session_id: u64) -> bool {
+        let now = (self.services.monotonic)();
         self.indicator_beats.iter().any(|beat| {
             beat.sid == sid
                 && beat.logon_session_id == logon_session_id
-                && now.saturating_sub(beat.at_ms) < INDICATOR_HEARTBEAT_MS
+                && now
+                    .checked_sub(beat.at_ms)
+                    .is_some_and(|age| age < INDICATOR_HEARTBEAT_MS)
         })
     }
 
@@ -626,7 +636,7 @@ impl AuthorityCore {
     /// no request records yet.
     #[cfg(test)]
     pub(crate) fn indicator_heartbeat_for_test(&mut self, caller: &CallerFacts) {
-        let now = self.now();
+        let now = (self.services.monotonic)();
         self.indicator_beats.retain(|beat| {
             !(beat.sid == caller.user_sid && beat.logon_session_id == caller.logon_session_id)
         });
@@ -792,7 +802,7 @@ impl AuthorityCore {
     /// The caller's standing approvals for `List`: each with its state and
     /// whether it is in effect now (in force and an indicator alive).
     pub(super) fn standing_list(&self, caller: &CallerFacts, now: u64) -> Vec<Value> {
-        let alive = self.indicator_alive(&caller.user_sid, caller.logon_session_id, now);
+        let alive = self.indicator_alive(&caller.user_sid, caller.logon_session_id);
         self.state
             .standing
             .iter()
@@ -814,8 +824,18 @@ impl AuthorityCore {
             .collect()
     }
 
+    /// Whether the standing approval `id` is in force now. One that is gone
+    /// is not.
+    pub(super) fn standing_in_force(&self, id: &str, now: u64) -> bool {
+        self.state
+            .standing
+            .iter()
+            .any(|record| record.approval.id == id && self.standing_ended_by(record, now).is_none())
+    }
+
     /// `StandingRevoke`: ends one of the caller's standing approvals; its
-    /// lease stays.
+    /// lease stays. The jobs of the dispatches it covered end with it, as a
+    /// lease's do with the lease (review of #844; `sweep_jobs`).
     pub(super) fn standing_revoke(
         &mut self,
         caller: &CallerFacts,
@@ -869,7 +889,8 @@ impl AuthorityCore {
 
     /// `Authorize` with a standing approval: the approval is the caller's,
     /// in force, an indicator is alive, and it covers exactly this dispatch.
-    /// Returns its id for the audit record.
+    /// Returns its id, for the audit record, and its folders, which the
+    /// answer carries and orceld hands the worker (review of #844).
     pub(super) fn check_standing_authorize(
         &self,
         caller: &CallerFacts,
@@ -878,7 +899,7 @@ impl AuthorityCore {
         claims: &AuthorizeClaims,
         claim: &StandingClaim,
         now: u64,
-    ) -> Result<String, AuthorityError> {
+    ) -> Result<(String, Vec<String>), AuthorityError> {
         let record = self
             .state
             .standing
@@ -896,7 +917,7 @@ impl AuthorityCore {
                 "the standing approval is {reason}"
             )));
         }
-        if !self.indicator_alive(&caller.user_sid, caller.logon_session_id, now) {
+        if !self.indicator_alive(&caller.user_sid, caller.logon_session_id) {
             return Err(indicator_unavailable());
         }
         let paths = claims.paths.clone().unwrap_or_default();
@@ -912,13 +933,13 @@ impl AuthorityCore {
             origin: claims.origin.as_deref(),
             now_ms: now,
         })?;
-        Ok(record.approval.id.clone())
+        Ok((record.approval.id.clone(), record.approval.roots.clone()))
     }
 
     /// `StandingBegin` and `StandingComplete` need a live indicator of the
     /// caller's logon session.
     pub(super) fn require_indicator(&self, caller: &CallerFacts) -> Result<(), AuthorityError> {
-        if self.indicator_alive(&caller.user_sid, caller.logon_session_id, self.now()) {
+        if self.indicator_alive(&caller.user_sid, caller.logon_session_id) {
             Ok(())
         } else {
             Err(indicator_unavailable())
@@ -930,7 +951,7 @@ impl AuthorityCore {
 pub(super) fn confirmation_paragraph(scope: &StandingScope, lease_minutes: u64) -> String {
     let minutes = scope.minutes.unwrap_or(lease_minutes);
     format!(
-        "STANDING APPROVAL: while it lasts, Orcel does NOT ask you before each of these actions by this client for this task:\n{}\nA program is covered only while its contents (SHA-256) and file match what is shown here; if either changes, Orcel asks again.\nStanding approval expires: {minutes} minutes after approval (never after the lease)\nIt never covers Admin, remote callers, browser actions or another client, and it ends with Stop, locking the PC, sign-out, revoke or the lease's end.",
+        "STANDING APPROVAL: while it lasts, Orcel does NOT ask you before each of these actions by this client for this task:\n{}\nA program is covered only while its own file's contents (SHA-256) and identity match what is shown here; if either changes, Orcel asks again. Nothing else it loads or reads is checked: not DLLs, .local, configuration, manifest, ._pth or pyvenv.cfg files beside it, and not its arguments. Files in the folders can change without a prompt while the lease lasts.\nStanding approval expires: {minutes} minutes after approval (never after the lease)\nIt never covers Admin, remote callers, browser actions or another client, and it ends with Stop, locking the PC, sign-out, revoke or the lease's end.",
         scope.describe()
     )
 }

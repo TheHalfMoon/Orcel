@@ -97,8 +97,9 @@ Full User desktop control (local only):
       roots) and a standing approval for one client and task, granted together through the
       same lock, unlock, service box and Windows Hello. The listed operations (run, git_add,
       git_unstage, git_commit, git_branch_create) inside the folders then do not ask each
-      time. run needs --program: each is pinned now to its contents (SHA-256) and file, shown
-      in the box, and asks again once either changes. Never Admin, remote callers or browser
+      time. run needs --program: each file is pinned now to its contents (SHA-256) and identity,
+      not the DLLs, configuration or other files it loads and not its arguments; it is shown
+      in the box, and asks again once its file changes. Never Admin, remote callers or browser
       actions. Needs a live Orcel indicator; until it exists the service refuses.
   orcel full-control standing revoke [--id <sa-...>]
                                           End standing approvals; their leases stay.

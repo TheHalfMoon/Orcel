@@ -429,11 +429,12 @@ fn the_launch_agent_starts_orceld_per_connection_and_uninstall_removes_it() {
     assert_eq!(mode(&socket), 0o600);
     assert_eq!(mode(socket.parent().unwrap()), 0o700);
 
-    // A log over the bound is moved aside when launchd next starts orceld.
+    // A log over the bound is moved aside when launchd next starts orceld,
+    // and one an earlier version left 0644 is made owner-only.
     let log = root.join("logs").join("orceld-agent.log");
     let oversized = orcel_lifecycle::launchd::MAX_STDERR_LOG as usize + 1;
     fs::write(&log, vec![b'x'; oversized]).unwrap();
-    fs::set_permissions(&log, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::set_permissions(&log, fs::Permissions::from_mode(0o644)).unwrap();
 
     for _ in 0..2 {
         let response = system_status(&socket);
@@ -446,6 +447,7 @@ fn the_launch_agent_starts_orceld_per_connection_and_uninstall_removes_it() {
     let rotated = fs::metadata(root.join("logs").join("orceld-agent.log.1"))
         .expect("the oversized log was moved aside");
     assert_eq!(rotated.len() as usize, oversized);
+    assert_eq!(mode(&root.join("logs").join("orceld-agent.log.1")), 0o600);
     let logged = fs::read_to_string(&log).expect("the agent's stderr log");
     assert_eq!(
         logged.matches("orceld ready:").count(),

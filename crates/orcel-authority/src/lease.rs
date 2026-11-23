@@ -473,9 +473,11 @@ pub fn check_dispatch_path(path: &str) -> Result<(), AuthorityError> {
 }
 
 /// WP1-10: whether `path` is one of `roots` or lies under one, compared
-/// lexically and case-insensitively on whole components (`C:\work` covers
-/// `C:\work\a` and not `C:\workshop`). `path` must pass
-/// [`check_dispatch_path`]; the roots passed the grant's own check.
+/// lexically on whole components (`C:\work` covers `C:\work\a` and not
+/// `C:\workshop`). Only ASCII letters compare without regard to case
+/// (review of #844): roots are printable ASCII (the grant's own check), and
+/// a Unicode case fold matches names NTFS keeps apart (U+212A, the Kelvin
+/// sign, lowercases to `k`). `path` must pass [`check_dispatch_path`].
 pub fn path_within_roots(path: &str, roots: &[String]) -> bool {
     if check_dispatch_path(path).is_err() {
         return false;
@@ -483,7 +485,7 @@ pub fn path_within_roots(path: &str, roots: &[String]) -> bool {
     let normalize = |text: &str| {
         text.replace('/', "\\")
             .trim_end_matches('\\')
-            .to_lowercase()
+            .to_ascii_lowercase()
     };
     let path = normalize(path);
     roots.iter().any(|root| {
