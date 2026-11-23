@@ -291,7 +291,7 @@ pub(crate) fn resolve_program(
             return Err(failure(
                 FailureCode::CapabilityDenied,
                 format!(
-                    "{stem}.exe is a shell, script host, launcher or Git; Full Control runs it only through its own operation"
+                    "{stem}.exe is a shell, script host, launcher or Git; Full Control does not run it as a program"
                 ),
             ));
         }
@@ -308,7 +308,7 @@ pub(crate) fn resolve_program(
     {
         return Err(failure(
             FailureCode::CapabilityDenied,
-            "programs under the Git installation run only through the git operations",
+            "programs under the Git installation do not run through run",
         ));
     }
     let file = open_held(&resolved).map_err(|error| io_failure("open the program", &error))?;

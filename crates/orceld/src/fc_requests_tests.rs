@@ -780,7 +780,8 @@ fn fc_requests_status_shows_the_lease_scope_and_grants_nothing() {
     assert_eq!(own["bound_to_this_client"], json!(true));
     assert_eq!(
         own["usable_capabilities"],
-        json!([FS_CAPABILITY, PROCESS_CAPABILITY, GIT_CAPABILITY])
+        json!([FS_CAPABILITY, PROCESS_CAPABILITY]),
+        "Git is off, so fc.git is not usable"
     );
     // An unbound lease admits this client for desktop input only.
     let unbound = &leases[1];

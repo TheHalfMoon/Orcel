@@ -1043,6 +1043,7 @@ dependencies = [
  "orcel-contracts",
  "orcel-platform",
  "orcel-policy",
+ "orcel-provider-git",
  "orcel-tunnel",
  "serde",
  "serde_json",

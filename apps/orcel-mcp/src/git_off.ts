@@ -5,4 +5,4 @@
  * descriptions say so first.
  */
 export const GIT_OFF =
-  "Off: Git is off until it runs confined. Every call is refused (PROVIDER_UNAVAILABLE); nothing is asked and nothing runs. When Git is on: ";
+  "Off: Git is off until it runs confined. Calls are refused (a well-formed one with PROVIDER_UNAVAILABLE); nothing is asked and nothing runs. When Git is on: ";

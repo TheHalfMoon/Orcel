@@ -284,8 +284,12 @@ pub(crate) fn status(
             (GIT_CAPABILITY, ExecutorClass::ShellProcess),
         ]
         .into_iter()
-        .filter(|(_, executor)| {
-            body.scope.admits(*executor) && body.admits_client(*executor, client)
+        .filter(|(capability, executor)| {
+            body.scope.admits(*executor)
+                && body.admits_client(*executor, client)
+                // Git is off until it runs confined: no lease makes it usable.
+                && (*capability != GIT_CAPABILITY
+                    || orcel_provider_git::confinement::require().is_ok())
         })
         .map(|(capability, _)| capability)
         .collect();

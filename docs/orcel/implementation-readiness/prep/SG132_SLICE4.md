@@ -33,14 +33,35 @@ document says about the seven git operations describes them as built and is what
   `HardenedPushTransport`). `WorkerOp::check_arguments` calls it for the git family, so `fc.git` refuses before a
   lease is used, the person is asked or a worker starts; orceld's entry calls it for every Safe `git.*` request, local
   or remote, before any remote-session lease, policy, approval or journal step.
-- Every operation answers `PROVIDER_UNAVAILABLE`, "Git is off until it runs confined". Tool names and schemas are
-  unchanged; the tools' descriptions say Git is off, and the app API reports `git` unavailable.
+- A well-formed request answers `PROVIDER_UNAVAILABLE`, "Git is off until it runs confined"; a malformed one, or one the
+  surface, profile or workspace checks refuse first, answers with that refusal. Tool names and schemas are unchanged;
+  the tools' descriptions say Git is off, the app API reports `git` unavailable, `fc.status` does not list `fc.git` as
+  usable, `workspace.get` does not name Git, and `orcel full-control standing grant` refuses a Git operation before
+  anything is pinned, sent or shown. All of them read the same constant.
 - A Git change an earlier run left interrupted reconciles as unknown and is never retried.
-- Outside this switch: `fc.process` `run` and `process.spawn` start programs, not Git by their own rules (`run` refuses
-  Git by name and everything under a Git installation; `process.spawn` runs only programs the owner registered).
+- Outside this switch: it covers the Git operations only. A Git program the owner registered for `process.spawn`, or
+  Git started by a program that was approved to run, is outside it; the rules of `process.spawn` and `fc.process` `run`
+  are unchanged.
 - Tests: `orcel-provider-git`'s suites, with real Git, are that crate's unit tests now (the worker's own Git tests moved
   there, `src/worker_operations_tests.rs`); `tests/off_until_confined.rs` checks the refusal as a dependent crate sees
   it and that every place Git is started asks first; `crates/orceld/tests/git_off.rs` checks a real `orceld`.
+- Coverage lost while Git is off, to be restored with it (orceld's test build finds Git off as every build does):
+  - Git succeeding through the real worker: the seven operations in `orceld.exe fc-worker` inside a job, their replies,
+    and `fc_worker_exec.rs` `git_provider` (which lease root becomes the workspace root, and the repository's path
+    relative to it), `run_git` (which provider calls each operation makes, and the log's bound) and `git_program`. Kept:
+    a repository outside the roots is refused, and the provider's own behaviour through `with_program`.
+  - `fc.git` through `fc_requests`: each change asking on every call with the digest the service records, the calling
+    client as the principal, and `LEASE_REQUIRED` without a lease. Kept: the same rules for `run`, and for Git
+    operations in the dispatcher's tests with a stand-in worker.
+  - Safe-mode changes through orceld's dispatch: an approved stage and commit, a denied one, a repository that changed
+    during the prompt, an `expected_head` that does not match, and their journal lines (pending, dispatched, settled or
+    abandoned; a commit journaled without its message). Kept: the provider's own state checks.
+  - Approved fetch and push through orceld's dispatch: the previews, the refusal by a denied or unavailable approval,
+    and the flow from the preview through the address check, the approval, the checks after it and the transport. Kept:
+    the push digest, a mismatched credential reference, and the provider's fetch and push suites.
+  - Reconciliation of an interrupted branch or commit as done or not done. Every one is unknown meanwhile, so the
+    detached-head and missing-branch cases hold trivially, and the crash tests journal a Git change themselves.
+  - The standing grant's parsing of Git operations, which it refuses. Kept: the scope's own checks.
 
 ## 1. The operations (`crates/orceld/src/fc_worker.rs`, `fc_worker_exec.rs`)
 
@@ -291,7 +312,7 @@ show it.
   with `~` followed by a digit, empty components and `.` segments (`./a.txt`). A missing component (a tracked file
   deleted from the working tree) ends the check, since Git takes the rest from the index. Full Control's own paths
   (repository, working folder, program) are resolved by the worker to their on-disk names before use, and the
-  repository-relative path it hands the provider is computed from those resolved names. Tests with real Git: `orcel-provider-git/tests/nested_gitfile.rs`. Cost: every operation's repository
+  repository-relative path it hands the provider is computed from those resolved names. Tests with real Git: `orcel-provider-git/src/nested_gitfile_tests.rs`. Cost: every operation's repository
   resolution walks the working tree (outside ignored folders) and asks `check-ignore` once per folder level, so a
   large tree costs time on every call; a walk that runs into the provider's 30 s per-command limit or the worker's
   60 s limit fails closed, as do the entry and depth caps. Residuals: very large working trees outside ignored
@@ -330,14 +351,15 @@ show it.
 
 ## Tests
 
-At head (Windows, unelevated):
+At this slice's head (Windows, unelevated). Since Git was turned off (above), the Git ones among orceld's are refusal
+tests and the rest moved to `orcel-provider-git`:
 
 - `cargo test -p orceld --bin orceld -- fc_worker full_control_dispatch`: 11 dispatcher tests (2 new) with a fake
   service, launcher and approval; 16 `fc_worker` tests (10 new: 9 Windows-only with real jobs, real programs and
   real Git, plus the helper entry point).
 - `cargo test -p orcel-authority`: unit, `console_harness`, `dispatch_jobs` (UI restrictions read back) and
   `install_script` suites; `cargo test -p orcel-provider-git`: the provider with an explicit program, the
-  configuration gate (`repo_config::tests`, `tests/review824_config_gate.rs`), and the existing suites, of which
+  configuration gate (`repo_config::tests`, now `src/review824_config_gate_tests.rs`), and the existing suites, of which
   three now expect the gate's earlier refusal (a signing program, an include, URL and HTTP keys at push preview).
 - `cargo test -p orceld --bin orceld -- git_`: the Safe-mode git capabilities on the gated provider.
 - Some unrelated orceld tests fail on this PC because of its AppData permissions (`InsecureAcl`, before this

@@ -22,7 +22,7 @@
 use crate::LifecycleError;
 use orcel_authority::client::AuthorityClient;
 use orcel_authority::core::standing::{
-    PinnedProgram, StandingApproval, StandingScope, STANDING_OPERATIONS,
+    operation_capability, PinnedProgram, StandingApproval, StandingScope, STANDING_OPERATIONS,
 };
 use orcel_authority::lease::{BrowserFamily, LeaseScope, SignedLease, MAX_ORIGINS};
 use orcel_authority::protocol::{ClaimedOrigin, Request};
@@ -290,18 +290,36 @@ pub struct StandingRequest {
     pub standing: StandingScope,
 }
 
-/// Parses `--operations` (comma separated) for a standing approval.
+/// The operations a standing grant offers now: all of them, without the Git
+/// ones while Git is off (`orcel_provider_git::confinement`).
+pub fn offered_operations() -> Vec<&'static str> {
+    let git = orcel_provider_git::confinement::require().is_ok();
+    STANDING_OPERATIONS
+        .into_iter()
+        .filter(|name| git || operation_capability(name) != Some("fc.git"))
+        .collect()
+}
+
+/// Parses `--operations` (comma separated) for a standing approval. Git is
+/// off until it runs confined, so a Git operation is refused here, before
+/// anything is pinned, sent or shown.
 pub fn parse_operations(list: &str) -> Result<Vec<String>, LifecycleError> {
     list.split(',')
         .map(|name| {
             let name = name.trim();
-            if STANDING_OPERATIONS.contains(&name) {
-                Ok(name.to_owned())
-            } else {
-                Err(LifecycleError::usage(format!(
-                    "unknown operation {name:?}; use run, git_add, git_unstage, git_commit or git_branch_create"
-                )))
+            if !offered_operations().contains(&name) {
+                if STANDING_OPERATIONS.contains(&name) {
+                    return Err(LifecycleError::usage(format!(
+                        "{name}: {}",
+                        orcel_provider_git::confinement::OFF_MESSAGE
+                    )));
+                }
+                return Err(LifecycleError::usage(format!(
+                    "unknown operation {name:?}; use {}",
+                    offered_operations().join(", ")
+                )));
             }
+            Ok(name.to_owned())
         })
         .collect()
 }
@@ -771,7 +789,9 @@ mod tests {
         let standing = |operations: &str, folders: &[&str], programs: Option<Vec<&str>>| {
             Ok::<_, LifecycleError>(StandingScope {
                 executors: vec![ExecutorClass::ShellProcess],
-                operations: parse_operations(operations)?,
+                // Not through `parse_operations`, which refuses Git while it
+                // is off: the scope's own checks are the subject here.
+                operations: operations.split(',').map(str::to_owned).collect(),
                 roots: folders.iter().map(|f| (*f).to_owned()).collect(),
                 origins: Vec::new(),
                 commands: programs
@@ -806,6 +826,20 @@ mod tests {
         // Unknown operations, folders outside the roots, an unidentified
         // client and Admin are refused before anything is sent.
         assert!(parse_operations("run,delete").is_err());
+        // Git is off until it runs confined: no Git operation is offered.
+        assert_eq!(offered_operations(), ["run"]);
+        assert_eq!(parse_operations("run").ok(), Some(vec!["run".to_owned()]));
+        for git in ["git_add", "git_unstage", "git_commit", "git_branch_create"] {
+            for list in [git.to_owned(), format!("run,{git}")] {
+                let refused = parse_operations(&list).err().map(|e| e.to_string());
+                assert!(
+                    refused.as_deref().is_some_and(|message| {
+                        message.contains(orcel_provider_git::confinement::OFF_MESSAGE)
+                    }),
+                    "{list}: {refused:?}"
+                );
+            }
+        }
         let outside = standing("git_commit", &[r"E:\elsewhere"], None).and_then(|scope| {
             standing_request(client.clone(), "b".into(), roots.clone(), 30, scope)
         });

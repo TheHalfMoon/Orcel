@@ -83,20 +83,73 @@ fn is_test_source(path: &Path) -> bool {
             .any(|part| part.as_os_str() == "tests" || part.as_os_str() == "examples")
 }
 
-/// The whole text of the function whose signature holds `name`, up to `end`.
-fn since_fn(text: &str, end: usize) -> &str {
-    let start = [
-        "\nfn ",
-        "\n    fn ",
-        "\npub fn ",
-        "\n    pub fn ",
-        "\npub(crate) fn ",
-    ]
-    .iter()
-    .filter_map(|prefix| text[..end].rfind(prefix))
-    .max()
-    .expect("inside a function");
-    &text[start..end]
+/// Whether the function around the process start at `start` asks for
+/// confinement first: a statement of its own, at the top level of the
+/// function's body (not in a comment, a string or a branch), with no process
+/// started before it.
+fn guarded(text: &str, start: usize) -> bool {
+    let head = &text[..start];
+    let mut function = None;
+    let mut offset = 0;
+    for line in head.split_inclusive('\n') {
+        let code = line.trim_start();
+        let is_fn = ["fn ", "pub fn ", "pub(crate) fn ", "pub(super) fn "]
+            .iter()
+            .any(|prefix| code.starts_with(prefix));
+        if is_fn {
+            function = Some((offset, line.len() - code.len()));
+        }
+        offset += line.len();
+    }
+    let Some((from, indent)) = function else {
+        return false;
+    };
+    let body = &head[from..];
+    let wanted = [
+        format!("{}confinement::require()?;", " ".repeat(indent + 4)),
+        format!("{}crate::confinement::require()?;", " ".repeat(indent + 4)),
+    ];
+    let mut asked = None;
+    let mut offset = 0;
+    for line in body.split_inclusive('\n') {
+        if wanted.iter().any(|guard| guard == line.trim_end()) {
+            asked = Some(offset);
+            break;
+        }
+        offset += line.len();
+    }
+    asked.is_some_and(|at| {
+        ["Command::new", "spawn(", ".output()", ".status()"]
+            .iter()
+            .all(|starts| !body[..at].contains(starts))
+    })
+}
+
+/// The check itself tells a guard that comes first from one that does not.
+#[test]
+fn the_guard_check_wants_the_guard_before_the_start() {
+    let check = |body: &str| {
+        let text =
+            format!("fn earlier() {{\n    confinement::require()?;\n}}\n\nfn run() {{\n{body}}}\n");
+        let at = text.rfind("Command::new(").expect("start");
+        guarded(&text, at)
+    };
+    assert!(check(
+        "    confinement::require()?;\n    let c = Command::new(p);\n"
+    ));
+    assert!(check(
+        "    crate::confinement::require()?;\n    let c = Command::new(p);\n"
+    ));
+    for unguarded in [
+        "    let c = Command::new(p);\n",
+        "    // confinement::require()?;\n    let c = Command::new(p);\n",
+        "    if a {\n        confinement::require()?;\n    }\n    let c = Command::new(p);\n",
+        "    let _ = confinement::require();\n    let c = Command::new(p);\n",
+        "    c.spawn();\n    confinement::require()?;\n    let c = Command::new(p);\n",
+        "    let c = Command::new(p);\n    confinement::require()?;\n    let d = Command::new(p);\n",
+    ] {
+        assert!(!check(unguarded), "{unguarded}");
+    }
 }
 
 /// Every place the provider starts a process asks [`require`] first, in the
@@ -118,10 +171,9 @@ fn every_git_spawn_site_requires_confinement() {
             .into_owned();
         let text = shipped(&path);
         for (at, _) in text.match_indices("Command::new(") {
-            let body = since_fn(&text, at);
             assert!(
-                body.contains("confinement::require()?;"),
-                "{name}: a process is started without confinement::require():\n{body}"
+                guarded(&text, at),
+                "{name}: a process starts before confinement::require()"
             );
             sites.push(name.clone());
         }
@@ -200,51 +252,115 @@ fn the_switch_is_one_compiled_constant() {
     assert!(!here.join("build.rs").exists());
 }
 
-fn rust_sources(dir: &Path, found: &mut Vec<PathBuf>) {
+const SOURCE_KINDS: &[&str] = &[
+    "rs", "ts", "tsx", "js", "mjs", "cjs", "py", "go", "cs", "ps1",
+];
+
+fn sources(dir: &Path, found: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
+        let kind = path
+            .extension()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
         if path.is_dir() {
-            if !["target", "node_modules", "third_party"].contains(&name.as_str()) {
-                rust_sources(&path, found);
+            if !["target", "node_modules", "third_party", "dist", ".next"].contains(&name.as_str())
+            {
+                sources(&path, found);
             }
-        } else if name.ends_with(".rs") && !is_test_source(&path) {
+        } else if SOURCE_KINDS.contains(&kind.as_str())
+            && !is_test_source(&path)
+            && !name.contains(".test.")
+        {
             found.push(path);
         }
     }
 }
 
-/// No other crate starts Git: the provider is the only way to it.
+/// Every string in `text` that could name the Git program: `git` alone or
+/// at the end of a path, with any program extension, in any case.
+fn git_programs(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for line in text.lines() {
+        let code = line.trim_start();
+        if code.starts_with("//") || code.starts_with('#') || code.starts_with('*') {
+            continue;
+        }
+        let lower = line.to_ascii_lowercase();
+        for ending in ["git", "git.exe", "git.cmd", "git.bat", "git.com"] {
+            for quote in ['"', '\'', '`'] {
+                let needle = format!("{ending}{quote}");
+                for (at, _) in lower.match_indices(&needle) {
+                    let before = lower[..at].chars().next_back();
+                    if before.is_some_and(|c| ['"', '\'', '`', '/', '\\'].contains(&c)) {
+                        found.push(line.trim().to_owned());
+                    }
+                }
+            }
+        }
+    }
+    found
+}
+
+/// No other crate or app starts Git: the provider is the only way to it.
+/// Outside the provider, the only strings that name the Git program are
+/// where orceld looks for it, for `GitProvider::with_program`.
 #[test]
 fn no_other_crate_starts_git() {
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
-    let mut sources = Vec::new();
-    rust_sources(&repo.join("crates"), &mut sources);
-    rust_sources(&repo.join("apps"), &mut sources);
-    assert!(sources.len() > 100, "{}", sources.len());
-    let mut git_programs = 0;
-    for path in &sources {
-        let text = shipped(path);
-        let compact: String = text.split_whitespace().collect();
-        if !path
+    for named in [
+        r#"Command::new("git")"#,
+        r#"Path::new("GIT.EXE")"#,
+        r#"x = r"C:\Program Files\Git\cmd\git.exe";"#,
+        r#""/opt/homebrew/bin/git""#,
+        r"spawn('git', args)",
+        r#""git.cmd""#,
+    ] {
+        assert_eq!(git_programs(named).len(), 1, "{named}");
+    }
+    assert!(git_programs(r#""fc.git" "digit" "https://example.com/repo.git""#).is_empty());
+    // Not through `..`: a path through this crate's folder would be skipped.
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("crates");
+    let repo = crates.parent().expect("repository");
+    let mut found = Vec::new();
+    sources(&repo.join("crates"), &mut found);
+    sources(&repo.join("apps"), &mut found);
+    assert!(found.len() > 200, "{}", found.len());
+    let mut names = Vec::new();
+    let mut lookups = 0;
+    for path in &found {
+        let text = if path.extension().is_some_and(|kind| kind == "rs") {
+            shipped(path)
+        } else {
+            std::fs::read_to_string(path).unwrap_or_default()
+        };
+        if path
             .components()
             .any(|part| part.as_os_str() == "orcel-provider-git")
         {
-            for program in ["\"git\"", "\"git.exe\"", "\"/usr/bin/git\""] {
-                assert!(
-                    !compact.contains(&format!("Command::new({program}")),
-                    "{}",
-                    path.display()
-                );
-            }
+            continue;
         }
+        let file = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        names.extend(
+            git_programs(&text)
+                .into_iter()
+                .map(|line| format!("{file}: {line}")),
+        );
         // orceld's own Git path goes only to `GitProvider::with_program`.
+        let compact: String = text.split_whitespace().collect();
         let uses = compact.matches("git_program()").count();
         if uses > 0 {
-            git_programs += uses;
+            lookups += uses;
             assert!(
                 compact.contains("GitProvider::with_program(&root,git_program()?)"),
                 "{}",
@@ -252,5 +368,25 @@ fn no_other_crate_starts_git() {
             );
         }
     }
-    assert_eq!(git_programs, 2, "the function and its one caller");
+    assert_eq!(lookups, 2, "the function and its one caller");
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            // Where orceld looks for Git.
+            r#"fc_worker_exec.rs: "/opt/homebrew/bin/git","#,
+            r#"fc_worker_exec.rs: "/usr/bin/git","#,
+            r#"fc_worker_exec.rs: "/usr/local/bin/git","#,
+            r#"fc_worker_exec.rs: ("LOCALAPPDATA", r"Programs\Git\cmd\git.exe"),"#,
+            r#"fc_worker_exec.rs: ("ProgramFiles", r"Git\cmd\git.exe"),"#,
+            r#"fc_worker_exec.rs: ("ProgramFiles(x86)", r"Git\cmd\git.exe"),"#,
+            r#"fc_worker_exec.rs: ("ProgramW6432", r"Git\cmd\git.exe"),"#,
+            // A name prefix refused as a program, a family's name and the
+            // app API's capability id.
+            r#"fc_worker_exec.rs: if REFUSED_PROGRAMS.contains(&stem.as_str()) || stem.starts_with("git") {"#,
+            r#"full_control_dispatch.rs: Self::Git => "git","#,
+            r#"sg000039_main.rs: Err(error) => json!({ "id": "git", "state": "unavailable", "reason": error.message }),"#,
+            r#"sg000039_main.rs: Ok(()) => json!({ "id": "git", "state": "available", "reason": null }),"#,
+        ]
+    );
 }

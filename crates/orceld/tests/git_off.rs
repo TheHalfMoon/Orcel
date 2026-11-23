@@ -397,6 +397,28 @@ fn a_real_orceld_refuses_every_git_operation_and_starts_and_asks_nothing() {
         );
         assert_eq!(response["error"]["message"], OFF, "{response}");
     }
+    // What orceld says about itself does not promise Git either.
+    let get = json!({
+        "version": 1,
+        "request_id": "workspace",
+        "client_session_id": "git-off",
+        "workspace_id": "default",
+        "capability": "workspace.get",
+        "operation": "get",
+        "target": null,
+        "arguments": {},
+    });
+    writeln!(stdin, "{get}").expect("write request");
+    let line = replies
+        .recv_timeout(Duration::from_secs(60))
+        .expect("workspace.get");
+    let response: Value = serde_json::from_str(&line).expect("response json");
+    assert_eq!(response["ok"], true, "{response}");
+    assert!(
+        line.contains("\"approved_write_bounded_process\""),
+        "{response}"
+    );
+    assert!(!line.contains("read_only_git"), "{response}");
     drop(stdin);
     child.wait().expect("wait");
     watch.none_started();
