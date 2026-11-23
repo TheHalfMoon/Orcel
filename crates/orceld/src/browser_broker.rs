@@ -1,8 +1,8 @@
 //! SG-000135 OB-01: the Orcel Browser Session Broker.
 //!
-//! The broker replaces the single thread-local live browser for the
-//! `browser_full` profile only (`browser_structured` keeps its own slot in
-//! `live_dispatch.rs`, unchanged). It holds a map of broker sessions:
+//! The broker replaces the single thread-local live browser. It holds a map
+//! of `browser_full` broker sessions and the one `browser_structured`
+//! worker:
 //!
 //! - Each session id is minted here, never by a caller, and carries this
 //!   orceld's instance id (the `orcel_session_id`, random per process), so
@@ -18,8 +18,13 @@
 //!   when the session ends. SG-000135 OB-04 adds a persistent Orcel-managed
 //!   profile a session may name (`browser_profiles.rs`): its data folder
 //!   lives outside the session's directory, is held by one live session at
-//!   a time and is kept when the session ends. Routing the
-//!   `browser_structured` shapes through the broker stays deferred (see
+//!   a time and is kept when the session ends.
+//! - SG-000135 OB-04: the `browser_structured` worker (one lifetime and one
+//!   page per orceld) lives here too, beside the sessions, and ends with
+//!   them on every exit path, on emergency stop and on a moved approval
+//!   epoch; the first structured request starts the broker and its leftover
+//!   sweep. It is not a session and has no budgets, slot or receipts, so
+//!   its replies are unchanged (`structured_worker`; see
 //!   `docs/orcel/implementation-readiness/prep/OB04_MODES_PROFILES.md`).
 //! - SG-000135 OB-04: each session has a mode, Shadow (the default:
 //!   headless, never the person's desktop) or Visible (a headed window named
@@ -937,6 +942,14 @@ pub(crate) struct Broker<W> {
     audit: Option<std::sync::Arc<orcel_audit::ChainWriter>>,
     /// SG-000135 OB-05: the private store of evidence files.
     evidence: Option<EvidenceStore>,
+    /// SG-000135 OB-04: the `browser_structured` worker (SG-000108's one
+    /// lifetime and one page per orceld), held here so it ends with the
+    /// broker's sessions: on every exit path, on an emergency stop, and when
+    /// a verified approval epoch moved (an emergency revoke in any orceld).
+    /// It is not a broker session: no id, no budgets, no device slot, no
+    /// session directory and no receipts, so every structured reply stays
+    /// as it was (see `structured_worker`).
+    structured: Option<W>,
     /// This instance's lock, held for the broker's (orceld's) lifetime.
     _instance_lock: File,
 }
@@ -1084,6 +1097,7 @@ impl<W: SessionWorker> Broker<W> {
             profile_approvals: std::collections::BTreeSet::new(),
             audit: None,
             evidence: None,
+            structured: None,
             _instance_lock: lock,
         };
         broker.sweep_leftovers();
@@ -1146,7 +1160,9 @@ impl<W: SessionWorker> Broker<W> {
     /// first verified sight is the baseline.
     pub(crate) fn check_epoch(&mut self, epoch: Option<u64>) -> Result<(), ProviderError> {
         let Some(epoch) = epoch else {
-            self.end_all(EndReason::EmergencyStop);
+            // SG-000135 OB-04: the browser_structured worker never had this
+            // fail-closed refusal, so an unverified read leaves it running.
+            self.end_sessions(EndReason::EmergencyStop);
             return Err(ProviderError::new(
                 FailureCode::ApprovalUnavailable,
                 "the approval ledger could not be verified just now, so an emergency revoke cannot be ruled out; every browser session ended; retry",
@@ -1465,8 +1481,60 @@ impl<W: SessionWorker> Broker<W> {
             .collect()
     }
 
-    /// End every session (emergency stop, or orceld's input closed).
+    /// End every session and the `browser_structured` worker (emergency
+    /// stop, a moved approval epoch, or orceld's input closed). The reports
+    /// are the broker sessions'; the structured worker has none.
     pub(crate) fn end_all(&mut self, reason: EndReason) -> Vec<EndReport> {
+        if let Some(worker) = self.structured.take() {
+            let _ = worker.shutdown();
+        }
+        self.end_sessions(reason)
+    }
+
+    /// SG-000135 OB-04: the `browser_structured` worker, started with
+    /// `start` on first use, kept across requests and replaced (the old one
+    /// shut down) when it no longer answers, exactly as its thread-local
+    /// slot did. `epoch` is the approval epoch read for this request: a
+    /// verified epoch that moved since the broker last saw one ends every
+    /// session and the worker first, as `check_epoch` does for a broker
+    /// action, and the request then runs on a new worker, as after a lost
+    /// host. Unlike a broker action it is never refused here: an unverified
+    /// read changes nothing, and no budget or device slot is counted, since
+    /// either would refuse a structured request accepted before.
+    pub(crate) fn structured_worker(
+        &mut self,
+        epoch: Option<u64>,
+        start: impl FnOnce() -> Result<W, ProviderError>,
+    ) -> Result<&mut W, ProviderError> {
+        if let Some(epoch) = epoch {
+            if matches!(self.epoch.replace(epoch), Some(seen) if seen != epoch) {
+                self.end_all(EndReason::EmergencyStop);
+            }
+        }
+        if self
+            .structured
+            .as_mut()
+            .is_some_and(|worker| !worker.is_usable())
+        {
+            if let Some(gone) = self.structured.take() {
+                let _ = gone.shutdown();
+            }
+        }
+        let worker = match self.structured.take() {
+            Some(worker) => worker,
+            None => start()?,
+        };
+        Ok(self.structured.insert(worker))
+    }
+
+    /// The `browser_structured` worker, if one runs.
+    #[cfg(test)]
+    pub(crate) fn structured_mut(&mut self) -> Option<&mut W> {
+        self.structured.as_mut()
+    }
+
+    /// End every broker session, leaving the `browser_structured` worker.
+    fn end_sessions(&mut self, reason: EndReason) -> Vec<EndReport> {
         // SG-000135 OB-04: no profile approval outlives an emergency stop,
         // a moved or unverifiable approval epoch, or the end of the sessions.
         self.profile_approvals.clear();
@@ -3500,6 +3568,136 @@ mod tests {
             Budgets::DEFAULT
         )
         .is_err());
+    }
+
+    // SG-000135 OB-04: the browser_structured worker in the broker.
+
+    impl Scene {
+        /// A structured worker of its own, recording its shutdown under
+        /// `name` in the scene's shutdowns.
+        fn structured(&self, name: &str, usable: &Rc<RefCell<bool>>) -> TestWorker {
+            TestWorker {
+                profile_marker: self.root.join(name),
+                usable: Rc::clone(usable),
+                shutdowns: Rc::clone(&self.shutdowns),
+                switch: Rc::clone(&self.switch),
+            }
+        }
+
+        fn structured_shutdowns(&self, name: &str) -> usize {
+            let marker = self.root.join(name);
+            self.shutdowns
+                .borrow()
+                .iter()
+                .filter(|path| **path == marker)
+                .count()
+        }
+    }
+
+    #[test]
+    fn ob04_the_structured_worker_is_kept_replaced_and_never_a_session() {
+        let mut scene = Scene::new("structured-keep");
+        let budgets = Budgets {
+            per_client: 1,
+            device: 1,
+            ..Budgets::DEFAULT
+        };
+        let mut broker = scene.broker(INSTANCE, budgets);
+        let usable = Rc::new(RefCell::new(true));
+        // A failed start keeps nothing; the next request starts again.
+        let failed = broker
+            .structured_worker(Some(0), || {
+                Err(ProviderError::new(
+                    FailureCode::ProviderUnavailable,
+                    "no host",
+                ))
+            })
+            .err();
+        assert_eq!(
+            failed.map(|e| e.code),
+            Some(FailureCode::ProviderUnavailable)
+        );
+        assert!(broker.structured_mut().is_none());
+        let first = scene.structured("structured-1", &usable);
+        assert!(broker.structured_worker(Some(0), || Ok(first)).is_ok());
+        // Kept across requests: no second start.
+        assert!(broker
+            .structured_worker(Some(0), || Err(ProviderError::new(
+                FailureCode::InternalError,
+                "started twice"
+            )))
+            .is_ok());
+        // Not a session: no session is listed, and the per-client and
+        // device budgets (one each here) still admit a browser_full session.
+        assert_eq!(broker.open_count(), 0);
+        let id = scene.create(&mut broker, "client-a", "a").unwrap();
+        assert_eq!(broker.client_sessions("client-a").len(), 1);
+        // Closing that session leaves the structured worker running.
+        broker.close("client-a", &id).unwrap();
+        assert_eq!(scene.structured_shutdowns("structured-1"), 0);
+        assert!(broker.structured_mut().is_some());
+        // A worker that no longer answers is shut down and replaced.
+        *usable.borrow_mut() = false;
+        let fresh = Rc::new(RefCell::new(true));
+        let second = scene.structured("structured-2", &fresh);
+        assert!(broker.structured_worker(Some(0), || Ok(second)).is_ok());
+        assert_eq!(scene.structured_shutdowns("structured-1"), 1);
+        assert_eq!(scene.structured_shutdowns("structured-2"), 0);
+    }
+
+    #[test]
+    fn ob04_the_structured_worker_ends_on_every_exit_path_and_emergency_stop() {
+        for reason in [EndReason::McpSessionEnded, EndReason::EmergencyStop] {
+            let mut scene = Scene::new("structured-end");
+            let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+            let usable = Rc::new(RefCell::new(true));
+            let worker = scene.structured("structured", &usable);
+            assert!(broker.structured_worker(Some(0), || Ok(worker)).is_ok());
+            scene.create(&mut broker, "client-a", "a").unwrap();
+            let reports = broker.end_all(reason);
+            // The reports are the broker sessions' only.
+            assert_eq!(reports.len(), 1, "{reason:?}");
+            assert_eq!(scene.structured_shutdowns("structured"), 1, "{reason:?}");
+            assert!(broker.structured_mut().is_none());
+            assert_eq!(broker.open_count(), 0);
+        }
+    }
+
+    #[test]
+    fn ob04_a_moved_epoch_ends_the_structured_worker_and_an_unverified_read_refuses_nothing() {
+        let mut scene = Scene::new("structured-epoch");
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        let usable = Rc::new(RefCell::new(true));
+        let first = scene.structured("structured-1", &usable);
+        assert!(broker.structured_worker(Some(3), || Ok(first)).is_ok());
+        // An unverified read neither refuses nor ends the structured worker.
+        assert!(broker
+            .structured_worker(None, || Err(ProviderError::new(
+                FailureCode::InternalError,
+                "restarted"
+            )))
+            .is_ok());
+        // A browser_full action that cannot verify the epoch ends the broker
+        // sessions (fail closed) but not the structured worker.
+        let id = scene.create(&mut broker, "client-a", "a").unwrap();
+        assert!(broker.check_epoch(None).is_err());
+        assert!(broker.session("client-a", &id).is_err());
+        assert_eq!(scene.structured_shutdowns("structured-1"), 0);
+        // An emergency revoke in another orceld moved the epoch: the next
+        // structured request ends every session and the worker, then runs
+        // on a new worker, as after a lost host.
+        let id = scene.create(&mut broker, "client-a", "b").unwrap();
+        let second = scene.structured("structured-2", &usable);
+        assert!(broker.structured_worker(Some(4), || Ok(second)).is_ok());
+        assert_eq!(scene.structured_shutdowns("structured-1"), 1);
+        let ended = broker.session("client-a", &id).err();
+        assert_eq!(ended.map(|e| e.code), Some(FailureCode::TargetStale));
+        // The new epoch is the baseline for both kinds of request.
+        assert!(broker.check_epoch(Some(4)).is_ok());
+        // A move a browser_full action sees ends the structured worker too.
+        assert!(broker.check_epoch(Some(5)).is_err());
+        assert_eq!(scene.structured_shutdowns("structured-2"), 1);
+        assert!(broker.structured_mut().is_none());
     }
 
     // SG-000135 OB-04: modes and persistent profiles.

@@ -737,7 +737,22 @@ fn the_live_browser_dev_feature_never_reaches_a_release_build() {
         if !text.contains("live-browser-dev") {
             continue;
         }
-        let allowed = relative == "crates/orcel-browser-host/Cargo.toml"
+        // SG-000135 OB-04: CI's Windows Rust job lints orceld and runs the two
+        // browser_structured golden tests in a live-browser-dev debug test
+        // build. Admitted only while every line naming the feature is a
+        // comment, the step's name, or exactly one of those two debug cargo
+        // calls; no release build, no other package and no other command.
+        let ci_goldens = relative == ".github/workflows/ci.yml"
+            && text.lines().filter(|line| line.contains("live-browser-dev")).all(|line| {
+                let line = line.trim();
+                !line.contains("--release")
+                    && (line.starts_with('#')
+                        || line == "- name: browser_structured reply goldens (Windows, live-browser-dev)"
+                        || line == "cargo clippy -p orceld --features live-browser-dev --all-targets -- -D warnings || exit 1"
+                        || line == "out=$(cargo test -p orceld --features live-browser-dev --bin orceld -- --exact \\")
+            });
+        let allowed = ci_goldens
+            || relative == "crates/orcel-browser-host/Cargo.toml"
             || (relative.starts_with("crates/orcel-browser-host/src/")
                 && relative.ends_with(".rs"))
             || relative == "crates/orcel-browser-host/tests/sg000108_dev_host.rs"
