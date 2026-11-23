@@ -277,6 +277,39 @@ show it.
   60 s limit fails closed, as do the entry and depth caps. Residuals: very large working trees outside ignored
   folders are refused rather than walked. A same-user process could add a nested `.git` file between the walk and Git's own walk
   (the same TOCTOU class as the configuration gate).
+- **What the provider requires of a repository (reviews of #847 and #849; Safe mode too).** Reading a repository's
+  files and refusing what Git would follow elsewhere is **defence in depth, NOT a boundary**: Git has more ways to
+  leave a repository than a parser can list, and a later Git adds more. The boundary is to be OS confinement of the
+  Git process, which is being designed. Until then, before Git runs the provider requires:
+  - **Extensions:** `noop`, `worktreeConfig`, `preciousObjects`, `relativeWorktrees` (booleans), `objectFormat`
+    (`sha1`, `sha256`), `refStorage` (`files` exactly) and `partialClone` (a plain remote name), in `config` and
+    `config.worktree`, whatever their case. Any other, or another value, refuses the repository.
+  - **Further keys refused:** `rerere.*`, `bundle.*`, `fetch.bundleURI`, `fetch.bundleCreationToken`,
+    `core.unsetenvvars`, `core.virtualFilesystem`, and a `file:` URL that is not a plain local `file:///` path.
+  - **Pointers:** a `.git` file and a `commondir` only in Git's own form (the exact prefix, the path, line ends at the
+    end), no surrounding or non-ASCII whitespace, and on Windows no path relative to a drive or its root.
+  - **The same repository:** a `.git` Git would not accept refuses instead of looking further up, and the top level,
+    Git directory and common directory Git reports must be the ones the gate read.
+  - **Git folder:** its refs, logs, objects (with `objects/info` and `objects/pack`) and the files Git writes there are
+    not links or junctions; no alternate store; no `MERGE_RR` or `rr-cache` (rerere and the untracked cache are also
+    turned off on every command).
+  - **Index:** every name, over the whole index (256 MiB of listing; larger is refused), is a plain UTF-8 path: not
+    absolute, no empty, `.`, `..` or `.git` component. On Windows also no backslash, colon, trailing dot or space,
+    control character or device name; elsewhere those are ordinary names. On Windows no folder above an entry is a
+    link or junction.
+  - **Working tree:** on Windows no junction that is not ignored; a path to stage is link-free. The nested walk goes on
+    where Git does: below a nested `.git` Git does not accept, and below one the index has files in.
+  - **Branches:** made with `update-ref` (only if new, also not in another case or as a folder of another) and
+    `symbolic-ref HEAD`, without a checkout. Push and fetch evidence is written to the ref itself.
+  With these, no operation the provider offers is known to write a working tree file; the tests run `add`, `restore
+  --staged`, `commit`, branch creation and the reads over a sparse checkout. Full Control's `write_text` and `mkdir`
+  also refuse a Git directory by its content (`HEAD` with `objects` and `refs`, or with `commondir`, or `config`
+  beside two of the first three). Tests: `review847_confinement.rs`, `repository_shape.rs`,
+  `fc_worker_filesystem_never_writes_into_a_git_directory_by_content`. Repositories refused now and not before:
+  reftable or another extension, rerere in use, a junction that is not ignored, alternates by any name. Left: a hard
+  link to a file Git writes in place, and a same-user process changing a file or folder between the check and Git's
+  use of it. A branch creation that ends between its two commands leaves a branch HEAD does not name (reconciled as
+  unknown).
 - **Approval binding.** The per-action approval binds the request (paths, message, branch), not the file contents
   staged at that moment (the Safe-mode git mutation binds that material); the worker's own state check still
   refuses a repository that changed between its read and its write.

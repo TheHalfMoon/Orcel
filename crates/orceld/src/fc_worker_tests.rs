@@ -1216,6 +1216,91 @@ mod windows {
     /// Review of #824: the program is held from its checks to its start
     /// (no write, rename or delete meanwhile), and nothing under a Git
     /// installation runs through `run`.
+    /// Review of #847: a Git directory is refused by its content, whatever
+    /// its name: a separate Git directory, a bare repository, a worktree's
+    /// own folder, and one the write would complete.
+    #[test]
+    fn fc_worker_filesystem_never_writes_into_a_git_directory_by_content() {
+        let root = root();
+        let roots = vec![root.display().to_string()];
+        let work = root.join("work");
+        setup_git(
+            &root,
+            &["init", "-q", "--separate-git-dir", "separate", "work"],
+        );
+        setup_git(&root, &["init", "-q", "--bare", "bare-repository"]);
+        setup_git(&work, &["config", "user.email", "orcel@example.invalid"]);
+        setup_git(&work, &["config", "user.name", "Orcel Test"]);
+        setup_git(&work, &["commit", "-q", "--allow-empty", "-m", "initial"]);
+        let linked = root.join("linked").display().to_string();
+        setup_git(&work, &["worktree", "add", "-q", "-b", "topic", &linked]);
+        let separate = root.join("separate");
+        let admin = separate.join("worktrees").join("linked");
+        assert!(admin.join("commondir").is_file());
+        let half = root.join("half");
+        std::fs::create_dir_all(half.join("objects")).expect("objects");
+        std::fs::create_dir_all(half.join("refs")).expect("refs");
+        let before = std::fs::read_to_string(separate.join("config")).expect("config");
+        for target in [
+            separate.join("config"),
+            separate.join("CONFIG"),
+            separate.join("new.txt"),
+            separate.join("hooks").join("pre-commit"),
+            separate.join("refs").join("heads").join("main"),
+            admin.join("config.worktree"),
+            root.join("bare-repository").join("config"),
+            root.join("bare-repository").join("hooks").join("update"),
+            half.join("HEAD"),
+            half.join("config"),
+        ] {
+            let path = target.display().to_string();
+            for op in [
+                WorkerOp::WriteText {
+                    path: path.clone(),
+                    text: "[core]\n\tbare = false\n".to_owned(),
+                    create_new: false,
+                },
+                WorkerOp::Mkdir {
+                    path: format!("{path}-folder"),
+                },
+            ] {
+                // Only the write completes `half`; a folder beside does not.
+                if matches!(op, WorkerOp::Mkdir { .. }) && target.starts_with(&half) {
+                    continue;
+                }
+                let refused = perform(&op, &roots);
+                assert_eq!(
+                    refused.err().map(|e| e.code),
+                    Some(FailureCode::CapabilityDenied),
+                    "{op:?}"
+                );
+            }
+        }
+        assert_eq!(
+            std::fs::read_to_string(separate.join("config")).expect("config"),
+            before
+        );
+        assert!(!half.join("HEAD").exists());
+        // Ordinary folders, also with one such name, are written as before.
+        std::fs::create_dir_all(root.join("app").join("objects")).expect("app");
+        for path in [
+            work.join("a.txt"),
+            root.join("app").join("config"),
+            root.join("app").join("objects").join("a.txt"),
+        ] {
+            let written = perform(
+                &WorkerOp::WriteText {
+                    path: path.display().to_string(),
+                    text: "x".to_owned(),
+                    create_new: true,
+                },
+                &roots,
+            );
+            assert!(written.is_ok(), "{path:?}: {written:?}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn fc_worker_holds_the_checked_program_and_refuses_the_git_installation() {
         let (root, _cwd) = helper_root("hold", "exit7");

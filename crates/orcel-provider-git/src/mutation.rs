@@ -175,8 +175,50 @@ impl GitProvider {
         self.ensure_supported_repository_state(&repo)?;
         let current = self.base_state(&repo, String::new())?;
         require_state(&current, expected)?;
-        self.run_secure_git(&repo, &["check-ref-format", "--branch", branch])?;
-        self.run_secure_git(&repo, &["switch", "-c", branch, expected.head.as_str()])?;
+        // `--branch` also expands `@{-1}`: the name must come back as given.
+        let named = self.run_secure_git(&repo, &["check-ref-format", "--branch", branch])?;
+        if named.stdout.trim_end_matches(['\r', '\n']) != branch {
+            return Err(invalid("Git branch name is not a plain branch name"));
+        }
+        self.refuse_branch_collision(&repo, branch)?;
+        // Review of #847: no checkout. `switch -c` re-applies a sparse
+        // checkout, writing and deleting working tree files (through a
+        // junction too); the branch starts at HEAD, so nothing in the
+        // working tree or the index changes. The ref is made only if it
+        // does not exist, then HEAD names it.
+        let head = expected.head.as_str();
+        let full = format!("refs/heads/{branch}");
+        let absent = "0".repeat(head.len());
+        let created = format!("branch: Created from {head}");
+        self.run_secure_git(
+            &repo,
+            &[
+                "update-ref",
+                "--no-deref",
+                "--create-reflog",
+                "-m",
+                created.as_str(),
+                full.as_str(),
+                head,
+                absent.as_str(),
+            ],
+        )?;
+        let moved = format!(
+            "checkout: moving from {} to {branch}",
+            current.branch.as_deref().unwrap_or(head)
+        );
+        let switched = self.run_secure_git(
+            &repo,
+            &["symbolic-ref", "-m", moved.as_str(), "HEAD", full.as_str()],
+        );
+        if let Err(error) = switched {
+            // HEAD still names what it did; the ref just made goes.
+            let _ = self.run_secure_git(
+                &repo,
+                &["update-ref", "--no-deref", "-d", full.as_str(), head],
+            );
+            return Err(error);
+        }
         let result = self.base_state(&repo, String::new())?;
         if result.head != expected.head || result.branch.as_deref() != Some(branch) {
             return Err(postcondition(
@@ -292,6 +334,33 @@ impl GitProvider {
             "branch": result_branch,
             "parent": parent,
         }))
+    }
+
+    /// Review of #849: no branch exists that is `branch` in another case, or
+    /// that one of the two would be a folder of: on a file system that
+    /// ignores case they are one loose ref, whatever is packed.
+    fn refuse_branch_collision(&self, repo: &Path, branch: &str) -> Result<(), GitProviderError> {
+        let refs = self.run_git(
+            repo,
+            &["for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads"],
+        )?;
+        if refs.stdout_truncated {
+            return Err(provider_error("Git ref evidence exceeded its bound"));
+        }
+        let wanted = branch.to_lowercase();
+        let below = |name: &str, folder: &str| {
+            name.strip_prefix(folder)
+                .is_some_and(|rest| rest.starts_with('/'))
+        };
+        if refs.stdout.lines().any(|existing| {
+            let existing = existing.to_lowercase();
+            existing == wanted || below(&existing, &wanted) || below(&wanted, &existing)
+        }) {
+            return Err(invalid(
+                "a branch of that name exists already, perhaps in another case or as a folder of one",
+            ));
+        }
+        Ok(())
     }
 
     /// The tip of `refs/heads/<branch>` in the repository at `relative`;
@@ -659,6 +728,14 @@ fn require_exact_names(repo: &Path, paths: &[String]) -> Result<(), GitProviderE
                 {
                     folded = true;
                 }
+            }
+            // Review of #847: not through a link or junction (Git for
+            // Windows would stage what lies behind it).
+            if exact && crate::is_link(&folder.join(part)) {
+                return Err(GitProviderError::new(
+                    FailureCode::PathEscape,
+                    "a Git path leads through a link or junction",
+                ));
             }
             if !exact {
                 if folded || folder.join(part).exists() {

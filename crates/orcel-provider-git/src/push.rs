@@ -1419,6 +1419,7 @@ impl GitProvider {
             &repo,
             &[
                 "update-ref",
+                "--no-deref",
                 "-m",
                 "orcel push evidence",
                 &tracking,

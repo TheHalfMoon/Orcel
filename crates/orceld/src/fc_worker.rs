@@ -425,6 +425,33 @@ pub(crate) fn is_protected_write(target: &Path, protected: &[PathBuf]) -> bool {
             .any(|root| orcel_policy::protected_state::path_within(target, root))
 }
 
+/// Review of #847: whether a write to `target` lands in (or completes) a Git
+/// directory, judged by content and not by the name `.git`: a separate Git
+/// directory (`git init --separate-git-dir`), a bare repository or a `.bare`
+/// layout, a worktree's administrative folder. A folder above `target` is
+/// one when it holds what Git requires of a Git directory (`HEAD`, with
+/// `objects` and `refs`, or with `commondir`), or a `config` beside two of
+/// those; in `target`'s own folder, `target`'s name counts as present.
+pub(crate) fn in_git_directory(target: &Path) -> bool {
+    let mut child = target.file_name();
+    for folder in target.ancestors().skip(1) {
+        let has = |name: &str| {
+            child.is_some_and(|child| child.eq_ignore_ascii_case(name))
+                || std::fs::symlink_metadata(folder.join(name)).is_ok()
+        };
+        let (head, objects, refs) = (has("HEAD"), has("objects"), has("refs"));
+        if (head && objects && refs)
+            || (head && has("commondir"))
+            || (has("config") && [head, objects, refs].iter().filter(|part| **part).count() >= 2)
+        {
+            return true;
+        }
+        // Above its own folder only what exists counts.
+        child = None;
+    }
+    false
+}
+
 /// SG132_SLICE8.md (review of the state-write refusal, TOCTOU): where an
 /// opened write target really is, by its handle, checked again after the
 /// open: inside the resolved roots, outside any `.git` folder, outside
@@ -449,11 +476,12 @@ pub(crate) fn check_final_path(
     if actual
         .components()
         .any(|component| component.as_os_str().eq_ignore_ascii_case(".git"))
+        || in_git_directory(&actual)
         || is_protected_write(&actual, &protected)
     {
         return Err(failure(
             FailureCode::PathRaceDetected,
-            "the opened target is in a .git folder or Orcel's own state; it changed after the checks",
+            "the opened target is in a Git directory or Orcel's own state; it changed after the checks",
         ));
     }
     Ok(())
@@ -709,8 +737,8 @@ pub(crate) mod opened {
 }
 
 /// A path to create: its parent resolved inside the roots, the name plain,
-/// no link or junction already at the name, and nothing in a `.git` folder
-/// or in `protected` (Orcel's state, [`protected_write_roots`]).
+/// no link or junction already at the name, and nothing in a `.git` folder,
+/// in a Git directory by content ([`in_git_directory`]) or in `protected` (Orcel's state, [`protected_write_roots`]).
 pub(crate) fn creatable_with(
     path: &str,
     roots: &[String],
@@ -744,6 +772,15 @@ pub(crate) fn creatable_with(
         return Err(failure(
             FailureCode::CapabilityDenied,
             "Full Control does not write inside a .git folder or create a .git entry",
+        ));
+    }
+    if std::iter::once(&resolved)
+        .chain(existing_name.as_ref())
+        .any(|path| in_git_directory(path))
+    {
+        return Err(failure(
+            FailureCode::CapabilityDenied,
+            "Full Control does not write inside a Git directory (a bare repository or a separate Git directory) or make one",
         ));
     }
     if std::iter::once(&resolved)
