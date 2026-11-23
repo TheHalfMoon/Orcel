@@ -224,7 +224,7 @@ Merged 2026-11-07 to 2026-11-10, after the list below:
 - CI: #687 (Tier C GUI download cache), #698 (rehearsal flake retry, #696). Flakes under watch
   also include #700 (X11 latency scroll) and #508 (UIA bind, seen again 2026-11-10).
 
-Working rules learned this stretch: a PR must contain current main before its review gate runs;
+Working rules learned this stretch: a PR must contain current main before Jev reviews it;
 inline shell heredocs on this PC collapse doubled backslashes, so edit scripts go through
 files; CI runners are the bottleneck, so cancel runs for superseded heads and merge one PR
 at a time.

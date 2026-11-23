@@ -38,6 +38,27 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24"
+      # The base checkout, so the check, its attributes and its settings are the base's;
+      # the head is fetched as Git data only. It sits in its own folder, with no credential.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: review-range-base
+      - name: Refuse a diff that cannot be reviewed as text
+        working-directory: review-range-base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$BASE_SHA"
+          git fetch --no-tags origin "refs/pull/$PR_NUMBER/head"
+          test "$(git rev-parse FETCH_HEAD)" = "$HEAD_SHA"
+          node .github/scripts/check-review-range.mjs "$BASE_SHA" "$HEAD_SHA" .
       - name: Install checksum-pinned OpenCodeReview before candidate checkout
         shell: bash
         run: |

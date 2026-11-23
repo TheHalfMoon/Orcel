@@ -26,8 +26,9 @@
 // listed by path and left out of the rebuilt tree; files Orcel does not copy
 // go back in as their upstream blobs and must be named in the tree's notes.
 //
-// Every vendored file must also be reviewable by the exact-diff gate: text,
-// with no line longer than MAX_REVIEWABLE_LINE.
+// Every vendored file must also pass the range check of the required Alibaba
+// OCR Delegation job (.github/scripts/check-review-range.mjs): text, with no
+// line longer than MAX_REVIEWABLE_LINE.
 //
 // #355: each patched file also records the blob it has now
 // (`patched_blob_sha`), so a later edit to an already-patched file fails until
@@ -57,9 +58,9 @@ const matrixPath = join(repoRoot, matrixRelative);
 const registryPath = join(repoRoot, registryRelative);
 const vendorRoot = "apps/orcel-native-host/third_party/cua-driver";
 const SHA = /^[0-9a-f]{40}$/;
-// The bound came from Jev's exact-diff review (10,000 characters a slice with
-// its headers; retired 2026-11-23, docs/governance/2026-11-23-jev-retirement.md).
-// It stays: a reviewer must be able to read every line of a vendored text file.
+// The range check (.github/scripts/check-review-range.mjs) refuses a diff line
+// that does not fit in 10,000 characters with the file and hunk headers; leave
+// room for those.
 export const MAX_REVIEWABLE_LINE = 9000;
 
 /** The bytes of a `&[0x.., ...]` Rust byte-array literal, or null. */
@@ -376,17 +377,17 @@ export async function check({ upstream = false, anchor = "origin/main", requireA
   if (registry?.commit !== provenance.donor?.commit) {
     errors.push(`donor_registry.json pins cua at ${registry?.commit}, provenance at ${provenance.donor?.commit}`);
   }
-  // Every vendored file must pass the exact-diff review gate as text: no
-  // binary content and no line longer than its per-slice budget allows.
+  // Every vendored file must pass the range check as text: no binary content
+  // and no line longer than its 10,000-character bound allows.
   for (const path of [...all.keys(), ...fixtureFiles]) {
     const bytes = readFileSync(join(repoRoot, path));
     if (bytes.subarray(0, 8192).includes(0) || !isUtf8(bytes)) {
-      errors.push(`${path}: binary content cannot pass exact-diff review`);
+      errors.push(`${path}: binary content cannot pass the Alibaba OCR Delegation range check`);
       continue;
     }
     const longest = Math.max(...bytes.toString("utf8").split("\n").map((line) => line.length));
     if (longest > MAX_REVIEWABLE_LINE) {
-      errors.push(`${path}: a ${longest}-character line exceeds the ${MAX_REVIEWABLE_LINE}-character review limit`);
+      errors.push(`${path}: a ${longest}-character line exceeds the ${MAX_REVIEWABLE_LINE}-character limit (Alibaba OCR Delegation range check)`);
     }
   }
   for (const path of all.keys()) {

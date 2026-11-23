@@ -118,32 +118,57 @@ If head moves, qualification resets.
 
 ## 10. Review stack
 
-Required (founder decision effective 2026-11-23, `docs/governance/2026-11-23-jev-retirement.md`):
-1. exact-head CI: automated format/lint/type/test, the Rust and platform tests, Governance;
-2. SpecGrain acceptance check;
-3. Diffcipline exact-diff check;
-4. Alibaba Open Code Review, with a manual review of the files it excludes;
-5. independent code review of the exact head;
-6. targeted security review for a change to authority, permissions, filesystem boundaries, network or privilege;
-7. negative and adversarial regression tests for every changed boundary;
-8. zero unresolved blocking findings;
-9. targeted human/founder approval for a governance-sensitive merge;
-10. post-merge verification.
+The eight items the founder decision effective 2026-11-23 retains (`docs/governance/2026-11-23-jev-retirement.md`):
+1. exact-head CI;
+2. Rust and platform tests;
+3. Alibaba Open Code Review;
+4. independent code review;
+5. targeted security review for authority, permissions, filesystem boundaries, network or privilege;
+6. negative and adversarial regression tests;
+7. zero unresolved blocking findings;
+8. post-merge verification.
+
+Rules that were here before that decision and stay, as applicable:
+- automated format/lint/type/test and Governance, within exact-head CI;
+- SpecGrain acceptance check;
+- Diffcipline exact-diff check;
+- manual review of the files Alibaba Open Code Review excludes, and delegation mode (founder decision, 2026-10-10);
+- targeted human/founder approval for a governance-sensitive merge.
 
 Automated reviewers do not replace security reasoning.
 
-**Independent code review is a process rule. No GitHub check enforces it**: the ruleset requires no approving review,
-authors and reviewers act through one GitHub account, and a merge without the review would not be blocked.
+**Independent code review is a process rule. No GitHub check enforces it**, and authors, reviewers and the merging session
+act through one GitHub account, so GitHub could not tell one from another.
 
 - Who reviews: a person, or a fresh-context session, that did not write the change. An author's own review and D1's
-  output do not count. The security review of item 6 may be the same review when it covers the changed boundary
-  explicitly.
-- Who records it: whoever merges the pull request, before merging (today the coordinating engineering session).
+  output do not count.
+- The independent code review and the targeted security review are two separate reviews, each with its own record.
+- Who records them: whoever merges the pull request, before merging (today the coordinating engineering session).
 - Where: on the pull request, in its description or a comment, with the reviewer, the statement that they did not write
   the change, the exact head SHA, the files covered (the files Open Code Review excluded among them), every finding and
   how each was resolved. At grain closeout the closing pull request carries it into `review_basis` in
   `.specgrain/canonical-evidence.json`.
 - When the head moves, the delta is reviewed and recorded too. Without the record the change is not qualified.
+
+**What the ruleset enforces** ("Deskal main protection", read 2026-11-23): a pull request; its required status checks, on a
+branch up to date with main; no deletion and no force-push of main; no bypass. `required_approving_review_count` is 0.
+`require_extra_approval_for_unattributed_changes` is true; what it does for this repository's pull requests is not verified.
+
+**What nothing in the ruleset enforces**, so it holds only if people and sessions do it and record it:
+- the independent code review, and its record;
+- the targeted security review, and its record;
+- the negative and adversarial regression tests (CI runs the tests that exist; it cannot say one is missing);
+- the judgment behind Alibaba Open Code Review: the check proves the exact range and the rules, not that anyone applied them;
+- the manual review of the files Open Code Review excludes;
+- zero unresolved blocking findings, and resolved review threads (`required_review_thread_resolution` is false);
+- the SpecGrain acceptance check, the Diffcipline exact-diff check and the recorded authority delta;
+- founder approval for a governance-sensitive merge;
+- post-merge verification, and the evidence in a closeout (Governance checks its form, not its truth);
+- the platform jobs that are not required checks: every macOS job, the native host, the contained tier, the approval
+  helper, the Control Room client and shell, the document parser, Orcel Agent, the licence gates, the Linux and macOS
+  packages, the web job, BM-02 Tier C GUI, the authority install E2E and the Windows task timeline;
+- signed and signed-off commits, and normal merge commits (the ruleset also allows squash and rebase);
+- that D1 authorizes nothing.
 
 **D1 is optional and advisory.** A local D1 run may help to sort work. It can never authorize a merge, clear a gate,
 stand in for a review above, or authorize a privileged operation.

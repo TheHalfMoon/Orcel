@@ -390,6 +390,9 @@
   "review": {
     "independent_code_review": "required on each exact head, by a reviewer who did not write the change; recorded on the pull request (docs/governance/DIFFCIPLINE.md section 10); a process rule, not a GitHub check",
     "adversarial_tests": "negative and adversarial regression tests for every changed boundary",
+    "rust_and_platform_tests": true,
+    "zero_unresolved_blocking_findings": true,
+    "post_merge_verification": true,
     "alibaba_open_code_review": "delegation mode per standing founder decision (2026-10-10) with manual review of excluded files",
     "security_review": "fresh-context security judge on OB-01, OB-04, OB-06, OB-07, OB-08, OB-09, OB-10 and on closeout; d1-local advisory only and never clears a gate",
     "exact_head_ci": true,
@@ -412,7 +415,7 @@
       "decision": "DECIDED (founder, effective 2026-11-23): \"Jev is retired. D1 is optional. Real tests, independent review, and security enforcement remain mandatory.\"",
       "note": "Relayed to the engineering session by the coordinating session and recorded in docs/governance/2026-11-23-jev-retirement.md. It changes this grain's future review requirements only: results already recorded under this grain, Jev passes and failures included, stay as they were. The amendment keeps this spec in state GRAIN and adds no code, dependency, tool, listener or authority by itself.",
       "changes": [
-        "review.jev_semantic_review is removed; review.independent_code_review and review.adversarial_tests are added. Exact-head CI, the Rust and platform tests, Alibaba Open Code Review, the targeted security review, zero unresolved blocking findings and post-merge verification stay required.",
+        "review.jev_semantic_review is removed; review.independent_code_review, adversarial_tests, rust_and_platform_tests, zero_unresolved_blocking_findings and post_merge_verification are written down. Exact-head CI, Alibaba Open Code Review and the security review stay; independent code review and the targeted security review are separate reviews.",
         "D1 is optional and advisory only: it can never authorize a merge or a privileged operation.",
         "The per-packet acceptance claim names independent code review instead of Jev."
       ]
