@@ -248,7 +248,7 @@
     },
     {
       "id": "GATES",
-      "claim": "Each packet: exact-head CI (Windows, macOS and Linux legs), Review Gates (Jev Semantic Review, Alibaba OpenCodeReview delegation), a fresh-context security judge on OB-01, OB-04, OB-06, OB-07, OB-08, OB-09 and OB-10, native Windows runs on a qualified unmanaged engine; d1-local advisory only."
+      "claim": "Each packet: exact-head CI (Windows, macOS and Linux legs), Review Gates (Alibaba OpenCodeReview delegation), independent code review, a fresh-context security judge on OB-01, OB-04, OB-06, OB-07, OB-08, OB-09 and OB-10, native Windows runs on a qualified unmanaged engine; d1-local advisory only."
     }
   ],
   "work_packets": [
@@ -390,7 +390,11 @@
     }
   ],
   "review": {
-    "jev_semantic_review": true,
+    "independent_code_review": "required on each exact head, by a reviewer who did not write the change; recorded on the pull request (docs/governance/DIFFCIPLINE.md section 10); a process rule, not a GitHub check",
+    "adversarial_tests": "negative and adversarial regression tests for every changed boundary",
+    "rust_and_platform_tests": true,
+    "zero_unresolved_blocking_findings": true,
+    "post_merge_verification": true,
     "alibaba_open_code_review": "delegation mode per standing founder decision (2026-10-10) with manual review of excluded files",
     "security_review": "fresh-context security judge on OB-01, OB-04, OB-06, OB-07, OB-08, OB-09, OB-10 and on closeout; d1-local advisory only and never clears a gate",
     "exact_head_ci": true,
@@ -405,5 +409,19 @@
     "cross_platform": "The macOS parity track after Windows acceptance."
   },
   "activation_note": "Activated by the founder's go-ahead of 2026-11-17, given in the Claude Code session, on the founder's Orcel Browser decisions of the same day; no tracking issue was opened, so planning_issue stays null. No code, dependency, tool, route, listener, network, service or authority change in this activation packet. Separate implementation PRs must qualify their exact heads; activation CI alone proves nothing about Orcel Browser.",
+  "amendments": [
+    {
+      "title": "SG-000135: Jev retired as a mandatory review",
+      "created": "2026-11-23",
+      "base": "15cc524732aa3e84375f86bb9e55eaf8aefdea7d",
+      "decision": "DECIDED (founder, effective 2026-11-23): \"Jev is retired. D1 is optional. Real tests, independent review, and security enforcement remain mandatory.\"",
+      "note": "Relayed to the engineering session by the coordinating session and recorded in docs/governance/2026-11-23-jev-retirement.md. It changes this grain's future review requirements only: results already recorded under this grain, Jev passes and failures included, stay as they were. The amendment keeps this spec in state GRAIN and adds no code, dependency, tool, listener or authority by itself.",
+      "changes": [
+        "review.jev_semantic_review is removed; review.independent_code_review, adversarial_tests, rust_and_platform_tests, zero_unresolved_blocking_findings and post_merge_verification are written down. Exact-head CI, Alibaba Open Code Review and the security review stay; independent code review and the targeted security review are separate reviews.",
+        "D1 is optional and advisory only: it can never authorize a merge or a privileged operation.",
+        "The per-packet acceptance claim names independent code review instead of Jev."
+      ]
+    }
+  ],
   "done_when": "OB-01 to OB-10 merge with exact-head qualification, every acceptance item above passes (FA-D recorded as passed only after a real ChatGPT run), and the canonical record names this grain CLOSED. The founder may move OB-10 to a successor grain; this grain then closes on OB-01 to OB-09 with FA-A, FA-B, FA-K and SH-7 carried to it."
 }

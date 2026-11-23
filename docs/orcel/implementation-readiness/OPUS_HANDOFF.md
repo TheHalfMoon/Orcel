@@ -97,7 +97,7 @@ Tool names, scopes, failure-code vocabulary, `orcel-relay/1` frames, `ORCEL_*` e
 
 ## 8. Review and testing for every task
 
-Common gates (IMPLEMENTATION_BACKLOG.md top): exact-head CI on every touched OS, Jev exact-diff, Alibaba OCR delegation plus manual review of excluded files, a fresh-context judge, Graft for donor code, provenance + notices for imports, zero unresolved threads, normal merge. d1-local is advisory only and never counts as review. Fable's source inspection is not integration qualification: every capability needs its own Orcel tests on real OS sessions.
+Common gates (IMPLEMENTATION_BACKLOG.md top): exact-head CI on every touched OS, independent code review (from 2026-11-23; Jev is retired), Alibaba OCR delegation plus manual review of excluded files, a fresh-context judge, Graft for donor code, provenance + notices for imports, zero unresolved threads, normal merge. d1-local is advisory only and never counts as review. Fable's source inspection is not integration qualification: every capability needs its own Orcel tests on real OS sessions.
 
 ## 9. Definition of done for the cross-platform program
 

@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
+import { GIT_OFF } from "./git_off.js";
 import { KernelClient } from "./kernel.js";
 import { projectKernelResult } from "./result.js";
 
@@ -72,6 +73,7 @@ export function registerGitFetchTools(
     "git_fetch_preview",
     {
       description:
+        GIT_OFF +
         "Preview one bounded Git HTTPS fetch without DNS, network, approval, or mutation. Returns the exact HEAD, deterministic Orcel-owned destination ref, and current prior state required for an approved fetch.",
       inputSchema: gitFetchPreviewSchema(defaultWorkspace)
     },
@@ -92,6 +94,7 @@ export function registerGitFetchTools(
     "git_fetch",
     {
       description:
+        GIT_OFF +
         "Fetch one validated branch ref from one workspace-bound HTTPS destination into its Orcel-owned remote-tracking ref after fresh local approval, public-address pinning, and post-approval revalidation. Push remains denied.",
       inputSchema: gitFetchSchema(defaultWorkspace)
     },

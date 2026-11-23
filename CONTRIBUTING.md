@@ -47,7 +47,8 @@ For changes to the visual identity, run `node scripts/sync-brand.mjs --check` an
 5. Add tests for behavioral changes. For visual/UX changes, include screenshots or SVG previews without real secrets or user data.
 6. Never commit credentials, tokens, personal datasets, private machine paths, or third-party source with unclear redistribution rights.
 7. Check upstream licenses and attribution before adding or copying third-party work. See [dependency/license research](docs/research/DEPENDENCY_LICENSE_REVIEW.md) and retain the license notices required by those components.
-8. Submit a PR using the supplied template and address review comments. A passing CI build is necessary but not a guarantee of acceptance or release.
+8. Every PR needs an independent code review of its exact head by someone who did not write it, recorded on the PR before the merge by whoever merges it. This is a process rule; no GitHub check enforces it ([Diffcipline section 10](docs/governance/DIFFCIPLINE.md)).
+9. Submit a PR using the supplied template and address review comments. A passing CI build is necessary but not a guarantee of acceptance or release.
 
 Contributions are provided under the repository's [Apache License 2.0](LICENSE), unless explicitly identified as third-party material under its own compatible terms. Contributors must have the right to submit their work. Do not place confidential permission documents in public pull requests.
 

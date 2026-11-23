@@ -2,12 +2,12 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "orcel",
   "version": "0.2.0",
-  "description": "Local, policy-checked computer access for Codex through Orcel: bounded workspace files, local Git, registered build tools, and read-only desktop observation, with every change approved on this computer.",
+  "description": "Local, policy-checked computer access for Codex through Orcel: bounded workspace files, registered build tools, and read-only desktop observation, with every change approved on this computer.",
   "author": { "name": "TheHalfMoon", "url": "https://github.com/TheHalfMoon" },
   "homepage": "https://github.com/TheHalfMoon/Orcel",
   "repository": "https://github.com/TheHalfMoon/Orcel",
   "license": "Apache-2.0",
-  "keywords": ["computer access", "local approval", "workspace", "git", "mcp"],
+  "keywords": ["computer access", "local approval", "workspace", "mcp"],
   "extensions": {
     "com.openai": {
       "interface": {

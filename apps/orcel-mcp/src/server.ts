@@ -6,6 +6,7 @@ import { registerFullControlTools } from "./full_control.js";
 import { registerFsMutationTools } from "./fs_mutation.js";
 import { registerGitFetchTools } from "./git_fetch.js";
 import { registerGitMutationTools } from "./git_mutation.js";
+import { GIT_OFF } from "./git_off.js";
 import { registerGitPushTools } from "./git_push.js";
 import { KernelClient } from "./kernel.js";
 import { processSpawnInputSchema } from "./process.js";
@@ -500,6 +501,7 @@ export function registerOrcelTools(
     "git_status",
     {
       description:
+        GIT_OFF +
         "Read Git working-tree and branch status for a repository inside a trusted workspace. This tool does not mutate Git state.",
       inputSchema: z.object({
         workspace_id: z.string().min(1).default(defaultWorkspace),
@@ -521,6 +523,7 @@ export function registerOrcelTools(
     "git_diff",
     {
       description:
+        GIT_OFF +
         "Read a bounded Git diff for a repository inside a trusted workspace. External diff and textconv are disabled.",
       inputSchema: z.object({
         workspace_id: z.string().min(1).default(defaultWorkspace),
@@ -544,6 +547,7 @@ export function registerOrcelTools(
     "git_log",
     {
       description:
+        GIT_OFF +
         "Read bounded Git commit history for a repository inside a trusted workspace.",
       inputSchema: z.object({
         workspace_id: z.string().min(1).default(defaultWorkspace),

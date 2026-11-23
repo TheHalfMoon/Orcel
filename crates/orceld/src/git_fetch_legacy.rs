@@ -301,11 +301,8 @@ fn hex_lower(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use orcel_approval::test_support::FixedApprovalBroker;
-    use orcel_approval::ApprovalDecision;
     use orcel_contracts::INTERNAL_PROTOCOL_VERSION;
     use serde_json::json;
-    use std::collections::BTreeMap;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::Command;
@@ -325,26 +322,33 @@ mod tests {
         }
     }
 
-    struct StaticResolver {
-        addresses: Vec<IpAddr>,
-    }
+    struct NeverResolves;
 
-    impl DnsResolver for StaticResolver {
-        fn resolve(&self, _hostname: &str) -> Result<Vec<IpAddr>, GitProviderError> {
-            Ok(self.addresses.clone())
+    impl DnsResolver for NeverResolves {
+        fn resolve(&self, hostname: &str) -> Result<Vec<IpAddr>, GitProviderError> {
+            Err(resolved(hostname))
         }
     }
 
-    struct DenyAll;
+    /// Resolving answers `CAPABILITY_DENIED`, which no test here expects.
+    fn resolved(hostname: &str) -> GitProviderError {
+        GitProviderError {
+            code: FailureCode::CapabilityDenied,
+            message: format!("{hostname} was resolved"),
+        }
+    }
 
-    impl ApprovalBroker for DenyAll {
+    /// Asking answers `APPROVAL_DENIED`, which no test here expects.
+    struct NeverAsked;
+
+    impl ApprovalBroker for NeverAsked {
         fn request_token(
             &self,
             _prompt: &ApprovalPrompt,
         ) -> Result<orcel_approval::ApprovedToken, orcel_approval::ApprovalError> {
             Err(orcel_approval::ApprovalError {
                 code: FailureCode::ApprovalDenied,
-                message: "local user denied Git fetch".into(),
+                message: "the person was asked".into(),
             })
         }
 
@@ -427,71 +431,54 @@ mod tests {
         }
     }
 
+    /// Founder decision of 2026-11-23: Git is off until it runs confined.
+    /// Neither the preview nor the fetch asks, resolves or changes anything.
+    /// (Before: the preview was local, and a denied approval refused the
+    /// fetch.)
     #[test]
-    fn preview_is_local_and_denial_fails_closed_without_network() {
+    fn preview_and_fetch_are_refused_before_the_prompt_and_the_resolver() {
         let root = repository();
         let head = git(&root, &["rev-parse", "HEAD"]).trim().to_owned();
-        let request = RequestEnvelope {
-            version: INTERNAL_PROTOCOL_VERSION,
-            request_id: "fetch-preview".into(),
-            client_session_id: "session".into(),
-            workspace_id: "default".into(),
-            capability: "git.fetch.preview".into(),
-            operation: "preview".into(),
-            target: Some(".".into()),
-            arguments: json!({"policy_id": "test-origin", "branch": "main"}),
-        };
         let lookup = StaticLookup {
             destination: destination(),
         };
-        // Preview performs no DNS resolution. The denial fetch below must reach
-        // the approval broker, so resolve a public address here; non-public
-        // rejection is covered by dedicated provider tests.
-        let resolver = StaticResolver {
-            addresses: vec!["8.8.8.8".parse().unwrap()],
-        };
         let before_refs = git(&root, &["show-ref"]);
-        let result = dispatch(
-            &workspace(&root),
-            &FixedApprovalBroker(ApprovalDecision::Approved),
-            &request,
-            &lookup,
-            &resolver,
-        )
-        .expect("dispatch")
-        .expect("handled");
-        assert_eq!(result["head"], head);
-        assert_eq!(result["source_ref"], "refs/heads/main");
-        assert_eq!(
-            result["destination_ref"],
-            "refs/remotes/orcel/test-origin/main"
-        );
-        assert_eq!(result["prior"], "ABSENT");
+        for (capability, operation, arguments) in [
+            (
+                "git.fetch.preview",
+                "preview",
+                json!({"policy_id": "test-origin", "branch": "main"}),
+            ),
+            (
+                "git.fetch",
+                "fetch",
+                json!({"policy_id": "test-origin", "branch": "main", "expected_head": head, "expected_prior": "ABSENT"}),
+            ),
+        ] {
+            let request = RequestEnvelope {
+                version: INTERNAL_PROTOCOL_VERSION,
+                request_id: "fetch-off".into(),
+                client_session_id: "session".into(),
+                workspace_id: "default".into(),
+                capability: capability.into(),
+                operation: operation.into(),
+                target: Some(".".into()),
+                arguments,
+            };
+            let error = dispatch(
+                &workspace(&root),
+                &NeverAsked,
+                &request,
+                &lookup,
+                &NeverResolves,
+            )
+            .expect_err("off");
+            assert_eq!(error.code, FailureCode::ProviderUnavailable);
+            assert_eq!(error.message, orcel_provider_git::confinement::OFF_MESSAGE);
+        }
         assert_eq!(git(&root, &["show-ref"]), before_refs);
         assert_eq!(git(&root, &["rev-parse", "HEAD"]).trim(), head);
-
-        let fetch_request = RequestEnvelope {
-            version: INTERNAL_PROTOCOL_VERSION,
-            request_id: "fetch-deny".into(),
-            client_session_id: "session".into(),
-            workspace_id: "default".into(),
-            capability: "git.fetch".into(),
-            operation: "fetch".into(),
-            target: Some(".".into()),
-            arguments: json!({"policy_id": "test-origin", "branch": "main", "expected_head": head, "expected_prior": "ABSENT"}),
-        };
-        let error = dispatch(
-            &workspace(&root),
-            &DenyAll,
-            &fetch_request,
-            &lookup,
-            &resolver,
-        )
-        .expect_err("denial");
-        assert_eq!(error.code, FailureCode::ApprovalDenied);
-        assert_eq!(git(&root, &["rev-parse", "HEAD"]).trim(), head);
         let _ = fs::remove_dir_all(root);
-        let _ = BTreeMap::<String, String>::new();
     }
 
     // Git for Windows maps `/dev/null` to the null device; Git 2.56 rejects `NUL`.

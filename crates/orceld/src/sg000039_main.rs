@@ -16,6 +16,19 @@ use std::io::{self, BufRead, Write};
 use std::path::Path;
 use std::path::PathBuf;
 
+/// As std's `eprintln!`, except that a failed write is ignored: std's panics,
+/// so a standard error that cannot be written (a full disk, a closed pipe)
+/// would end orceld at its readiness line, before it serves anything. Defined
+/// before the modules, so it applies to every line this binary logs. Unit
+/// tests keep std's, which the test harness captures.
+#[cfg(not(test))]
+macro_rules! eprintln {
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stderr(), $($arg)*);
+    }};
+}
+
 mod app_api;
 // WP1-03: the audit chain's anchor holder, its sharing with the browser
 // broker's receipts, and `orceld audit-verify`.
@@ -448,7 +461,10 @@ fn app_api_capabilities(approval_available: bool) -> Vec<Value> {
     };
     vec![
         json!({ "id": "fs", "state": "available", "reason": null }),
-        json!({ "id": "git", "state": "available", "reason": null }),
+        match orcel_provider_git::confinement::require() {
+            Ok(()) => json!({ "id": "git", "state": "available", "reason": null }),
+            Err(error) => json!({ "id": "git", "state": "unavailable", "reason": error.message }),
+        },
         json!({ "id": "clipboard", "state": "available", "reason": null }),
         json!({ "id": "report.task", "state": "available", "reason": null }),
         windows_only("process.contained", "contained process execution"),
@@ -583,6 +599,16 @@ fn handle_envelope(
             remote.is_some(),
             profile.as_deref(),
         );
+    }
+    // Founder decision of 2026-11-23: Git is off until it runs confined. A
+    // Git request, local or remote, is refused before any remote-session
+    // lease, policy, approval or journal step (`fc.git` above, by its own
+    // argument check; the provider refuses again for every other path).
+    if request.capability.starts_with("git.") {
+        if let Err(error) = orcel_provider_git::confinement::require() {
+            let _ = audit.record(&request, POLICY_REVISION, "DENIED");
+            return ResponseEnvelope::failure(request.request_id, error.code, error.message);
+        }
     }
     // SG-000108 slice 3c: a live shape the gate admitted (local,
     // `browser_structured`) is authorized in its live form and dispatched to
@@ -2020,6 +2046,26 @@ mod tests {
         let _ = fs::remove_file(trust_path);
         let _ = fs::remove_file(approval_path);
         let _ = fs::remove_dir_all(browser_root);
+    }
+
+    /// Founder decision of 2026-11-23: Git is off until it runs confined.
+    #[test]
+    fn app_api_reports_git_unavailable() {
+        for approval_available in [false, true] {
+            let rows = app_api_capabilities(approval_available);
+            let git: Vec<_> = rows.iter().filter(|row| row["id"] == "git").collect();
+            assert_eq!(
+                git,
+                [&json!({
+                    "id": "git",
+                    "state": "unavailable",
+                    "reason": "Git is off until it runs confined",
+                })]
+            );
+            assert!(rows
+                .iter()
+                .any(|row| row["id"] == "fs" && row["state"] == "available"));
+        }
     }
 
     #[test]

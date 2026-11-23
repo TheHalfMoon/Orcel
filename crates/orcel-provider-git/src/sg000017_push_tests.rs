@@ -1,10 +1,10 @@
-use orcel_provider_git::fetch::{DnsResolver, SystemResolver};
-use orcel_provider_git::push::{
+use crate::fetch::{DnsResolver, SystemResolver};
+use crate::push::{
     parse_push_destination, push_tracking_ref, ApprovedPush, CredentialResolver,
     GitPushDestination, HardenedPushTransport, PushOperation, PushSecret, PushTransport,
     RemoteQuery, ResolvedCredential,
 };
-use orcel_provider_git::{GitProvider, GitProviderError};
+use crate::{GitProvider, GitProviderError};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -812,8 +812,8 @@ fn real_https_push_transport_is_exercised_but_success_remains_unproven() {
         .resolve(&destination.hostname)
         .expect("resolve github.com");
     assert!(!resolved.is_empty());
-    let pinned = orcel_provider_git::push::select_pinned_push_address(&resolved).expect("pinned");
-    assert!(orcel_provider_git::fetch::is_public_address(&pinned));
+    let pinned = crate::push::select_pinned_push_address(&resolved).expect("pinned");
+    assert!(crate::fetch::is_public_address(&pinned));
 
     let (work, _remote) = work_repository_with_remote();
     let base = work.parent().unwrap().to_path_buf();
@@ -870,7 +870,7 @@ fn sg000015_mutation_and_sg000016_fetch_regressions_remain_green() {
     let log = provider.log(".", 5).expect("read-only log");
     assert_eq!(log["commits"].as_array().unwrap().len(), 1);
     let fetch_destination =
-        orcel_provider_git::fetch::parse_destination("test-origin", "https://example.com/repo.git")
+        crate::fetch::parse_destination("test-origin", "https://example.com/repo.git")
             .expect("fetch destination");
     let fetch_preview = provider
         .fetch_preview(".", "test-origin", "main", &fetch_destination)

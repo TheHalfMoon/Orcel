@@ -1,6 +1,6 @@
 {
   "schema": "orcel-openai-review-cases/1",
-  "preconditions": "The reviewer account is linked to a Orcel relay through device pairing, the paired Windows computer runs Orcel with a trusted workspace that contains a Git repository, and the owner has started a local remote-session lease covering that workspace. Write steps show an approval prompt on the paired computer; the owner approves it there.",
+  "preconditions": "The reviewer account is linked to a Orcel relay through device pairing, the paired Windows computer runs Orcel with a trusted workspace, and the owner has started a local remote-session lease covering that workspace. Write steps show an approval prompt on the paired computer; the owner approves it there.",
   "positive": [
     {
       "id": "P1",
@@ -25,10 +25,10 @@
     },
     {
       "id": "P4",
-      "scenario": "Inspect Git state",
-      "prompt": "What changed in my repository since the last commit?",
-      "tools": ["git_status", "git_diff"],
-      "expected": "Returns the working-tree status and a bounded diff. Nothing on the computer changes."
+      "scenario": "Find files by name",
+      "prompt": "Which Markdown files are in my workspace?",
+      "tools": ["fs_find"],
+      "expected": "Returns the matching paths in the workspace (bounded, with truncation reported). Nothing on the computer changes."
     },
     {
       "id": "P5",

@@ -100,8 +100,8 @@ Full User desktop control (local only):
       [--standing-minutes <n>]
       With the Orcel authority service: a Full User lease (filesystem and shells over the
       roots) and a standing approval for one client and task, granted together through the
-      same lock, unlock, service box and Windows Hello. The listed operations (run, git_add,
-      git_unstage, git_commit, git_branch_create) inside the folders then do not ask each
+      same lock, unlock, service box and Windows Hello. The listed operations (run; Git
+      operations are off until Git runs confined) inside the folders then do not ask each
       time. run needs --program: each is pinned now to its contents (SHA-256) and file, shown
       in the box, and asks again once either changes. Never Admin, remote callers or browser
       actions. Needs a live Orcel indicator; until it exists the service refuses.

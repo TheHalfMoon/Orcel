@@ -1,8 +1,8 @@
-use orcel_provider_git::fetch::{
+use crate::fetch::{
     destination_ref, parse_destination, select_pinned_address, source_ref, ApprovedFetch,
     DnsResolver, GitFetchDestination, SystemResolver,
 };
-use orcel_provider_git::{GitProvider, GitProviderError};
+use crate::{GitProvider, GitProviderError};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -234,7 +234,7 @@ fn fetch_fails_closed_on_stale_head_prior_and_drift() {
     let provider = GitProvider::new(&root).unwrap();
     let head = git(&root, &["rev-parse", "HEAD"]).trim().to_owned();
     let public: IpAddr = "203.0.113.10".parse().unwrap();
-    assert!(!orcel_provider_git::fetch::is_public_address(&public));
+    assert!(!crate::fetch::is_public_address(&public));
     let real_public: IpAddr = "8.8.8.8".parse().unwrap();
     let resolver = StaticResolver {
         addresses: vec![real_public],
@@ -384,7 +384,7 @@ fn real_https_qualification_against_pinned_public_source() {
         .expect("resolve github.com");
     assert!(!resolved.is_empty());
     let pinned = select_pinned_address(&resolved).expect("pinned public address");
-    assert!(orcel_provider_git::fetch::is_public_address(&pinned));
+    assert!(crate::fetch::is_public_address(&pinned));
 
     let root = repository();
     let provider = GitProvider::new(&root).unwrap();

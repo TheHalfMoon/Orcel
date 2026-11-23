@@ -92,7 +92,11 @@
     "Closeout lists signing and, unless slice 7 qualified, the live browser in release builds as open gates, not as satisfied."
   ],
   "review": {
-    "jev_semantic_review": true,
+    "independent_code_review": "required on each exact head, by a reviewer who did not write the change; recorded on the pull request (docs/governance/DIFFCIPLINE.md section 10); a process rule, not a GitHub check",
+    "adversarial_tests": "negative and adversarial regression tests for every changed boundary",
+    "rust_and_platform_tests": true,
+    "zero_unresolved_blocking_findings": true,
+    "post_merge_verification": true,
     "alibaba_open_code_review": "delegation mode per standing founder decision (2026-10-10) with manual review of excluded files",
     "security_review": "fresh-context security judge on slices 3, 5 and 7 and on closeout; d1-local advisory only",
     "exact_head_ci": true,
@@ -105,5 +109,18 @@
     "release": "Signing, distribution and publication remain founder decisions outside F4."
   },
   "activation_note": "No capability, tool, dependency or authority change in this activation packet. Separate implementation and closeout PRs must qualify their exact heads; activation CI alone proves nothing about the Core MVP.",
+  "amendments": [
+    {
+      "title": "SG-000127: Jev retired as a mandatory review",
+      "created": "2026-11-23",
+      "base": "15cc524732aa3e84375f86bb9e55eaf8aefdea7d",
+      "decision": "DECIDED (founder, effective 2026-11-23): \"Jev is retired. D1 is optional. Real tests, independent review, and security enforcement remain mandatory.\"",
+      "note": "Relayed to the engineering session by the coordinating session and recorded in docs/governance/2026-11-23-jev-retirement.md. It changes this grain's future review requirements only: results already recorded under this grain, Jev passes and failures included, stay as they were. The amendment keeps this spec in state GRAIN and adds no code, dependency, tool, listener or authority by itself.",
+      "changes": [
+        "review.jev_semantic_review is removed; review.independent_code_review, adversarial_tests, rust_and_platform_tests, zero_unresolved_blocking_findings and post_merge_verification are written down. Exact-head CI, Alibaba Open Code Review and the security review stay; independent code review and the targeted security review are separate reviews.",
+        "D1 is optional and advisory only: it can never authorize a merge or a privileged operation."
+      ]
+    }
+  ],
   "done_when": "On the packaged Windows release under 400 MB, one supported external client at a recorded version drives the report task through orceld to a verified report, its refusal paths are proven, the Windows app shows the timeline and stops a task during a pending approval, the installed-release journey passes from install to uninstall, and the closeout records signing (and, unless qualified, the live browser in release builds) as open external gates. The roadmap requires clean signed packaging, so F4 is not recorded as exited while signing stays open; the closeout records engineering qualification only."
 }

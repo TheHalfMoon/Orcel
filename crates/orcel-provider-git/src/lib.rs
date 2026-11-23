@@ -1,8 +1,24 @@
+pub mod confinement;
 pub mod fetch;
 mod mutation;
 mod nested;
 pub mod push;
 mod repo_config;
+
+// These were integration tests; Git is off (`confinement`) for everything
+// but this crate's own unit tests.
+#[cfg(test)]
+mod nested_gitfile_tests;
+#[cfg(test)]
+mod review824_config_gate_tests;
+#[cfg(test)]
+mod sg000015_mutation_tests;
+#[cfg(test)]
+mod sg000016_fetch_tests;
+#[cfg(test)]
+mod sg000017_push_tests;
+#[cfg(test)]
+mod worker_operations_tests;
 
 pub use fetch::{
     destination_ref, parse_destination, source_ref, ApprovedFetch, FetchPreview,
@@ -57,6 +73,7 @@ struct CommandOutput {
 
 impl GitProvider {
     pub fn new(workspace_root: impl AsRef<Path>) -> Result<Self, GitProviderError> {
+        confinement::require()?;
         let root = std::fs::canonicalize(workspace_root.as_ref()).map_err(|error| {
             GitProviderError::new(
                 FailureCode::WorkspaceDenied,
@@ -82,6 +99,7 @@ impl GitProvider {
         workspace_root: impl AsRef<Path>,
         program: impl Into<PathBuf>,
     ) -> Result<Self, GitProviderError> {
+        confinement::require()?;
         let program = program.into();
         if !program.is_absolute() || !program.is_file() {
             return Err(GitProviderError::new(
@@ -551,6 +569,7 @@ fn run_plain_full(
     args: &[&str],
     input: Option<Vec<u8>>,
 ) -> Result<CommandOutput, GitProviderError> {
+    confinement::require()?;
     let accept_one = input.is_some();
     let mut command = Command::new(program);
     command

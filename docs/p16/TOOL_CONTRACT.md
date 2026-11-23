@@ -109,6 +109,17 @@ O = openWorldHint (reaches network peers or runs a registered executable).
 | `web_search` | `search/query` | network | SOFT | local-only | yes | no | no | yes | at most 10 untrusted results; titles 300 and snippets 1000 characters; provider response at most 512 KiB |
 | `workspace_get` | `workspace.get/get` | read | none | orcel.read | yes | no | yes | no | fixed-size workspace metadata |
 
+## Git is off
+
+Founder decision of 2026-11-23: Git is off until it runs confined. Every `git_*` and `fc_git_*` tool keeps its name,
+schema and row above, and orceld refuses its calls: a well-formed one answers `PROVIDER_UNAVAILABLE` and "Git is off
+until it runs confined", and a malformed one, or one the surface, profile or workspace checks refuse first, answers
+with that refusal. Either way no lease is used, nothing is asked or journaled, and no Git process starts. One compiled
+constant decides (`crates/orcel-provider-git/src/confinement.rs`); no setting, request, policy or feature changes it.
+
+The switch covers the Git tools only: a Git program the owner registered for `process.spawn`, or Git started by a
+program that was approved to run, is outside it.
+
 ## browser_full (SG-000135; remote-safe tools also remote, OB-09)
 
 Served by stdio and loopback HTTP only when local configuration selects it (`ORCEL_TOOL_SURFACE_PROFILE=browser_full`).
