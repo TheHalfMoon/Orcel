@@ -35,8 +35,9 @@ use crate::browser_lease::{AuthorityView, CoveredAction, LeaseManager, LeaseSour
 #[cfg(any(test, feature = "browser-full-scripted-consent"))]
 use orcel_authority::client::Expectation;
 use orcel_authority::client::{AuthorityClient, VerifiedLease};
+use orcel_authority::core::standing::StandingApproval;
 use orcel_authority::lease::{LeaseBody, LeaseScope, SignatureVerifier, SignedLease};
-use orcel_authority::protocol::AuthorizeClaims;
+use orcel_authority::protocol::{AuthorizeClaims, StandingClaim};
 use orcel_authority::AuthorityError;
 use orcel_contracts::{ExecutorClass, FailureCode, RequestEnvelope};
 use orcel_policy::browser_lease::{BrowserFamily, BrowserLease};
@@ -497,15 +498,33 @@ impl crate::full_control_dispatch::AuthorityPort for ServicePort {
         Ok(out)
     }
 
+    fn standing(&self) -> Result<Vec<StandingApproval>, ProviderError> {
+        // An older service lists none, so every action keeps its approval.
+        let listed = self.client()?.list().map_err(provider)?;
+        Ok(listed["standing"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|entry| {
+                entry["state"].as_str() == Some("active") && entry["in_effect"] == Value::Bool(true)
+            })
+            .filter_map(|entry| serde_json::from_value(entry["approval"].clone()).ok())
+            .collect())
+    }
+
     fn authorize(
         &self,
         lease_id: &str,
         executor: ExecutorClass,
         claims: AuthorizeClaims,
+        standing: Option<&StandingClaim>,
     ) -> Result<Value, ProviderError> {
-        self.client()?
-            .authorize(lease_id, executor, claims)
-            .map_err(provider)
+        let client = self.client()?;
+        match standing {
+            None => client.authorize(lease_id, executor, claims),
+            Some(claim) => client.authorize_standing(lease_id, executor, claims, claim.clone()),
+        }
+        .map_err(provider)
     }
 
     fn outcome(

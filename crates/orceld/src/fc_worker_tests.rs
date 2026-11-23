@@ -66,8 +66,9 @@ mod windows {
     use crate::full_control_dispatch_tests::{lease, request, FakeApproval};
     use orcel_authority::caller::CallerFacts;
     use orcel_authority::core::dispatch_jobs::{JobHost, JobProfile};
+    use orcel_authority::core::standing::StandingApproval;
     use orcel_authority::lease::{LeaseBody, LeaseScope};
-    use orcel_authority::protocol::{AuthorizeClaims, DispatchOutcome};
+    use orcel_authority::protocol::{AuthorizeClaims, DispatchOutcome, StandingClaim};
     use orcel_authority::win::jobs::{ClientProcess, ClientSlot, ServiceJobs};
     use orcel_contracts::ExecutorClass;
     use orcel_provider_fs::ProviderError;
@@ -203,11 +204,15 @@ mod windows {
         fn leases(&self) -> Result<Vec<LeaseBody>, ProviderError> {
             Ok(vec![self.lease.clone()])
         }
+        fn standing(&self) -> Result<Vec<StandingApproval>, ProviderError> {
+            Ok(Vec::new())
+        }
         fn authorize(
             &self,
             lease_id: &str,
             _executor: ExecutorClass,
             _claims: AuthorizeClaims,
+            _standing: Option<&StandingClaim>,
         ) -> Result<Value, ProviderError> {
             let (id, handle) = self.make_job(JobProfile::Dispatch);
             let authorization = format!("az-{}", &format!("{}{}", unique(), unique())[..32]);
@@ -286,7 +291,15 @@ mod windows {
             op.name(),
             serde_json::to_value(&op).expect("op"),
         );
-        run_in_worker(port, &launcher, &FakeApproval::default(), &request, None, 5)
+        run_in_worker(
+            port,
+            &launcher,
+            &FakeApproval::default(),
+            &request,
+            None,
+            false,
+            5,
+        )
     }
 
     #[test]
@@ -1595,13 +1608,17 @@ mod windows {
             fn leases(&self) -> Result<Vec<LeaseBody>, ProviderError> {
                 self.0.leases()
             }
+            fn standing(&self) -> Result<Vec<StandingApproval>, ProviderError> {
+                self.0.standing()
+            }
             fn authorize(
                 &self,
                 lease_id: &str,
                 executor: ExecutorClass,
                 claims: AuthorizeClaims,
+                standing: Option<&StandingClaim>,
             ) -> Result<Value, ProviderError> {
-                self.0.authorize(lease_id, executor, claims)
+                self.0.authorize(lease_id, executor, claims, standing)
             }
             fn outcome(
                 &self,
@@ -1646,13 +1663,17 @@ mod windows {
             fn leases(&self) -> Result<Vec<LeaseBody>, ProviderError> {
                 self.0.leases()
             }
+            fn standing(&self) -> Result<Vec<StandingApproval>, ProviderError> {
+                self.0.standing()
+            }
             fn authorize(
                 &self,
                 lease_id: &str,
                 executor: ExecutorClass,
                 claims: AuthorizeClaims,
+                standing: Option<&StandingClaim>,
             ) -> Result<Value, ProviderError> {
-                self.0.authorize(lease_id, executor, claims)
+                self.0.authorize(lease_id, executor, claims, standing)
             }
             fn outcome(
                 &self,

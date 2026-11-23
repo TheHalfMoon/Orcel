@@ -133,8 +133,11 @@ impl WorkerOp {
 
     /// Whether the operation needs the person's fresh per-action approval
     /// before Authorize (SG-000096 A3: every new process; git operations
-    /// that change the repository), on every call: standing approvals
-    /// (WP1-14) do not exist yet.
+    /// that change the repository), on every call, unless a standing
+    /// approval (spec 4.15, WP1-14, SG132_SLICE10.md) of the same lease,
+    /// client and task covers it; the dispatcher decides that
+    /// (`full_control_dispatch::covering_standing`) and the service checks it
+    /// again at `Authorize`.
     ///
     /// The exception: the SG-000132 amendment "SG-000132 amendment: Full Control file writes covered by the lease, and the fc_* tool surface" (2026-11-19,
     /// `.specgrain/specs/SG-000132.json` `amendments`; the founder's answers

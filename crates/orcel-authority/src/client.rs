@@ -191,6 +191,32 @@ impl AuthorityClient {
             claims,
             // SG132_SLICE5.md: this orceld acknowledges every job handle.
             job_ack: crate::core::dispatch_jobs::executor_runs_in_job(executor),
+            standing: None,
+        })
+    }
+
+    /// WP1-14: `Authorize` naming a standing approval in place of the
+    /// action's own approval. An older service refuses it (fail closed).
+    pub fn authorize_standing(
+        &self,
+        lease_id: &str,
+        executor: ExecutorClass,
+        claims: AuthorizeClaims,
+        standing: crate::protocol::StandingClaim,
+    ) -> Result<Value, AuthorityError> {
+        self.call(&Request::Authorize {
+            lease_id: lease_id.to_owned(),
+            executor,
+            claims,
+            job_ack: crate::core::dispatch_jobs::executor_runs_in_job(executor),
+            standing: Some(standing),
+        })
+    }
+
+    /// WP1-14: ends one of the caller's standing approvals.
+    pub fn standing_revoke(&self, standing_id: &str) -> Result<Value, AuthorityError> {
+        self.call(&Request::StandingRevoke {
+            standing_id: standing_id.to_owned(),
         })
     }
 

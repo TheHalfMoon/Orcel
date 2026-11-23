@@ -919,7 +919,7 @@ fn handle_full_control(
     if let Err(refused) = audit_before_dispatch(audit, &request, POLICY_REVISION) {
         return *refused;
     }
-    let result = fc_requests::dispatch_installed(approval, &request);
+    let result = fc_requests::dispatch_installed(approval, &request, remote);
     finish(audit, request, POLICY_REVISION, result)
 }
 

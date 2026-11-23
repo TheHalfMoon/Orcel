@@ -14,10 +14,13 @@
 //!    roots for paths); a process run or a git operation that changes the
 //!    repository then needs the person's fresh per-action approval
 //!    ([`ActionApproval`], SG-000096), bound to the action digest, before
-//!    anything is authorized;
+//!    anything is authorized, unless a standing approval (spec 4.15, WP1-14,
+//!    SG132_SLICE10.md) the service reports in effect covers it for the
+//!    same lease, client and task, inside its operations, folders and
+//!    programs ([`covering_standing`]); a remote caller is never covered;
 //! 3. asks the service's `Authorize`, which checks lease, epoch, binding,
-//!    executor and roots again and writes its audit record before it
-//!    answers; for the filesystem and process/git families the answer must
+//!    executor and roots again (and the standing approval, when one is
+//!    named) and writes its audit record before it answers; for the filesystem and process/git families the answer must
 //!    carry the dispatch's service-made, unnamed Job Object as an
 //!    assign-only handle the service duplicated into this process
 //!    (`job_id`, `job_handle`), or nothing runs; SG132_SLICE5.md: the handle
@@ -46,8 +49,9 @@
 //! per-action approval; nothing here approves or grants anything.
 
 use orcel_authority::core::dispatch_jobs::is_job_id;
+use orcel_authority::core::standing::{Cover, StandingApproval};
 use orcel_authority::lease::{check_dispatch_path, path_within_roots, LeaseBody, LeaseScope};
-use orcel_authority::protocol::{AuthorizeClaims, DispatchOutcome};
+use orcel_authority::protocol::{AuthorizeClaims, DispatchOutcome, StandingClaim};
 use orcel_contracts::{ExecutorClass, FailureCode, RequestEnvelope};
 use orcel_provider_fs::ProviderError;
 use serde_json::Value;
@@ -153,11 +157,18 @@ pub(crate) trait AuthorityPort {
     /// The active leases of this user and logon session the verified
     /// service reported, each with a verified signature.
     fn leases(&self) -> Result<Vec<LeaseBody>, ProviderError>;
+    /// WP1-14: the standing approvals of this user and logon session the
+    /// verified service reports in effect (in force, with a live indicator).
+    /// The service checks the one named again at `Authorize`.
+    fn standing(&self) -> Result<Vec<StandingApproval>, ProviderError>;
+    /// `standing`: WP1-14, the standing approval named in place of the
+    /// action's own approval (`None` for every other dispatch).
     fn authorize(
         &self,
         lease_id: &str,
         executor: ExecutorClass,
         claims: AuthorizeClaims,
+        standing: Option<&StandingClaim>,
     ) -> Result<Value, ProviderError>;
     fn outcome(
         &self,
@@ -270,17 +281,24 @@ pub(crate) fn authorize(
     action: &Action<'_>,
     now_ms: u64,
 ) -> Result<Ticket, ProviderError> {
-    authorize_with(port, action, now_ms, &|_| Ok(()))
+    authorize_with(port, action, now_ms, &|_, _| Ok(None))
 }
 
-/// [`authorize`], calling `before` with the action digest once a lease
-/// covers the action and before the service is asked (the per-action
-/// approval; a refusal there authorizes nothing).
+/// What runs between the lease check and `Authorize`: given the action
+/// digest and the chosen lease, the per-action approval (`Ok(None)`) or the
+/// standing approval that stands in for it.
+type BeforeAuthorize<'a> =
+    dyn Fn(&str, &LeaseBody) -> Result<Option<StandingClaim>, ProviderError> + 'a;
+
+/// [`authorize`], calling `before` with the action digest and the chosen
+/// lease once a lease covers the action and before the service is asked:
+/// the per-action approval (a refusal there authorizes nothing), or the
+/// standing approval that stands in for it, which `Authorize` then names.
 fn authorize_with(
     port: &dyn AuthorityPort,
     action: &Action<'_>,
     now_ms: u64,
-    before: &dyn Fn(&str) -> Result<(), ProviderError>,
+    before: &BeforeAuthorize<'_>,
 ) -> Result<Ticket, ProviderError> {
     if !port.installed() {
         return match action.family {
@@ -350,7 +368,7 @@ fn authorize_with(
         }));
     };
     let digest = action_digest(action, now_ms);
-    before(&digest)?;
+    let standing = before(&digest, &body)?;
     let claims = AuthorizeClaims {
         request_id: request_id_for_audit(action.request, now_ms),
         capability: action.request.capability.clone(),
@@ -364,7 +382,7 @@ fn authorize_with(
         origin: None,
         paths: (!action.paths.is_empty()).then(|| action.paths.clone()),
     };
-    let answer = port.authorize(&body.lease_id, executor, claims)?;
+    let answer = port.authorize(&body.lease_id, executor, claims, standing.as_ref())?;
     // SG132_SLICE5.md: a job handle that came with an answer refused here
     // is left alone (never acknowledged, used or closed): the service
     // closes it in this process after its acknowledgement timeout.
@@ -381,6 +399,15 @@ fn authorize_with(
         return Err(unavailable(
             "the authority authorized a different lease than the one asked for",
         ));
+    }
+    // WP1-14: a dispatch admitted in place of its own approval must be
+    // admitted under exactly the standing approval named.
+    if let Some(claim) = &standing {
+        if answer["standing_id"].as_str() != Some(claim.standing_id.as_str()) {
+            return Err(unavailable(
+                "the authority did not confirm the standing approval this dispatch named",
+            ));
+        }
     }
     let handle = answer["job_handle"].as_u64().filter(|handle| *handle != 0);
     let job = match (&answer["job_id"], handle, action.family.runs_in_job()) {
@@ -453,12 +480,17 @@ pub(crate) fn record_outcome<T>(
 /// caller is `fc_requests` (`fc.fs`, `fc.process`, `fc.git`), which names
 /// the calling client's reference as `principal_id`; the MCP tools are the
 /// next slice.
+///
+/// WP1-14: `remote` is whether the request came from a remote caller
+/// (refused before this by `fc_requests::refuse_untrusted`); a remote caller
+/// is never covered by a standing approval, whatever else holds.
 pub(crate) fn run_in_worker(
     port: &dyn AuthorityPort,
     launcher: &dyn WorkerLauncher,
     approval: &dyn ActionApproval,
     request: &RequestEnvelope,
     principal_id: Option<&str>,
+    remote: bool,
     now_ms: u64,
 ) -> Result<Value, ProviderError> {
     let op: crate::fc_worker::WorkerOp = serde_json::from_value(request.arguments.clone())
@@ -480,12 +512,25 @@ pub(crate) fn run_in_worker(
         principal_id,
         paths: op.paths(),
     };
-    let approve = |digest: &str| {
-        if op.needs_approval() {
-            approval.approve(&op, request, digest)
-        } else {
-            Ok(())
+    let approve = |digest: &str, body: &LeaseBody| {
+        if !op.needs_approval() {
+            return Ok(None);
         }
+        // WP1-14: a standing approval in effect that covers exactly this
+        // operation stands in for the person's per-action approval; the
+        // service checks it again. Otherwise the person is asked.
+        if !remote {
+            let standing = port.standing()?;
+            if let Some(covering) =
+                covering_standing(&standing, body, &op, request, principal_id, remote, now_ms)
+            {
+                return Ok(Some(StandingClaim {
+                    standing_id: covering.id.clone(),
+                    program: run_program(&op).map(str::to_owned),
+                }));
+            }
+        }
+        approval.approve(&op, request, digest).map(|()| None)
     };
     let ticket = authorize_with(port, &action, now_ms, &approve)?;
     let Ticket::Service(grant) = &ticket else {
@@ -502,6 +547,55 @@ pub(crate) fn run_in_worker(
     let result = launcher.run(job, &grant.roots, &op, &confirm);
     record_outcome(port, &ticket, &result);
     result
+}
+
+/// The program a process run starts (`None` for every other operation).
+fn run_program(op: &crate::fc_worker::WorkerOp) -> Option<&str> {
+    match op {
+        crate::fc_worker::WorkerOp::Run { program, .. } => Some(program.as_str()),
+        _ => None,
+    }
+}
+
+/// WP1-14 (spec 4.15, SG132_SLICE10.md): the standing approval, among
+/// `standing` (those the service reports in effect), that covers `op` under
+/// the lease `body` for the calling client `principal_id`: the same lease,
+/// client and task, the operation's executor and name, its capability, every
+/// path it touches inside the approval's folders, and for a run its program
+/// among the approval's programs when it names any. Only operations that
+/// otherwise ask a per-action approval are covered; a remote caller, an
+/// unidentified client and anything else never are (the person is asked).
+/// The rule is `StandingApproval::check_cover`, which the service's
+/// `Authorize` applies again.
+pub(crate) fn covering_standing<'a>(
+    standing: &'a [StandingApproval],
+    body: &LeaseBody,
+    op: &crate::fc_worker::WorkerOp,
+    request: &RequestEnvelope,
+    principal_id: Option<&str>,
+    remote: bool,
+    now_ms: u64,
+) -> Option<&'a StandingApproval> {
+    if remote || !op.needs_approval() {
+        return None;
+    }
+    let principal = principal_id?;
+    let paths = op.paths();
+    let cover = Cover {
+        lease_id: &body.lease_id,
+        principal_id: principal,
+        task: &body.task,
+        executor: op.family().executor(),
+        capability: &request.capability,
+        operation: op.name(),
+        paths: &paths,
+        program: run_program(op),
+        origin: None,
+        now_ms,
+    };
+    standing
+        .iter()
+        .find(|approval| approval.check_cover(&cover).is_ok())
 }
 
 thread_local! {

@@ -29,8 +29,12 @@
 //! a program run and the four git changes ask a fresh SOFT approval on
 //! every call (SG-000096 A3), through orceld's approval broker, whose prompt
 //! is the Windows approval dialog, never an in-app control
-//! ([`BrokerApproval`]); reads ask nothing. Every worker call, asked or
-//! not, still gets the service's audit-first `Authorize` before it runs.
+//! ([`BrokerApproval`]), unless a standing approval (spec 4.15, WP1-14,
+//! SG132_SLICE10.md) granted by the owner through the authority service
+//! covers them for this client and task; reads ask nothing. Every worker
+//! call, asked or not, still gets the service's audit-first `Authorize`
+//! before it runs. `fc.status` also lists this client's standing approvals
+//! in effect.
 //!
 //! Local only: a remote request to any `fc.*` capability is refused before
 //! any remote-session lease, policy or dispatch step ([`refuse_untrusted`],
@@ -149,12 +153,15 @@ pub(crate) fn validate(request: &RequestEnvelope) -> Result<(), ProviderError> {
 /// One Full Control request after orceld's entry admitted it (local, the
 /// right surface, a configured workspace, the dispatch record written):
 /// the status, or the worker operation through the dispatcher with the
-/// calling client's reference as the principal.
+/// calling client's reference as the principal. `remote` is the entry's own
+/// flag (a remote request was refused before this); the dispatcher never
+/// lets a standing approval cover a remote caller.
 pub(crate) fn dispatch(
     port: &dyn AuthorityPort,
     launcher: &dyn WorkerLauncher,
     approval: &dyn ActionApproval,
     request: &RequestEnvelope,
+    remote: bool,
     now_ms: u64,
 ) -> Result<Value, ProviderError> {
     validate(request)?;
@@ -169,7 +176,15 @@ pub(crate) fn dispatch(
     if let Ok(op) = serde_json::from_value::<WorkerOp>(request.arguments.clone()) {
         op.check_arguments()?;
     }
-    run_in_worker(port, launcher, approval, request, Some(&client), now_ms)
+    run_in_worker(
+        port,
+        launcher,
+        approval,
+        request,
+        Some(&client),
+        remote,
+        now_ms,
+    )
 }
 
 /// [`dispatch`] against the installed authority service, this orceld's own
@@ -177,15 +192,16 @@ pub(crate) fn dispatch(
 pub(crate) fn dispatch_installed(
     broker: &impl ApprovalBroker,
     request: &RequestEnvelope,
+    remote: bool,
 ) -> Result<Value, ProviderError> {
     let port = crate::authority_link::ServicePort::installed_service();
     let approval = BrokerApproval::new(broker);
     let now_ms = orcel_approval::now_ms();
     if request.capability == STATUS_CAPABILITY {
-        return dispatch(&port, &NoWorker, &approval, request, now_ms);
+        return dispatch(&port, &NoWorker, &approval, request, remote, now_ms);
     }
     let launcher = ThisLauncher::this_orceld()?;
-    dispatch(&port, &launcher, &approval, request, now_ms)
+    dispatch(&port, &launcher, &approval, request, remote, now_ms)
 }
 
 #[cfg(windows)]
@@ -284,10 +300,30 @@ pub(crate) fn status(
             "usable_capabilities": usable,
         }));
     }
+    // WP1-14: the standing approvals in effect for this client, so the
+    // agent can tell the person which actions will not ask.
+    let standing: Vec<Value> = port
+        .standing()?
+        .into_iter()
+        .filter(|approval| approval.principal_id == client && approval.expires_at_ms > now_ms)
+        .map(|approval| {
+            json!({
+                "standing_id": approval.id,
+                "lease_id": approval.lease_id,
+                "task": approval.task,
+                "operations": approval.operations,
+                "folders": approval.roots,
+                "programs": approval.commands,
+                "expires_at_ms": approval.expires_at_ms,
+                "expires_in_ms": approval.expires_at_ms.saturating_sub(now_ms),
+            })
+        })
+        .collect();
     Ok(json!({
         "client_ref": client,
         "authority": "installed",
         "leases": leases,
+        "standing": standing,
         "grants": "nothing",
     }))
 }

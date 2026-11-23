@@ -132,5 +132,11 @@
       ]
     }
   ],
+  "implementation_status": {
+    "note": "Engineering record only; the state stays GRAIN until done_when holds. Nothing is installed; every installed-service row is UNVERIFIED (founder run).",
+    "WP1-10": "Engineering merged in slices 1 to 7 (docs/orcel/implementation-readiness/prep/SG132_SLICE1.md to SG132_SLICE7.md), with the fc_* tool surface of the 2026-11-19 amendment in slices 8 and 9; founder runs pending.",
+    "WP1-12": "Not built. The indicator's visual design belongs to the Design session; the service accepts no Heartbeat yet.",
+    "WP1-14": "Engineering in docs/orcel/implementation-readiness/prep/SG132_SLICE10.md: StandingBegin/StandingComplete through the grant gate, issued with the lease (grants are refused while a lease is active), checked at Authorize, ended with the lease, by revoke and by expiry; the dispatcher uses one in place of the per-action approval of fc_process_run and the git mutations. Fails closed with INDICATOR_UNAVAILABLE until WP1-12 provides a live indicator heartbeat (spec 4.15 'shown on the indicator'), so no standing approval is issued or used today."
+  },
   "done_when": "WP1-10, WP1-12 and WP1-14 merge with exact-head qualification, J-3 and J-3b pass on Windows, and the canonical record names this grain CLOSED."
 }
