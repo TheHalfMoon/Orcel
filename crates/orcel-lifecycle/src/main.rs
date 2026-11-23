@@ -43,7 +43,10 @@ Configuration:
       the one profile the tunnel was set up for (`core`, or `browser_full`), and every
       tunnel request needs this lease.
   orcel tunnel revoke                     End the tunnel session leases (both profiles) now
-      and say which connection each belonged to, or which could not be ended.
+      and say, for each connection, how many ended, that orceld refused, or that the
+      revoke could not be confirmed (orceld did not start, take the request or answer
+      within 30 seconds, its answer could not be read or had no count or code, or it
+      reported an internal error). An unended lease expires within 15 minutes.
 
 Updates:
   orcel update --source <release-dir> [--check] [--allow-downgrade] [--reinstall]

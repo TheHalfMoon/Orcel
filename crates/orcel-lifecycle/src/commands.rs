@@ -259,8 +259,9 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
             });
             // Key and configuration change together: any failure after the key
             // is written restores both the previous key and configuration.
-            let previous_key = std::fs::read(layout.runtime_key_file()).ok();
-            config::store_runtime_key(&layout, &key)?;
+            // A current key that cannot be read (and so could not be put
+            // back) refuses here, before anything changes.
+            let previous_key = config::replace_runtime_key(&layout, &key)?;
             drop(key);
             let platform = host_platform();
             // The old route is revoked before the new one is saved: a crash

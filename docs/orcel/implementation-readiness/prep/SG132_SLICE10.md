@@ -231,5 +231,5 @@ At head (Windows, unelevated):
 
 1. WP1-12: the indicator and its `Heartbeat` (the Design session's visual design); then the founder runs of section 6.
 2. The MCP descriptions of the asking tools once a standing approval can be in effect (residual 6).
-3. Founder decisions if wanted: argument patterns (residual 2), high-impact browser standing approvals, remote
-   coverage.
+3. Founder decisions if wanted: argument patterns (residual 2), high-impact browser standing approvals. (Remote
+   coverage was refused by FOUNDER DECISION 2026-11-23.)
