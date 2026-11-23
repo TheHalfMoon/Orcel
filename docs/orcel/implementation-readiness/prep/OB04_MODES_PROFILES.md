@@ -137,6 +137,8 @@ They were captured on the thread-local slot in the first commit and pass unchang
 
 CI runs them on Windows in the `Rust / windows-latest` job, in the step "browser_structured reply goldens (Windows, live-browser-dev)". That step also lints orceld in that build, and it fails unless both golden tests ran and passed.
 
+Recorded rule change: the release-blocker sweep (`the_live_browser_dev_feature_never_reaches_a_release_build`) admits `.github/workflows/ci.yml` naming `live-browser-dev`, only while every such line is a comment, that step's name, or exactly its two debug cargo calls (`cargo clippy -p orceld` and `cargo test -p orceld --bin orceld`), with no `--release`.
+
 **Residuals.**
 
 - If the broker's own state folder (`live/broker`) cannot be made a real directory, or the system has no randomness for an instance id, a structured request is now refused `PROVIDER_UNAVAILABLE` (or `INTERNAL_ERROR`) with the broker's message. Before, it could still have run.
