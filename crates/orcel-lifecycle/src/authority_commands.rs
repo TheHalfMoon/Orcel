@@ -229,9 +229,10 @@ fn standing_grant(args: &mut Args) -> Result<Output, LifecycleError> {
     let operations = args
         .value("--operations")?
         .ok_or_else(|| {
-            LifecycleError::usage(
-                "--operations <list> names what does not ask: run, git_add, git_unstage, git_commit, git_branch_create",
-            )
+            LifecycleError::usage(format!(
+                "--operations <list> names what does not ask: {}",
+                authority_grant::offered_operations().join(", ")
+            ))
         })
         .and_then(|list| authority_grant::parse_operations(&list))?;
     let folders = values(args, "--folder")?;

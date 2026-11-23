@@ -65,6 +65,15 @@ fn git(root: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
+fn git_mutation(capability: &str, operation: &str, ws: &Workspace) -> Mutation {
+    opaque(
+        ws,
+        &request(capability, operation, ".", json!({})),
+        &"d".repeat(64),
+        ".",
+    )
+}
+
 /// The state each scenario starts from.
 fn prepare(scenario: &str, dir: &Path) {
     let ws = dir.join("ws");
@@ -135,30 +144,42 @@ fn run_child(scenario: &str, dir: &Path) {
             ),
         )
         .map(|_| ()),
-        "git_branch" => crate::git_mutation::dispatch_to(
-            sink,
-            &ws,
-            &approved,
-            &request(
-                "git.branch.create",
-                "create",
-                ".",
-                json!({ "branch": "feature", "expected_head": head() }),
-            ),
-        )
-        .map(|_| ()),
-        "git_commit" => crate::git_mutation::dispatch_to(
-            sink,
-            &ws,
-            &approved,
-            &request(
-                "git.commit",
-                "commit",
-                ".",
-                json!({ "message": "rj02 commit", "expected_head": head() }),
-            ),
-        )
-        .map(|_| ()),
+        // Git is off until it runs confined, so its dispatch journals
+        // nothing; a Git change interrupted before that is journaled here
+        // as its dispatch did, with plain Git as the effect.
+        "git_branch" => {
+            let mut mutation = git_mutation("git.branch.create", "create", &ws);
+            mutation.postcondition = Postcondition::GitBranch {
+                branch: "feature".into(),
+                head: head(),
+            };
+            journaled(
+                sink,
+                mutation,
+                || Ok(()),
+                || {
+                    git(&ws.root, &["switch", "-q", "-c", "feature"]);
+                    Ok(())
+                },
+            )
+        }
+        "git_commit" => {
+            let mut mutation = git_mutation("git.commit", "commit", &ws);
+            mutation.postcondition = Postcondition::GitCommit {
+                branch: "main".into(),
+                parent: head(),
+                message_sha256: sha("rj02 commit"),
+            };
+            journaled(
+                sink,
+                mutation,
+                || Ok(()),
+                || {
+                    git(&ws.root, &["commit", "-q", "-m", "rj02 commit"]);
+                    Ok(())
+                },
+            )
+        }
         "opaque" => journaled(
             sink,
             opaque(
@@ -216,7 +237,8 @@ fn expected(scenario: &str, transition: &str) -> (&'static str, String) {
     let ran = transition == "effect";
     let outcome = match (scenario, transition) {
         (_, "pending") => "reconciled_nothing_done",
-        ("opaque", _) => "reconciled_unknown",
+        // Git is off until it runs confined: its outcome cannot be read.
+        ("opaque" | "git_branch" | "git_commit", _) => "reconciled_unknown",
         (_, "dispatched") => "reconciled_nothing_done",
         _ => "reconciled_done",
     };

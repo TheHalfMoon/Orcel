@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
+import { GIT_OFF } from "./git_off.js";
 import { KernelClient } from "./kernel.js";
 import { projectKernelResult } from "./result.js";
 
@@ -94,6 +95,7 @@ export function registerGitPushTools(
     "git_push_preview",
     {
       description:
+        GIT_OFF +
         "Preview one bounded Git HTTPS push without DNS, network, approval, mutation, or secret access. Returns the exact HEAD, source and destination refs, and current tracking prior required for an approved push.",
       inputSchema: gitPushPreviewSchema(defaultWorkspace)
     },
@@ -114,6 +116,7 @@ export function registerGitPushTools(
     "git_push",
     {
       description:
+        GIT_OFF +
         "Push one validated local branch ref to one validated remote branch ref on one workspace-bound HTTPS destination after fresh local approval, public-address pinning, and post-approval revalidation. Force push, deletion, wildcard refspecs, arbitrary URLs, and raw credentials are denied; authentication uses protected credential references only.",
       inputSchema: gitPushSchema(defaultWorkspace)
     },

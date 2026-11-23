@@ -29,6 +29,9 @@ orcel-contracts = { path = "../orcel-contracts" }
 fs4.workspace = true
 orcel-platform = { path = "../orcel-platform" }
 orcel-policy = { path = "../orcel-policy" }
+# Whether Git is on (its one compiled switch): `orcel full-control standing
+# grant` offers no Git operation while it is off.
+orcel-provider-git = { path = "../orcel-provider-git" }
 orcel-tunnel = { path = "../orcel-tunnel" }
 serde.workspace = true
 serde_json.workspace = true

@@ -5,7 +5,7 @@
   "display_name": "Orcel",
   "version": "0.2.0",
   "description": "Local-first MCP gateway with 41 bounded tools and local approval for computer changes.",
-  "long_description": "Orcel exposes 41 bounded tools for trusted workspace files, local Git, registered argv-only processes, structured desktop observation and Full User desktop control, clipboard access, approved public HTTPS fetches, and optional web search through a provider the user enables through a local policy kernel. Full User desktop authority is granted only through a local STRONG-presence flow and is never grantable by MCP or remote callers. This extension launches the installed Orcel entrypoint over stdio; no tunnel is required.",
+  "long_description": "Orcel exposes 41 bounded tools for trusted workspace files, local Git (off until it runs confined), registered argv-only processes, structured desktop observation and Full User desktop control, clipboard access, approved public HTTPS fetches, and optional web search through a provider the user enables through a local policy kernel. Full User desktop authority is granted only through a local STRONG-presence flow and is never grantable by MCP or remote callers. This extension launches the installed Orcel entrypoint over stdio; no tunnel is required.",
   "author": {
     "name": "TheHalfMoon",
     "url": "https://github.com/TheHalfMoon/Orcel"
@@ -20,7 +20,6 @@
   "license": "Apache-2.0",
   "keywords": [
     "files",
-    "git",
     "local",
     "approvals"
   ],
@@ -110,31 +109,31 @@
     },
     {
       "name": "fc_git_branch_create",
-      "description": "Create and switch to one Git branch under a Full Control lease, after a fresh approval."
+      "description": "Off until Git runs confined. Create and switch to one Git branch under a Full Control lease, after a fresh approval."
     },
     {
       "name": "fc_git_commit",
-      "description": "Commit the staged changes under a Full Control lease, after a fresh approval."
+      "description": "Off until Git runs confined. Commit the staged changes under a Full Control lease, after a fresh approval."
     },
     {
       "name": "fc_git_diff",
-      "description": "Read one repository's Git diff under a Full Control lease, read-only."
+      "description": "Off until Git runs confined. Read one repository's Git diff under a Full Control lease, read-only."
     },
     {
       "name": "fc_git_log",
-      "description": "Read one repository's Git log under a Full Control lease, read-only."
+      "description": "Off until Git runs confined. Read one repository's Git log under a Full Control lease, read-only."
     },
     {
       "name": "fc_git_stage",
-      "description": "Stage explicit paths under a Full Control lease, after a fresh approval."
+      "description": "Off until Git runs confined. Stage explicit paths under a Full Control lease, after a fresh approval."
     },
     {
       "name": "fc_git_status",
-      "description": "Read one repository's Git status under a Full Control lease, read-only."
+      "description": "Off until Git runs confined. Read one repository's Git status under a Full Control lease, read-only."
     },
     {
       "name": "fc_git_unstage",
-      "description": "Unstage explicit paths under a Full Control lease, after a fresh approval."
+      "description": "Off until Git runs confined. Unstage explicit paths under a Full Control lease, after a fresh approval."
     },
     {
       "name": "fc_process_run",
@@ -194,47 +193,47 @@
     },
     {
       "name": "git_branch_create",
-      "description": "Create and switch to one new local Git branch after approval."
+      "description": "Off until Git runs confined. Create and switch to one new local Git branch after approval."
     },
     {
       "name": "git_commit",
-      "description": "Create one local Git commit after approval."
+      "description": "Off until Git runs confined. Create one local Git commit after approval."
     },
     {
       "name": "git_diff",
-      "description": "Read a bounded Git diff."
+      "description": "Off until Git runs confined. Read a bounded Git diff."
     },
     {
       "name": "git_fetch",
-      "description": "Fetch one validated branch after approval."
+      "description": "Off until Git runs confined. Fetch one validated branch after approval."
     },
     {
       "name": "git_fetch_preview",
-      "description": "Preview one bounded Git HTTPS fetch without mutation."
+      "description": "Off until Git runs confined. Preview one bounded Git HTTPS fetch without mutation."
     },
     {
       "name": "git_log",
-      "description": "Read bounded Git commit history."
+      "description": "Off until Git runs confined. Read bounded Git commit history."
     },
     {
       "name": "git_push",
-      "description": "Push one validated branch after approval."
+      "description": "Off until Git runs confined. Push one validated branch after approval."
     },
     {
       "name": "git_push_preview",
-      "description": "Preview one bounded Git HTTPS push without mutation."
+      "description": "Off until Git runs confined. Preview one bounded Git HTTPS push without mutation."
     },
     {
       "name": "git_stage",
-      "description": "Stage listed files after approval."
+      "description": "Off until Git runs confined. Stage listed files after approval."
     },
     {
       "name": "git_status",
-      "description": "Read Git working-tree and branch status."
+      "description": "Off until Git runs confined. Read Git working-tree and branch status."
     },
     {
       "name": "git_unstage",
-      "description": "Unstage listed files after approval."
+      "description": "Off until Git runs confined. Unstage listed files after approval."
     },
     {
       "name": "process_spawn",

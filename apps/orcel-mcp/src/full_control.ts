@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
+import { GIT_OFF } from "./git_off.js";
 import { KernelClient } from "./kernel.js";
 import { projectKernelResult } from "./result.js";
 
@@ -273,7 +274,7 @@ export function registerFullControlTools(server: McpServer, kernel: KernelClient
   server.registerTool(
     "fc_git_status",
     {
-      description: `Git status of one repository inside the roots under Full Control. ${READS} The lease must include programs (shells). ${LEASE}`,
+      description: `${GIT_OFF}Git status of one repository inside the roots under Full Control. ${READS} The lease must include programs (shells). ${LEASE}`,
       inputSchema: fcRepositorySchema(defaultWorkspace)
     },
     async ({ workspace_id, repository }) => send(workspace_id, { capability: "fc.git", operation: "git_status" }, { repository })
@@ -282,7 +283,7 @@ export function registerFullControlTools(server: McpServer, kernel: KernelClient
   server.registerTool(
     "fc_git_diff",
     {
-      description: `Git diff (working tree, or staged) of one repository inside the roots under Full Control. ${READS} The lease must include programs (shells). ${LEASE}`,
+      description: `${GIT_OFF}Git diff (working tree, or staged) of one repository inside the roots under Full Control. ${READS} The lease must include programs (shells). ${LEASE}`,
       inputSchema: fcDiffSchema(defaultWorkspace)
     },
     async ({ workspace_id, repository, staged }) => send(workspace_id, { capability: "fc.git", operation: "git_diff" }, { repository, staged })
@@ -291,7 +292,7 @@ export function registerFullControlTools(server: McpServer, kernel: KernelClient
   server.registerTool(
     "fc_git_log",
     {
-      description: `Git log (at most 100 commits) of one repository inside the roots under Full Control. ${READS} The lease must include programs (shells). ${LEASE}`,
+      description: `${GIT_OFF}Git log (at most 100 commits) of one repository inside the roots under Full Control. ${READS} The lease must include programs (shells). ${LEASE}`,
       inputSchema: fcLogSchema(defaultWorkspace)
     },
     async ({ workspace_id, repository, max_count }) =>
@@ -301,7 +302,7 @@ export function registerFullControlTools(server: McpServer, kernel: KernelClient
   server.registerTool(
     "fc_git_stage",
     {
-      description: `Stage 1 to 128 repository-relative paths in one repository under Full Control. ${ASKS} The lease must include programs (shells). ${LEASE}`,
+      description: `${GIT_OFF}Stage 1 to 128 repository-relative paths in one repository under Full Control. ${ASKS} The lease must include programs (shells). ${LEASE}`,
       inputSchema: fcPathsSchema(defaultWorkspace)
     },
     async ({ workspace_id, repository, paths }) => send(workspace_id, { capability: "fc.git", operation: "git_add" }, { repository, paths })
@@ -310,7 +311,7 @@ export function registerFullControlTools(server: McpServer, kernel: KernelClient
   server.registerTool(
     "fc_git_unstage",
     {
-      description: `Unstage 1 to 128 repository-relative paths in one repository under Full Control. ${ASKS} The lease must include programs (shells). ${LEASE}`,
+      description: `${GIT_OFF}Unstage 1 to 128 repository-relative paths in one repository under Full Control. ${ASKS} The lease must include programs (shells). ${LEASE}`,
       inputSchema: fcPathsSchema(defaultWorkspace)
     },
     async ({ workspace_id, repository, paths }) => send(workspace_id, { capability: "fc.git", operation: "git_unstage" }, { repository, paths })
@@ -319,7 +320,7 @@ export function registerFullControlTools(server: McpServer, kernel: KernelClient
   server.registerTool(
     "fc_git_commit",
     {
-      description: `Commit what is staged in one repository, with a message of at most 8192 bytes, under Full Control. ${ASKS} The lease must include programs (shells). ${LEASE}`,
+      description: `${GIT_OFF}Commit what is staged in one repository, with a message of at most 8192 bytes, under Full Control. ${ASKS} The lease must include programs (shells). ${LEASE}`,
       inputSchema: fcCommitSchema(defaultWorkspace)
     },
     async ({ workspace_id, repository, message }) =>
@@ -329,7 +330,7 @@ export function registerFullControlTools(server: McpServer, kernel: KernelClient
   server.registerTool(
     "fc_git_branch_create",
     {
-      description: `Create one branch at the current commit of one repository and switch to it under Full Control. ${ASKS} The lease must include programs (shells). ${LEASE}`,
+      description: `${GIT_OFF}Create one branch at the current commit of one repository and switch to it under Full Control. ${ASKS} The lease must include programs (shells). ${LEASE}`,
       inputSchema: fcBranchSchema(defaultWorkspace)
     },
     async ({ workspace_id, repository, branch }) =>
