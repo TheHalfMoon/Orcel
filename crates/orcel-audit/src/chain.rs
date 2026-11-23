@@ -834,8 +834,20 @@ impl ChainWriter {
 
     /// Brings `cursor` to the file's end under the lock: follows a linked
     /// replacement, verifies what was added since, quarantines a torn last
-    /// line, opens an empty file.
+    /// line, opens an empty file, and checks a file read from its start
+    /// against the anchor the holder holds. All of it or none: on an error
+    /// `cursor` is as it was, so the next sync reads and checks again, and
+    /// still knows the file this writer verified.
     fn sync(&self, cursor: &mut Cursor) -> Result<(), ChainError> {
+        let before = cursor.clone();
+        let synced = self.sync_to_end(cursor);
+        if synced.is_err() {
+            *cursor = before;
+        }
+        synced
+    }
+
+    fn sync_to_end(&self, cursor: &mut Cursor) -> Result<(), ChainError> {
         if !cursor.verified {
             *cursor = Cursor::empty();
         }

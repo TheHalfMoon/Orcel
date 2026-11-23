@@ -1477,3 +1477,133 @@ fn chain_a_slow_holder_never_holds_the_lock_or_stalls_the_writer() -> TestResult
     let _ = std::fs::remove_dir_all(dir);
     Ok(())
 }
+
+/// Answers `held` as told, and never anchors.
+struct Holding(crate::HeldState);
+
+impl Anchorer for Holding {
+    fn anchor(
+        &self,
+        _anchor: &AnchorRef,
+        _link: Option<&ChainLink>,
+        _reset: Option<&str>,
+    ) -> AnchorOutcome {
+        AnchorOutcome::Unanchored {
+            reason: "the holder is busy".to_owned(),
+        }
+    }
+
+    fn held(&self, _log: &str) -> Option<crate::HeldState> {
+        Some(self.0.clone())
+    }
+}
+
+/// Ends the file at `path` in a torn line whose first copy cannot be kept:
+/// the first sync reads every record and then fails.
+fn tear_and_block_the_tail(path: &Path, forced: &Collisions) -> TestResult {
+    let mut bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    bytes.extend_from_slice(b"{\"torn");
+    std::fs::write(path, bytes).map_err(|e| e.to_string())?;
+    let taken = path.with_file_name(aside("", 1_700_000_000_000, "same"));
+    std::fs::write(taken, b"kept").map_err(|e| e.to_string())?;
+    forced.tokens(&vec!["same"; ASIDE_ATTEMPTS]);
+    Ok(())
+}
+
+/// A first sync that read the records and then failed has not checked the
+/// file against the held anchor: the next append still does.
+#[test]
+fn chain_a_failed_first_sync_does_not_skip_the_held_anchor() -> TestResult {
+    let dir = sandbox("held-recheck")?;
+    let path = dir.join("audit-chain.jsonl");
+    let forced = Collisions::at(1_700_000_000_000);
+    write(&path, 3)?;
+    let writer = ChainWriter::open(&path, ORCELD_LOG).map_err(|e| e.to_string())?;
+    writer.set_anchorer(Arc::new(Holding(crate::HeldState {
+        anchor: Some(AnchorRef {
+            log: ORCELD_LOG.to_owned(),
+            file_id: events(&path)?[0].digest.clone(),
+            seq: 1,
+            digest: "0".repeat(64),
+        }),
+        reset: None,
+    })));
+    tear_and_block_the_tail(&path, &forced)?;
+    assert!(matches!(writer.append(draft(50)), Err(ChainError::Io(_))));
+    assert_eq!(forced.tokens_left(), 0, "the sync failed at the torn tail");
+    for n in 51..53 {
+        let error = writer.append(draft(n)).err().ok_or("a held conflict")?;
+        assert!(
+            matches!(&error, ChainError::Broken { reason, .. } if reason.contains("anchor holder")),
+            "{error}"
+        );
+    }
+    let kinds: Vec<_> = events(&path)?.into_iter().map(|e| e.kind).collect();
+    assert_eq!(kinds.len(), 5, "an opening, three, the recorded cut");
+    assert_eq!(kinds[4], AuditEventKind::Rotation);
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// Nor does it skip the rule that a reset file's opening record is anchored
+/// before anything else is appended.
+#[test]
+fn chain_a_failed_first_sync_does_not_skip_the_opening_anchor() -> TestResult {
+    let dir = sandbox("opening-recheck")?;
+    let path = dir.join("audit-chain.jsonl");
+    let forced = Collisions::at(1_700_000_000_000);
+    let digest = "e".repeat(64);
+    crate::open_after_reset(&path, ORCELD_LOG, json!({"event_digest": digest}))
+        .map_err(|e| e.to_string())?;
+    let writer = ChainWriter::open(&path, ORCELD_LOG).map_err(|e| e.to_string())?;
+    writer.set_anchorer(Arc::new(Holding(crate::HeldState {
+        anchor: None,
+        reset: Some(digest),
+    })));
+    tear_and_block_the_tail(&path, &forced)?;
+    assert!(writer.append(draft(50)).is_err());
+    assert_eq!(forced.tokens_left(), 0, "the sync failed at the torn tail");
+    for n in 51..53 {
+        let error = writer.append(draft(n)).err().ok_or("not anchored yet")?;
+        assert!(
+            error.to_string().contains("must be anchored first"),
+            "{error}"
+        );
+    }
+    assert_eq!(events(&path)?.len(), 2, "the opening and the recorded cut");
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// A failed sync forgets nothing this writer verified: a file that was cut,
+/// replaced or removed stays refused, however often it is tried.
+#[test]
+fn chain_a_failed_sync_keeps_what_the_writer_verified() -> TestResult {
+    let dir = sandbox("sync-keeps")?;
+    let path = dir.join("audit-chain.jsonl");
+    let writer = write(&path, 3)?;
+    let whole = lines(&path)?;
+    let other = dir.join("other.jsonl");
+    write(&other, 6)?;
+    let others = lines(&other)?;
+    for (what, now) in [("cut", &whole[..2]), ("replaced", &others[..])] {
+        rewrite(&path, now)?;
+        for n in 0..3 {
+            assert!(
+                matches!(writer.append(draft(n)), Err(ChainError::Broken { .. })),
+                "{what}, try {n}"
+            );
+        }
+        assert_eq!(lines(&path)?, now, "{what}");
+    }
+    std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+    for n in 0..3 {
+        assert!(writer.append(draft(n)).is_err(), "removed, try {n}");
+    }
+    assert!(!path.exists());
+    rewrite(&path, &whole)?;
+    let appended = writer.append(draft(9)).map_err(|e| e.to_string())?;
+    assert_eq!(appended.event.seq, 4);
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
