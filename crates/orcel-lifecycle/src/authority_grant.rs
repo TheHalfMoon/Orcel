@@ -131,6 +131,13 @@ pub fn browser_scope(
     families: Vec<BrowserFamily>,
     task: Option<String>,
 ) -> Result<LeaseScope, LifecycleError> {
+    // SG-000135 OB-09 (founder decision 2026-11-23): the service's scope check
+    // refuses a remote reference too; this says why.
+    if orcel_policy::browser_lease::is_remote_client_ref(&client_ref) {
+        return Err(LifecycleError::usage(
+            "that client reference is a remote (ChatGPT) session's: a Full Access lease never covers a remote session; every remote action asks you on this PC",
+        ));
+    }
     if origins.len() > MAX_ORIGINS {
         return Err(LifecycleError::usage(format!(
             "a browser grant names at most {MAX_ORIGINS} origins"
@@ -906,6 +913,31 @@ mod tests {
             routine.clone(),
             None
         )
+        .is_err());
+        // SG-000135 OB-09: a remote session's reference is refused, with a
+        // message that says why, and the service's own check refuses it too.
+        let remote = orcel_policy::browser_lease::client_ref("remote:rc-1:rp-1:s1");
+        let refused = browser_scope(
+            session.clone(),
+            remote.clone(),
+            one.clone(),
+            routine.clone(),
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            refused.message.contains("never covers a remote session"),
+            "{}",
+            refused.message
+        );
+        assert!(LeaseScope::BrowserFullAccess {
+            client_ref: remote,
+            session_id: session.clone(),
+            origins: one.clone(),
+            families: routine.clone(),
+            task: None,
+        }
+        .validate()
         .is_err());
         assert!(browser_scope(session, "client".to_owned(), one, routine, None).is_err());
         assert!(parse_families("submit").is_err());

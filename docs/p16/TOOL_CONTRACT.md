@@ -120,8 +120,8 @@ Remotely (SG-000135 OB-09; tunnel only is engineering-chosen 2026-11-22), only a
 the owner set up on the PC for `browser_full` serves the 12 broker tools with remote scopes below (providers: openai),
 never a core tool; a tunnel serves one profile, and the relay serves `core` only. orceld still requires the SG-000055
 STRONG remote-session lease for that profile, asks the owner on
-the Windows dialog for every consequential action (a Full Access lease covers local sessions only; remote lease
-coverage is PENDING FOUNDER CONFIRMATION), and keeps the persistent profile tools local-only.
+the Windows dialog for every consequential action (a Full Access lease covers local sessions only, founder
+decision 2026-11-23), and keeps the persistent profile tools local-only.
 
 | Tool | Kernel shape | Effect | Approval | Remote | R | D | I | O | Output bound |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |

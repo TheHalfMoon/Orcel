@@ -120,7 +120,7 @@ Orcel Browser Full Access (SG-000135; leases come from the authority service onl
   orcel browser grant --session <bs-...> --client-ref <cl-...> --origin <https://host>...
       [--families navigate,click,type,select,tabs] [--task <label>] [--minutes <1-720>]
       Up to 16 exact origins, routine families only, at most 12 hours. Local sessions
-      only: a lease never covers a remote (ChatGPT) session, which asks every time.
+      only: a remote (ChatGPT) session's client reference is refused; it asks every time.
   orcel browser leases                    Show this session's active browser leases.
   orcel browser revoke <lease id>         Revoke one browser lease.
 

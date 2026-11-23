@@ -321,7 +321,7 @@ signature by the lease key; the public key in `authority-public` verifies them.
     list no active lease, and `orceld authority-status` a higher epoch.
 13. **Browser Full Access:** `& "$env:ProgramFiles\Orcel\orcel.exe" browser grant --session <bs-...>
     --client-ref <cl-...> --origin https://<site>` with the values `browser_session_create` returned to a local
-    client. A lease never covers a remote (ChatGPT) session (SG-000135 OB-09, pending founder confirmation).
+    client. A remote (ChatGPT) session's reference (`cl-remote-...`) is refused: no lease covers a remote session.
 14. **Event Viewer** (Application, source Orcel): 4102 (intents), 4104 (enrollment), 4101 (granted scope).
 
 Replacing the key: the "Replace the key" line; removing it: the "Reset" line (both started elevated and

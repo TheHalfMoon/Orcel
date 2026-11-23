@@ -2104,8 +2104,8 @@ mod full {
         // SG-000135 OB-08: the session's Full Access lease cache, over the
         // SG-000132 authority service; it covers nothing until the owner's
         // `orcel browser grant` has the service issue a lease.
-        // SG-000135 OB-09: no lease covers a remote caller's session until
-        // the founder confirms it (`REMOTE_LEASE_COVERAGE_CONFIRMED`).
+        // SG-000135 OB-09: no lease ever covers a remote caller's session
+        // (founder decision 2026-11-23).
         let access = crate::browser_lease::FullAccess::service_backed(session_id, client, task);
         browser.set_full_access(if remote {
             access.for_remote_caller()

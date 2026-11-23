@@ -20,7 +20,7 @@ Sources, as they bind this slice:
 | SG-000132 invariants | "Only the service issues leases and standing approvals, and only after a valid Windows Hello signature over its challenge; never while a lease is active in that session." "A lease alone never replaces an approval; only a standing approval for the same client, task and scope does." "The service never elevates; Admin is refused." |
 | SG-000132 acceptance | "Grant, renewal and standing approval fail without a valid Hello signature, and while a lease is active." `Authorize` refuses an "out-of-scope standing approval" |
 | SG-000132 amendment of 2026-11-19 | "a process run (fc_process_run) and the git mutations (fc_git_stage, fc_git_unstage, fc_git_commit, fc_git_branch_create) keep a fresh SOFT approval on every call (SG-000096 A3), unless a standing approval (spec 4.15) covers them; deletion keeps its own approval (SG-000097); remote callers stay excluded (SG-000105)" |
-| SG-000132 amendment by SG-000135 | High-impact browser families "need an explicit narrow standing approval"; remote coverage of the `browser_full` profile is pending founder confirmation |
+| SG-000132 amendment by SG-000135 | High-impact browser families "need an explicit narrow standing approval"; remote coverage of the `browser_full` profile: refused by FOUNDER DECISION 2026-11-23 (it was pending when this slice was written) |
 | SG-000096 A13 | A standing approval "out of scope (working directory or command pattern), expired, ended by stop, issued for another client, task or lease, or presented by a remote caller is refused before dispatch" |
 
 ## 1. Design
@@ -202,7 +202,7 @@ All of these wait for WP1-12 (no heartbeat exists, so the installed service refu
 4. **Not signed.** A standing approval is held only by the service and named by id; orceld never presents it. Leases
    stay signed.
 5. **Not built here:** standing approvals for desktop input (SG-000095's per-action approval stays), for high-impact
-   browser actions (the SG-000135 amendment), and any remote coverage (pending founder confirmation).
+   browser actions (the SG-000135 amendment), and any remote coverage (refused by FOUNDER DECISION 2026-11-23; pending when this slice was written).
 6. **Tool descriptions.** The `fc_process_run` and `fc_git_*` MCP descriptions still say they ask on every call,
    which holds while nothing can be in effect; they change with WP1-12.
 7. **Downgrade.** A service older than this slice refuses to start on a state that holds standing records (its
