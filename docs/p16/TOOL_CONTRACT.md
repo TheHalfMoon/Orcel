@@ -125,7 +125,7 @@ client, and keeps the persistent profile tools local-only.
 
 | Tool | Kernel shape | Effect | Approval | Remote | R | D | I | O | Output bound |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `browser_session_create` | `browser.session/create` | write | SOFT | orcel.execute | no | no | no | no | one broker session id, its task label, the orceld instance id, its mode (shadow or visible, and whether it claims no interference) and its profile (ephemeral, or the persistent profile's name) |
+| `browser_session_create` | `browser.session/create` | write | SOFT | orcel.execute | no | no | no | no | one broker session id, its task label, the orceld instance id, its mode (shadow or visible, and whether it claims no interference) and its profile (ephemeral, or the persistent profile's name); for a mode switch also the session it continues, its end report and each carried page (sanitized URL, new page id, receipt seq) |
 | `browser_open` | `browser.session/open` | network | SOFT | orcel.execute | no | no | no | yes | the session's page id, the committed URL, status and generation, and one evidence receipt |
 | `browser_snapshot` | `browser.session/snapshot` | read | none | orcel.read | yes | no | yes | no | one frame of node identities and keyed digests, untrusted names of at most 256 bytes for main-frame form controls, and one evidence receipt |
 | `browser_click` | `browser.session/click` | network | SOFT | orcel.execute | no | no | no | yes | the opened URL, status and generation, and one evidence receipt |

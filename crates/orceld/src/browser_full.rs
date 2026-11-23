@@ -30,7 +30,7 @@ pub(crate) const VALIDATION_PAGE_ID: &str = "pg-ob02-validation";
 
 /// Each broker operation, its required and its optional argument fields.
 const FORMS: &[(&str, &[&str], &[&str])] = &[
-    ("create", &[], &["task", "mode", "profile"]),
+    ("create", &[], &["task", "mode", "profile", "continue_from"]),
     ("open", &["session_id", "url"], &[]),
     ("snapshot", &["session_id"], &[]),
     (
@@ -103,6 +103,10 @@ pub(crate) enum FullAction {
         /// SG-000135 OB-04: an existing persistent profile's name, or
         /// `None` for an ephemeral profile (the default).
         profile: Option<String>,
+        /// SG-000135 SH-2: the caller's open session whose task moves to
+        /// this new session in `mode` (the other mode). It takes that
+        /// session's profile and task label, so it names neither.
+        continue_from: Option<String>,
     },
     Open {
         session: String,
@@ -274,10 +278,31 @@ pub(crate) fn parse(request: &RequestEnvelope) -> Result<FullAction, ProviderErr
                     Some(name)
                 }
             };
+            // SG-000135 SH-2: a switch names the session it continues and
+            // the mode it moves to; the profile and task are that session's.
+            let continue_from = match arguments.get("continue_from") {
+                None => None,
+                Some(_) => {
+                    if !arguments.contains_key("mode") {
+                        return Err(invalid(
+                            "continue_from requires mode: the mode the task moves to",
+                        ));
+                    }
+                    if task.is_some() || profile.is_some() {
+                        return Err(invalid(
+                            "continue_from takes the continued session's profile and task; name neither",
+                        ));
+                    }
+                    let id = text("continue_from")?;
+                    browser_broker::parse_session_id(&id)?;
+                    Some(id)
+                }
+            };
             FullAction::Create {
                 task,
                 mode,
                 profile,
+                continue_from,
             }
         }
         "profiles" => FullAction::Profiles,
@@ -718,6 +743,45 @@ mod tests {
                 parse(&request(operation, arguments.clone())).is_err(),
                 "{operation} {arguments}"
             );
+        }
+        Ok(())
+    }
+
+    /// SG-000135 SH-2: a switch names a well-formed session id and the mode
+    /// it moves to, and takes that session's profile and task (it names
+    /// neither); without `continue_from` create is unchanged.
+    #[test]
+    fn sh2_continue_from_names_a_session_and_a_mode_only() -> Result<(), String> {
+        let parsed = |arguments: Value| {
+            parse(&request("create", arguments)).map_err(|e| format!("{:?}: {}", e.code, e.message))
+        };
+        match parsed(json!({"continue_from": SESSION, "mode": "visible"}))? {
+            FullAction::Create {
+                mode,
+                profile,
+                task,
+                continue_from,
+            } => {
+                assert_eq!(mode, browser_broker::SessionMode::Visible);
+                assert_eq!((profile, task), (None, None));
+                assert_eq!(continue_from.as_deref(), Some(SESSION));
+            }
+            other => return Err(format!("not a create: {other:?}")),
+        }
+        match parsed(json!({"mode": "visible"}))? {
+            FullAction::Create { continue_from, .. } => assert_eq!(continue_from, None),
+            other => return Err(format!("not a create: {other:?}")),
+        }
+        for arguments in [
+            json!({"continue_from": SESSION}),
+            json!({"continue_from": SESSION, "mode": "visible", "profile": "work"}),
+            json!({"continue_from": SESSION, "mode": "shadow", "task": "x"}),
+            json!({"continue_from": "bs-1", "mode": "visible"}),
+            json!({"continue_from": PAGE, "mode": "visible"}),
+            json!({"continue_from": 7, "mode": "visible"}),
+            json!({"continue_from": SESSION, "mode": "headed"}),
+        ] {
+            assert!(parsed(arguments.clone()).is_err(), "{arguments}");
         }
         Ok(())
     }

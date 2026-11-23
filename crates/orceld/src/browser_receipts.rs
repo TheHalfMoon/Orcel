@@ -786,6 +786,11 @@ struct SessionSeen {
     head: String,
     /// An OB-05 intent or receipt of the session was seen.
     ob05: bool,
+    /// SG-000135 SH-2: the mode its start named, why it ended, and whether
+    /// a later session already continues it.
+    mode: Option<String>,
+    end_reason: Option<String>,
+    continued: bool,
 }
 
 /// One evidence file a receipt names, checked once the whole file is read
@@ -867,6 +872,38 @@ pub(crate) fn verify_receipts(
                             );
                         }
                         state.started = true;
+                        state.mode = detail["mode"].as_str().map(str::to_owned);
+                        // SG-000135 SH-2: a session that continues another
+                        // after a mode switch names it; when that session is
+                        // in this file, it ended for the switch, in the other
+                        // mode, with the last receipt named here, and no
+                        // other session continues it. A session outside
+                        // this file is unverifiable: not checked, and never
+                        // counted as verified.
+                        let link_to = &detail["continued_from"];
+                        if !link_to.is_null() {
+                            let from = link_to["session_id"].as_str().unwrap_or_default();
+                            let mode = state.mode.clone();
+                            if let Some(previous) =
+                                sessions.get_mut(from).filter(|previous| previous.started)
+                            {
+                                let broken = previous.end_reason.as_deref() != Some("mode_switch")
+                                    || previous.continued
+                                    || link_to["mode"].as_str() != previous.mode.as_deref()
+                                    || previous.mode == mode
+                                    || link_to["last_receipt_sha256"].as_str()
+                                        != Some(previous.head.as_str());
+                                previous.continued = true;
+                                if broken {
+                                    link(
+                                        event_seq,
+                                        &session,
+                                        0,
+                                        "the session continues a session that did not end for a mode switch to it",
+                                    );
+                                }
+                            }
+                        }
                     }
                     Some("session_end") => {
                         let state = sessions.entry(session.clone()).or_default();
@@ -885,6 +922,7 @@ pub(crate) fn verify_receipts(
                             );
                         }
                         state.ended = Some(event_seq);
+                        state.end_reason = detail["reason"].as_str().map(str::to_owned);
                         if detail["evidence_removed"] == Value::Bool(true) {
                             removed.insert(session.clone());
                         }

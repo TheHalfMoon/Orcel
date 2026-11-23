@@ -1561,3 +1561,29 @@ fn ob09_high_impact_and_unclassified_remote_actions_always_ask() {
     // A secret-looking value is never typed under a remote lease.
     assert_eq!(scene.access.fill_value("my password"), FillValue::Secret);
 }
+
+/// SG-000135 SH-2: while a mode switch reopens its pages, the new session's
+/// lease is held: an action the lease would cover asks the owner instead,
+/// with no service read and nothing authorized; released, the lease covers
+/// again.
+#[test]
+fn sh2_a_held_lease_covers_nothing_so_reopened_pages_always_ask() {
+    let mut scene = Scene::new();
+    scene.access.hold(true);
+    let reads = scene.service.reads.get();
+    for family in [BrowserFamily::Navigate, BrowserFamily::Click] {
+        let decision = scene
+            .access
+            .decide(&query(family, Impact::Routine), &moment());
+        assert!(is_ask(&decision), "{decision:?}");
+    }
+    assert_eq!(scene.service.reads.get(), reads, "no service read");
+    assert!(scene.service.authorized.borrow().is_empty());
+    scene.access.hold(false);
+    let used = covered(
+        scene
+            .access
+            .decide(&query(BrowserFamily::Navigate, Impact::Routine), &moment()),
+    );
+    assert_eq!(used.lease_id, scene.lease.lease_id);
+}

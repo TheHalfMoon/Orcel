@@ -84,6 +84,15 @@ import {
  *   site storage persist across sessions; one live session per profile.
  *   `browser_profiles` lists them; `browser_profile_create` and
  *   `browser_profile_delete` each ask the owner (SOFT) first.
+ * - SG-000135 SH-2: `browser_session_create {continue_from, mode}` moves
+ *   the task of an open session to a new session in the other mode, on the
+ *   same profile with the same task label. The old session ends; the new
+ *   one reopens its recorded pages as approved GET navigations, each
+ *   asking even under a lease (exact URL only when nothing in it was
+ *   redacted or token-like, else its path; no page after a sign-in or with
+ *   a token-like path segment), and repeats no click, fill, submit or
+ *   download. Moving to
+ *   Visible asks the owner first; a Full Access lease is not carried.
  *
  * Only a Windows development build reaches a real browser; every other
  * build answers typed unavailable. The schemas are a first filter only:
@@ -122,7 +131,10 @@ export function browserSessionCreateSchema(defaultWorkspace: string) {
       .refine((value) => !/\p{Cc}/u.test(value), { message: "task is one line with no control character" })
       .optional(),
     mode: z.enum(["shadow", "visible"]).optional(),
-    profile: browserProfileNameSchema.optional()
+    profile: browserProfileNameSchema.optional(),
+    // SG-000135 SH-2: continue an open session of this MCP session in the
+    // other mode (orceld refuses it with a task, a profile or no mode).
+    continue_from: browserSessionIdSchema.optional()
   });
 }
 
@@ -241,15 +253,22 @@ export function registerSessionBrokerTools(server: McpServer, kernel: KernelClie
   server.registerTool(
     "browser_session_create",
     {
-      description: `Create an Orcel browser session: its own isolated, Orcel-managed profile (never your browser or its profile) and its own browser worker, bound to this MCP session. Returns session_id, which every other browser tool takes, and client_ref, which the owner names when asking the Orcel authority service for a Full Access lease (it grants nothing). mode: shadow (default) runs headless, and Orcel never uses your mouse, keyboard, focus or foreground window; visible opens a window of its own titled "Orcel agent session", after fresh local Orcel approval; the browser may bring it to the front when it opens and when it opens a page, so it does not claim no-interference. profile: by default the profile is ephemeral (browser_close, the end of this MCP session or an emergency stop removes it); name a persistent Orcel-managed profile from browser_profiles to keep its cookies and site storage across sessions (one live session per profile). A Visible session, and the first use of a persistent profile in this MCP session, each ask fresh local Orcel approval first (the profile may be signed in to sites); every page prompt in a persistent profile names it. Pages get no async clipboard or other permission and no file dialog, but in either mode a page can still copy text to your system clipboard after an approved click (the legacy execCommand("copy") path). At most 2 sessions per MCP session and 4 on the device. task is an optional label of at most 64 characters; it grants nothing. ${DEV_ONLY}`,
+      description: `Create an Orcel browser session: its own isolated, Orcel-managed profile (never your browser or its profile) and its own browser worker, bound to this MCP session. Returns session_id, which every other browser tool takes, and client_ref, which the owner names when asking the Orcel authority service for a Full Access lease (it grants nothing). mode: shadow (default) runs headless, and Orcel never uses your mouse, keyboard, focus or foreground window; visible opens a window of its own titled "Orcel agent session", after fresh local Orcel approval; the browser may bring it to the front when it opens and when it opens a page, so it does not claim no-interference. profile: by default the profile is ephemeral (browser_close, the end of this MCP session or an emergency stop removes it); name a persistent Orcel-managed profile from browser_profiles to keep its cookies and site storage across sessions (one live session per profile). A Visible session, and the first use of a persistent profile in this MCP session, each ask fresh local Orcel approval first (the profile may be signed in to sites); every page prompt in a persistent profile names it. continue_from: an open session of this MCP session whose task moves to the new session in mode (the other mode), on its profile and with its task label (name neither); the old session ends, its recorded pages reopen as approved GET navigations, each with its own receipt, and no click, fill, submit or download is repeated; moving to visible asks fresh local Orcel approval first, a Full Access lease does not carry over, and a session with an uncertain action, a person using its window, or (moving to shadow) a page that waits for you is refused with nothing changed. Pages get no async clipboard or other permission and no file dialog, but in either mode a page can still copy text to your system clipboard after an approved click (the legacy execCommand("copy") path). At most 2 sessions per MCP session and 4 on the device. task is an optional label of at most 64 characters; it grants nothing. ${DEV_ONLY}`,
       inputSchema: browserSessionCreateSchema(defaultWorkspace)
     },
-    async ({ workspace_id, task, mode, profile }) =>
+    async ({ workspace_id, task, mode, profile, continue_from }) =>
       forward(
         "browser_session_create",
         workspace_id,
-        { ...(task === undefined ? {} : { task }), ...(mode === undefined ? {} : { mode }), ...(profile === undefined ? {} : { profile }) },
-        CREATE_TIMEOUT_MS
+        {
+          ...(task === undefined ? {} : { task }),
+          ...(mode === undefined ? {} : { mode }),
+          ...(profile === undefined ? {} : { profile }),
+          ...(continue_from === undefined ? {} : { continue_from })
+        },
+        // A switch may wait on an approval and reopen several pages, each
+        // asking the owner.
+        continue_from === undefined ? CREATE_TIMEOUT_MS : APPROVAL_TIMEOUT_MS
       )
   );
 

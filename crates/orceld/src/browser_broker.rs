@@ -159,6 +159,9 @@ pub(crate) struct SessionOptions {
     /// SG-000135 OB-09: who opened it (local, or a remote caller), fixed
     /// for the session's life and named by every intent and receipt.
     pub caller: crate::browser_remote::Caller,
+    /// SG-000135 SH-2: the session this one continues after a mode switch,
+    /// named by its `session_start` on the audit chain.
+    pub continued_from: Option<crate::browser_mode_switch::SwitchLink>,
 }
 
 /// What the broker needs from a session's worker.
@@ -167,6 +170,9 @@ pub(crate) trait SessionWorker {
     fn is_usable(&mut self) -> bool;
     /// End the worker; true when its process family is confirmed gone.
     fn shutdown(self) -> bool;
+    /// SG-000135 SH-2: the tabs, sign-in, takeover and Needs-you state a
+    /// mode switch checks and carries (read from orceld's own records).
+    fn switch_state(&mut self) -> crate::browser_mode_switch::SwitchState;
 }
 
 /// Where one session keeps its state: everything under its own directory.
@@ -338,6 +344,8 @@ pub(crate) enum EndReason {
     McpSessionEnded,
     EmergencyStop,
     HostLost,
+    /// SG-000135 SH-2: the task moved to a new session in the other mode.
+    ModeSwitch,
 }
 
 impl EndReason {
@@ -347,6 +355,7 @@ impl EndReason {
             Self::McpSessionEnded => "mcp_session_ended",
             Self::EmergencyStop => "emergency_stop",
             Self::HostLost => "host_lost",
+            Self::ModeSwitch => "mode_switch",
         }
     }
 }
@@ -612,6 +621,9 @@ pub(crate) struct BrokerSession<W> {
     /// SG-000135 OB-05 (FA-J): measured intent-to-receipt latency.
     latency_total_ms: u64,
     latency_max_ms: u64,
+    /// SG-000135 SH-2: actions whose effect is unknown or whose receipt the
+    /// audit chain refused; a session with any cannot switch mode.
+    unsettled: u64,
     _slot: DeviceSlot,
 }
 
@@ -745,6 +757,13 @@ impl<W> BrokerSession<W> {
         // head, so the next intent follows the chain as written.
         if !matches!(receipt.audit, ReceiptAudit::Failed(_)) {
             self.last_receipt_sha256 = receipt.receipt_sha256.clone();
+        }
+        // SG-000135 SH-2: an uncertain outcome is never carried away from the
+        // session whose guard keeps it from being repeated.
+        if receipt.disposition.effect == "unknown"
+            || matches!(receipt.audit, ReceiptAudit::Failed(_))
+        {
+            self.unsettled += 1;
         }
         if self.receipts.len() >= self.receipts_budget {
             self.receipts.pop_front();
@@ -1267,11 +1286,12 @@ impl<W: SessionWorker> Broker<W> {
             targets_page: None,
             latency_total_ms: 0,
             latency_max_ms: 0,
+            unsettled: 0,
             _slot: slot,
         };
         // SG-000135 OB-05: the session's start, chained (the task label as a
         // digest only: it is the caller's text).
-        session.chain_session_event(json!({
+        let mut start = json!({
             "source": SOURCE_SESSION,
             "event": "session_start",
             "session_id": session.id,
@@ -1283,7 +1303,13 @@ impl<W: SessionWorker> Broker<W> {
                 .as_deref()
                 .map(|task| crate::browser_receipts::sha256_hex(task.as_bytes())),
             "at_ms": now_ms,
-        }));
+        });
+        // SG-000135 SH-2: a session that continues another names it, its
+        // mode and its last receipt (the verifier checks the link).
+        if let (Some(link), Value::Object(map)) = (&options.continued_from, &mut start) {
+            map.insert("continued_from".into(), link.to_json());
+        }
+        session.chain_session_event(start);
         Ok(self.sessions.entry(id).or_insert(session))
     }
 
@@ -1346,6 +1372,78 @@ impl<W: SessionWorker> Broker<W> {
     pub(crate) fn close(&mut self, client: &str, id: &str) -> Result<EndReport, ProviderError> {
         self.check_owned(client, id)?;
         self.end(id, EndReason::Closed).ok_or_else(unknown_session)
+    }
+
+    /// SG-000135 SH-2: whether `client`'s session `id` may move to `target`
+    /// for `caller`, and what the move would carry. Nothing changes; a
+    /// refusal leaves the session as it was.
+    pub(crate) fn plan_switch(
+        &mut self,
+        client: &str,
+        id: &str,
+        target: SessionMode,
+        caller: &crate::browser_remote::Caller,
+    ) -> Result<crate::browser_mode_switch::SwitchPlan, ProviderError> {
+        use crate::browser_mode_switch::{
+            carried_tabs, check, plan_digest, SwitchCheck, SwitchLink, SwitchPlan,
+        };
+        let session = self.session(client, id)?;
+        let state = session.worker.switch_state();
+        check(&SwitchCheck {
+            current: session.mode,
+            target,
+            session_caller: &session.caller,
+            caller,
+            persistent_profile: session.profile.is_some(),
+            unsettled: session.unsettled,
+            state: &state,
+        })?;
+        let (tabs, dropped) = carried_tabs(&state);
+        let profile = session.profile_name().map(str::to_owned);
+        let plan_sha256 = plan_digest(
+            &session.id,
+            &session.last_receipt_sha256,
+            target,
+            profile.as_deref(),
+            session.task.as_deref(),
+            &tabs,
+            dropped,
+        );
+        Ok(SwitchPlan {
+            from: SwitchLink {
+                session_id: session.id.clone(),
+                mode: session.mode,
+                last_receipt_sha256: session.last_receipt_sha256.clone(),
+                carried: tabs.len(),
+                dropped,
+                plan_sha256,
+            },
+            target,
+            caller: session.caller.clone(),
+            profile,
+            task: session.task.clone(),
+            tabs,
+        })
+    }
+
+    /// SG-000135 SH-2: end `client`'s session for the switch `plan`, after
+    /// checking it again: a session that changed since the plan (an action,
+    /// a person's input, a page that now waits for the person) is refused,
+    /// and nothing changes.
+    pub(crate) fn end_for_switch(
+        &mut self,
+        client: &str,
+        plan: &crate::browser_mode_switch::SwitchPlan,
+    ) -> Result<EndReport, ProviderError> {
+        let again = self.plan_switch(client, &plan.from.session_id, plan.target, &plan.caller)?;
+        if again != *plan {
+            return Err(ProviderError::new(
+                FailureCode::TargetStale,
+                "the browser session changed while the mode switch waited; nothing was moved",
+            ));
+        }
+        self.end(&plan.from.session_id, EndReason::ModeSwitch)
+            .ok_or_else(unknown_session)
     }
 
     /// The MCP session `client` ended: every session it holds ends. Each
@@ -1723,6 +1821,8 @@ mod tests {
         profile_marker: PathBuf,
         usable: Rc<RefCell<bool>>,
         shutdowns: Rc<RefCell<Vec<PathBuf>>>,
+        /// SG-000135 SH-2: what the worker reports for a mode switch.
+        switch: Rc<RefCell<crate::browser_mode_switch::SwitchState>>,
     }
 
     impl SessionWorker for TestWorker {
@@ -1737,12 +1837,16 @@ mod tests {
             // confirmed gone.
             !matches!(std::fs::read(&self.profile_marker), Ok(bytes) if bytes == b"stuck")
         }
+        fn switch_state(&mut self) -> crate::browser_mode_switch::SwitchState {
+            self.switch.borrow().clone()
+        }
     }
 
     struct Scene {
         root: PathBuf,
         shutdowns: Rc<RefCell<Vec<PathBuf>>>,
         usable: Rc<RefCell<bool>>,
+        switch: Rc<RefCell<crate::browser_mode_switch::SwitchState>>,
         seed: u8,
     }
 
@@ -1759,6 +1863,7 @@ mod tests {
                 root,
                 shutdowns: Rc::new(RefCell::new(Vec::new())),
                 usable: Rc::new(RefCell::new(true)),
+                switch: Rc::new(RefCell::new(Default::default())),
                 seed: 0,
             }
         }
@@ -1779,6 +1884,7 @@ mod tests {
             secret: &str,
         ) -> Result<String, ProviderError> {
             let (shutdowns, usable) = (Rc::clone(&self.shutdowns), Rc::clone(&self.usable));
+            let switch = Rc::clone(&self.switch);
             let random = self.random();
             broker
                 .create(client, Some("task"), random, 1, move |_, dirs| {
@@ -1788,6 +1894,7 @@ mod tests {
                         profile_marker: marker,
                         usable,
                         shutdowns,
+                        switch,
                     })
                 })
                 .map(|session| session.id.clone())
@@ -3416,6 +3523,7 @@ mod tests {
             secret: &str,
         ) -> Result<String, ProviderError> {
             let (shutdowns, usable) = (Rc::clone(&self.shutdowns), Rc::clone(&self.usable));
+            let switch = Rc::clone(&self.switch);
             let random = self.random();
             let secret = secret.to_owned();
             broker
@@ -3432,6 +3540,7 @@ mod tests {
                         profile_marker: marker,
                         usable,
                         shutdowns,
+                        switch,
                     })
                 })
                 .map(|session| session.id.clone())
@@ -3749,6 +3858,7 @@ mod tests {
         let caller = crate::browser_remote::Caller::of(Some(&remote));
         let client = caller.broker_client("s1");
         let (shutdowns, usable) = (Rc::clone(&scene.shutdowns), Rc::clone(&scene.usable));
+        let switch = Rc::clone(&scene.switch);
         let random = scene.random();
         let id = broker
             .create_with(
@@ -3765,6 +3875,7 @@ mod tests {
                         profile_marker: dirs.profiles.join("cookies.txt"),
                         usable,
                         shutdowns,
+                        switch,
                     })
                 },
             )
@@ -3916,5 +4027,432 @@ mod tests {
         for secret in ["abc123", "ada", "xyz"] {
             assert!(!shown.contains(secret), "{shown}");
         }
+    }
+
+    // SG-000135 SH-2: moving a task between Shadow and Visible.
+
+    fn tabs_state(tabs: &[(&str, &str, bool)]) -> crate::browser_mode_switch::SwitchState {
+        crate::browser_mode_switch::SwitchState {
+            tabs: tabs
+                .iter()
+                .map(
+                    |(page, url, active)| crate::browser_mode_switch::SwitchTab {
+                        page_id: (*page).to_owned(),
+                        committed: Some((*url).to_owned()),
+                        active: *active,
+                    },
+                )
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    /// One switch as live dispatch runs it, without a worker: plan, end the
+    /// old session for the plan, open the new one naming it.
+    fn switch_once(
+        scene: &mut Scene,
+        broker: &mut Broker<TestWorker>,
+        client: &str,
+        from: &str,
+        target: SessionMode,
+        profile: Option<crate::browser_profiles::ProfileLease>,
+    ) -> Result<(crate::browser_mode_switch::SwitchPlan, EndReport, String), String> {
+        let plan = broker
+            .plan_switch(client, from, target, &crate::browser_remote::Caller::Local)
+            .map_err(|e| e.message)?;
+        let ended = broker
+            .end_for_switch(client, &plan)
+            .map_err(|e| e.message)?;
+        let id = scene
+            .create_in(
+                broker,
+                client,
+                SessionOptions {
+                    mode: target,
+                    profile,
+                    caller: plan.caller.clone(),
+                    continued_from: Some(plan.from.clone()),
+                },
+                "carried",
+            )
+            .map_err(|e| e.message)?;
+        Ok((plan, ended, id))
+    }
+
+    /// SG-000135 SH-2: a task moves Shadow to Visible and back. Each move
+    /// ends the old session for the switch (its ephemeral profile and
+    /// evidence removed as OB-05 says), opens the new one in the other mode
+    /// with the same task, carries each tab's URL (secret-bearing ones as
+    /// their path only), and the chain links the sessions; the verifier
+    /// checks the link and finds a forged one.
+    #[test]
+    fn sh2_a_task_moves_both_ways_and_the_receipts_link_the_sessions() -> Result<(), String> {
+        let mut scene = Scene::new("sh2-both");
+        let (mut broker, chain_path, store) = chained(&scene, INSTANCE, "sh2")?;
+        let shadow = scene
+            .create_in(&mut broker, "client-a", SessionOptions::default(), "s")
+            .map_err(|e| e.message)?;
+        let (shadow_root, shadow_last) = {
+            let session = broker.session("client-a", &shadow).map_err(|e| e.message)?;
+            let file = session.keep_evidence(EvidenceKind::Snapshot, b"{\"nodes\":[]}");
+            assert!(file.stored);
+            act_once(
+                session,
+                draft("browser_open", None),
+                record("browser_open", "done"),
+                10,
+            )?;
+            act_once(
+                session,
+                draft("browser_fill", Some("n1")),
+                record("browser_fill", "done"),
+                20,
+            )?;
+            (
+                session.dirs.root.clone(),
+                session.last_receipt_sha256.clone(),
+            )
+        };
+        *scene.switch.borrow_mut() = tabs_state(&[
+            ("pg-a", "https://fixture.test/form?step=2", true),
+            ("pg-b", "https://fixture.test/cb?code=abc&state=s", false),
+        ]);
+        let (plan, ended, visible) = switch_once(
+            &mut scene,
+            &mut broker,
+            "client-a",
+            &shadow,
+            SessionMode::Visible,
+            None,
+        )?;
+        // The old session ended for the switch, everything ephemeral gone.
+        assert_eq!(ended.reason, EndReason::ModeSwitch);
+        assert!(ended.worker_ended && ended.profile_removed);
+        assert!(!shadow_root.exists());
+        assert!(
+            !store.dir().join(&shadow).exists(),
+            "its evidence went with it"
+        );
+        let refused = broker.session("client-a", &shadow).map(|_| ()).unwrap_err();
+        assert!(
+            refused.message.contains("mode_switch"),
+            "{}",
+            refused.message
+        );
+        // The plan: the background tab first (path only: its query held a
+        // code), the active one last and exact; no fill is carried.
+        assert_eq!(plan.from.mode, SessionMode::Shadow);
+        assert_eq!(plan.from.last_receipt_sha256, shadow_last);
+        assert_eq!(plan.task.as_deref(), Some("task"));
+        let targets: Vec<(&str, &str)> = plan
+            .tabs
+            .iter()
+            .map(|tab| (tab.target.as_str(), tab.kind.as_str()))
+            .collect();
+        assert_eq!(
+            targets,
+            vec![
+                ("https://fixture.test/cb", "path_only"),
+                ("https://fixture.test/form?step=2", "exact"),
+            ]
+        );
+        let status = broker.status("client-a", &visible).map_err(|e| e.message)?;
+        assert_eq!(status["mode"], "visible");
+        assert_eq!(status["no_interference"], false);
+        assert_eq!(status["task"], "task");
+        assert_eq!(status["actions_used"], 0, "nothing was replayed");
+
+        // And back to Shadow.
+        let (back, ended_visible, shadow_again) = switch_once(
+            &mut scene,
+            &mut broker,
+            "client-a",
+            &visible,
+            SessionMode::Shadow,
+            None,
+        )?;
+        assert_eq!(ended_visible.reason, EndReason::ModeSwitch);
+        assert_eq!(back.from.mode, SessionMode::Visible);
+        let status = broker
+            .status("client-a", &shadow_again)
+            .map_err(|e| e.message)?;
+        assert_eq!(status["mode"], "shadow");
+        assert_eq!(status["no_interference"], true);
+
+        // The chain: each new session's start names the one it continues,
+        // its mode and its last receipt; the verifier passes.
+        let events = events(&chain_path)?;
+        let starts: Vec<&Value> = events
+            .iter()
+            .map(|event| &event.detail)
+            .filter(|detail| detail["event"] == "session_start")
+            .collect();
+        assert_eq!(starts.len(), 3);
+        assert!(starts[0].get("continued_from").is_none());
+        assert_eq!(starts[1]["continued_from"]["session_id"], shadow.as_str());
+        assert_eq!(starts[1]["continued_from"]["mode"], "shadow");
+        assert_eq!(
+            starts[1]["continued_from"]["last_receipt_sha256"],
+            shadow_last.as_str()
+        );
+        assert_eq!(starts[1]["continued_from"]["carried"], 2);
+        assert_eq!(starts[2]["continued_from"]["session_id"], visible.as_str());
+        let text = std::fs::read_to_string(&chain_path).map_err(|e| e.to_string())?;
+        for secret in ["code=abc", "step=2", "fixture.test/cb"] {
+            assert!(!text.contains(secret), "{secret} reached the chain");
+        }
+        let report =
+            crate::browser_receipts::verify_receipts(&chain_path, Some(&store), None, None)?;
+        assert!(!report.broken, "{}", report.value);
+
+        // A forged start that continues a session that was closed, or one
+        // already continued, is found.
+        let closed = scene
+            .create_in(&mut broker, "client-b", SessionOptions::default(), "c")
+            .map_err(|e| e.message)?;
+        broker.close("client-b", &closed).map_err(|e| e.message)?;
+        for (n, from) in [(1, closed.as_str()), (2, shadow.as_str())] {
+            let forged = scene.root.join(format!("sh2-forged-{n}.jsonl"));
+            std::fs::copy(&chain_path, &forged).map_err(|e| e.to_string())?;
+            let writer = orcel_audit::ChainWriter::open(&forged, orcel_audit::ORCELD_LOG)
+                .map_err(|e| e.to_string())?;
+            writer
+                .append(orcel_audit::EventDraft::new(
+                    orcel_contracts::event::AuditEventKind::Dispatch,
+                    json!({
+                        "source": SOURCE_SESSION,
+                        "event": "session_start",
+                        "session_id": format!("bs-{INSTANCE}-99-0001020304050607"),
+                        "mode": "visible",
+                        "continued_from": {
+                            "session_id": from,
+                            "mode": "shadow",
+                            "last_receipt_sha256": "",
+                        },
+                    }),
+                ))
+                .map_err(|e| e.to_string())?;
+            let report = crate::browser_receipts::verify_receipts(&forged, None, None, None)?;
+            assert!(
+                report.broken,
+                "forged link {n} was not found: {}",
+                report.value
+            );
+            assert!(report
+                .value
+                .to_string()
+                .contains("did not end for a mode switch"));
+        }
+        Ok(())
+    }
+
+    /// SG-000135 SH-2: a switch is refused, with the session left exactly
+    /// as it was, when an action's outcome is uncertain, a person is using
+    /// the window, a page waits for the person on a move into Shadow, the
+    /// mode is the same, or another caller asks; and a session that changed
+    /// after the plan is not ended.
+    #[test]
+    fn sh2_a_refused_switch_changes_nothing() -> Result<(), String> {
+        let mut scene = Scene::new("sh2-refused");
+        let (mut broker, _chain, _store) = chained(&scene, INSTANCE, "sh2-refused")?;
+        let visible = scene
+            .create_in(
+                &mut broker,
+                "client-a",
+                SessionOptions {
+                    mode: SessionMode::Visible,
+                    ..Default::default()
+                },
+                "v",
+            )
+            .map_err(|e| e.message)?;
+        let local = crate::browser_remote::Caller::Local;
+        let code = |broker: &mut Broker<TestWorker>, target| {
+            broker
+                .plan_switch("client-a", &visible, target, &local)
+                .err()
+                .map(|e| e.code)
+        };
+        assert_eq!(
+            code(&mut broker, SessionMode::Visible),
+            Some(FailureCode::InvalidRequest)
+        );
+        scene.switch.borrow_mut().held = true;
+        assert_eq!(
+            code(&mut broker, SessionMode::Shadow),
+            Some(FailureCode::HumanTakeover)
+        );
+        scene.switch.borrow_mut().held = false;
+        scene.switch.borrow_mut().waiting = true;
+        assert_eq!(
+            code(&mut broker, SessionMode::Shadow),
+            Some(FailureCode::HumanVerificationRequired)
+        );
+        scene.switch.borrow_mut().waiting = false;
+        // Another caller with the same client string (a remote one).
+        let remote = crate::browser_remote::Caller::Remote(crate::browser_remote::RemoteCaller {
+            provider: "openai".into(),
+            device: "dev-1".into(),
+            connection: "rc-1".into(),
+            principal: "p-1".into(),
+        });
+        let other = broker
+            .plan_switch("client-a", &visible, SessionMode::Shadow, &remote)
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(other.code, FailureCode::CapabilityDenied);
+        // Another client cannot name it at all.
+        assert!(broker
+            .plan_switch("client-b", &visible, SessionMode::Shadow, &local)
+            .is_err());
+        // A plan that went stale (an action ran meanwhile) ends nothing.
+        let plan = broker
+            .plan_switch("client-a", &visible, SessionMode::Shadow, &local)
+            .map_err(|e| e.message)?;
+        {
+            let session = broker
+                .session("client-a", &visible)
+                .map_err(|e| e.message)?;
+            act_once(
+                session,
+                draft("browser_open", None),
+                record("browser_open", "done"),
+                30,
+            )?;
+        }
+        let stale = broker
+            .end_for_switch("client-a", &plan)
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(stale.code, FailureCode::TargetStale);
+        assert!(broker.session("client-a", &visible).is_ok());
+        // An action whose outcome is unknown: never carried away from the
+        // session whose guard keeps it from being repeated.
+        {
+            let session = broker
+                .session("client-a", &visible)
+                .map_err(|e| e.message)?;
+            let receipt = act_once(
+                session,
+                draft("browser_click", Some("n2")),
+                record("browser_click", "unknown"),
+                40,
+            )?;
+            assert_eq!(receipt.disposition.effect, "unknown");
+        }
+        let uncertain = broker
+            .plan_switch("client-a", &visible, SessionMode::Shadow, &local)
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(uncertain.code, FailureCode::OutcomeUnknown);
+        // Still open, still Visible, nothing ended.
+        let status = broker.status("client-a", &visible).map_err(|e| e.message)?;
+        assert_eq!(status["mode"], "visible");
+        assert_eq!(broker.open_count(), 1);
+        Ok(())
+    }
+
+    /// SG-000135 SH-2: a persistent profile moves with the task: the old
+    /// session releases it at its end and the new one holds the same data
+    /// folder (its cookies); a remote caller's session never holds one.
+    #[test]
+    fn sh2_a_persistent_profile_moves_with_the_task() -> Outcome {
+        let mut scene = Scene::new("sh2-profile");
+        let store = scene.store().map_err(boxed)?;
+        store.create("work", "client-a", 1).map_err(boxed)?;
+        let mut broker = scene.broker(INSTANCE, Budgets::DEFAULT);
+        let lease = store.acquire("work").map_err(boxed)?;
+        let data = lease.data_dir.clone();
+        let first = scene
+            .create_in(
+                &mut broker,
+                "client-a",
+                SessionOptions {
+                    profile: Some(lease),
+                    ..Default::default()
+                },
+                "session=signed-in",
+            )
+            .map_err(boxed)?;
+        let plan = broker
+            .plan_switch(
+                "client-a",
+                &first,
+                SessionMode::Visible,
+                &crate::browser_remote::Caller::Local,
+            )
+            .map_err(boxed)?;
+        assert_eq!(plan.profile.as_deref(), Some("work"));
+        // Held by the old session until it ends.
+        assert!(store.acquire("work").is_err());
+        let ended = broker.end_for_switch("client-a", &plan).map_err(boxed)?;
+        assert_eq!(ended.persistent_profile.as_deref(), Some("work"));
+        assert!(!ended.profile_quarantined);
+        assert_eq!(
+            std::fs::read(data.join("cookies.txt"))?,
+            b"session=signed-in"
+        );
+        let lease = store.acquire("work").map_err(boxed)?;
+        assert_eq!(lease.data_dir, data, "the same profile, so its cookies");
+        let next = scene
+            .create_in(
+                &mut broker,
+                "client-a",
+                SessionOptions {
+                    mode: SessionMode::Visible,
+                    profile: Some(lease),
+                    continued_from: Some(plan.from.clone()),
+                    ..Default::default()
+                },
+                "session=signed-in",
+            )
+            .map_err(boxed)?;
+        let status = broker.status("client-a", &next).map_err(boxed)?;
+        assert_eq!(status["profile"], "work");
+        assert_eq!(status["mode"], "visible");
+        Ok(())
+    }
+
+    /// SG-000135 SH-2: a Full Access lease names one session id, so the
+    /// lease of the session a task leaves never covers the session it moves
+    /// to; the owner grants the new session anew.
+    #[test]
+    fn sh2_a_full_access_lease_is_not_carried_to_the_new_session() {
+        use orcel_policy::browser_lease::{
+            check_browser_lease, client_ref, BrowserFamily, BrowserLease, BrowserLeaseContext,
+        };
+        const NOW: u64 = 1_800_000_000_000;
+        let client = client_ref("client-a");
+        let old = format!("bs-{INSTANCE}-1-0001020304050607");
+        let new = format!("bs-{INSTANCE}-2-0001020304050607");
+        let lease = BrowserLease {
+            lease_id: format!("al-{}", "0".repeat(32)),
+            client_ref: client.clone(),
+            session_id: old.clone(),
+            windows_user_sid: "S-1-5-21-1-2-3-1001".into(),
+            logon_session_id: 42,
+            authority_epoch: 3,
+            revocations_at_issue: 3,
+            origins: vec!["https://fixture.test".into()],
+            families: vec![BrowserFamily::Navigate, BrowserFamily::Click],
+            issued_at_ms: NOW,
+            expires_at_ms: NOW + 60 * 60 * 1_000,
+            task: Some("task".into()),
+            principal_id: client.clone(),
+            requester: "the owner".into(),
+        };
+        let context = |session_id| BrowserLeaseContext {
+            windows_user_sid: "S-1-5-21-1-2-3-1001",
+            logon_session_id: 42,
+            authority_epoch: 3,
+            revocations: 3,
+            session_id,
+            client_ref: &client,
+            task: Some("task"),
+            now_ms: NOW + 1,
+        };
+        assert!(check_browser_lease(&lease, &context(&old)).is_ok());
+        // The same client, task and owner: still not the session it names.
+        assert!(check_browser_lease(&lease, &context(&new)).is_err());
     }
 }

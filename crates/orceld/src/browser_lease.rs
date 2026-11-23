@@ -422,6 +422,9 @@ pub(crate) struct FullAccess {
     /// SG-000135 OB-09: the session belongs to a remote caller, so only a
     /// lease the authority service issued to this client may cover it.
     remote: bool,
+    /// SG-000135 SH-2: while set, no lease covers anything and every action
+    /// asks (a mode switch's reopened pages always ask the owner).
+    held: bool,
 }
 
 fn lease_invalid(reason: &str) -> ProviderError {
@@ -456,7 +459,15 @@ impl FullAccess {
             revocation_floor: 0,
             clock_floor: 0,
             remote: false,
+            held: false,
         }
+    }
+
+    /// SG-000135 SH-2: hold (or release) the lease: while held, every
+    /// decision asks, even when a lease would cover the action. Nothing is
+    /// cached or invalidated by the hold itself.
+    pub(crate) fn hold(&mut self, held: bool) {
+        self.held = held;
     }
 
     /// SG-000135 OB-09: this session belongs to a remote caller. Only a
@@ -593,6 +604,9 @@ impl FullAccess {
     pub(crate) fn decide(&mut self, query: &LeaseQuery<'_>, moment: &LeaseMoment) -> LeaseDecision {
         if let Some(reason) = self.pending.take() {
             return LeaseDecision::Refuse(lease_invalid(&reason));
+        }
+        if self.held {
+            return LeaseDecision::Ask;
         }
         // Without the takeover gate no person's input can be seen: nothing
         // is covered, and a page the gate does not track asks too. Since
