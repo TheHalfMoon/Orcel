@@ -1478,3 +1478,433 @@ fn chain_a_slow_holder_never_holds_the_lock_or_stalls_the_writer() -> TestResult
     let _ = std::fs::remove_dir_all(dir);
     Ok(())
 }
+
+/// Answers `held` as told, and never anchors.
+#[derive(Default)]
+struct Holding(std::sync::Mutex<Option<crate::HeldState>>);
+
+impl Holding {
+    fn now(&self, held: Option<crate::HeldState>) {
+        *self.0.lock().expect("held") = held;
+    }
+}
+
+impl Anchorer for Holding {
+    fn anchor(
+        &self,
+        _anchor: &AnchorRef,
+        _link: Option<&ChainLink>,
+        _reset: Option<&str>,
+    ) -> AnchorOutcome {
+        AnchorOutcome::Unanchored {
+            reason: "the holder is busy".to_owned(),
+        }
+    }
+
+    fn held(&self, _log: &str) -> Option<crate::HeldState> {
+        self.0.lock().expect("held").clone()
+    }
+}
+
+/// A holder whose anchor at seq 1 of `file_id` is another record's.
+fn conflicting(file_id: &str) -> Option<crate::HeldState> {
+    Some(crate::HeldState {
+        anchor: Some(AnchorRef {
+            log: ORCELD_LOG.to_owned(),
+            file_id: file_id.to_owned(),
+            seq: 1,
+            digest: "0".repeat(64),
+        }),
+        reset: None,
+    })
+}
+
+/// A holder in the reset state.
+fn resetting(digest: &str) -> Option<crate::HeldState> {
+    Some(crate::HeldState {
+        anchor: None,
+        reset: Some(digest.to_owned()),
+    })
+}
+
+fn held_by(
+    path: &Path,
+    held: Option<crate::HeldState>,
+) -> Result<(ChainWriter, Arc<Holding>), String> {
+    let writer = ChainWriter::open(path, ORCELD_LOG).map_err(|e| e.to_string())?;
+    let holder = Arc::new(Holding::default());
+    holder.now(held);
+    writer.set_anchorer(Arc::clone(&holder) as Arc<dyn Anchorer>);
+    Ok((writer, holder))
+}
+
+/// Ends the file in a torn line whose first copy cannot be kept: the first
+/// sync reads every record and then fails.
+fn tear_and_block_the_tail(path: &Path, forced: &Collisions) -> TestResult {
+    let mut bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    bytes.extend_from_slice(b"{\"torn");
+    std::fs::write(path, bytes).map_err(|e| e.to_string())?;
+    let taken = path.with_file_name(aside("", 1_700_000_000_000, "same"));
+    std::fs::write(taken, b"kept").map_err(|e| e.to_string())?;
+    forced.tokens(&vec!["same"; ASIDE_ATTEMPTS]);
+    Ok(())
+}
+
+/// Adds a line that is no record to the file.
+fn add_garbage(path: &Path) -> TestResult {
+    let mut now = lines(path)?;
+    now.push("garbage".to_owned());
+    rewrite(path, &now)
+}
+
+/// `writer` refuses every append with an error that says `why`, and leaves
+/// the file as it is.
+fn refuses(writer: &ChainWriter, path: &Path, why: &str) -> TestResult {
+    let before = std::fs::read(path).ok();
+    for n in 0..3 {
+        let attempt = writer.append(draft(n));
+        if !matches!(&attempt, Err(error) if error.to_string().contains(why)) {
+            return Err(format!("try {n}, {why}: {attempt:?}"));
+        }
+        assert_eq!(std::fs::read(path).ok(), before, "try {n}, {why}");
+    }
+    Ok(())
+}
+
+fn reset_file(path: &Path, digest: &str) -> Result<String, String> {
+    crate::open_after_reset(path, ORCELD_LOG, json!({"event_digest": digest}))
+        .map(|opened| opened.file_id)
+        .map_err(|e| e.to_string())
+}
+
+/// A first sync that read the records and then failed has not checked the
+/// file against the held anchor: the next append still does.
+#[test]
+fn chain_a_failed_first_sync_does_not_skip_the_held_anchor() -> TestResult {
+    let dir = sandbox("held-recheck")?;
+    let path = dir.join("audit-chain.jsonl");
+    let forced = Collisions::at(1_700_000_000_000);
+    write(&path, 3)?;
+    let (writer, _) = held_by(&path, conflicting(&events(&path)?[0].digest))?;
+    tear_and_block_the_tail(&path, &forced)?;
+    assert!(matches!(writer.append(draft(50)), Err(ChainError::Io(_))));
+    assert_eq!(forced.tokens_left(), 0, "the sync failed at the torn tail");
+    for n in 51..53 {
+        let error = writer.append(draft(n)).err().ok_or("a held conflict")?;
+        assert!(
+            matches!(&error, ChainError::Broken { reason, .. } if reason.contains("anchor holder")),
+            "{error}"
+        );
+    }
+    let kinds: Vec<_> = events(&path)?.into_iter().map(|e| e.kind).collect();
+    assert_eq!(kinds.len(), 5, "an opening, three, the recorded cut");
+    assert_eq!(kinds[4], AuditEventKind::Rotation);
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// Nor does it skip the rule that a reset file's opening record is anchored
+/// before anything else is appended.
+#[test]
+fn chain_a_failed_first_sync_does_not_skip_the_opening_anchor() -> TestResult {
+    let dir = sandbox("opening-recheck")?;
+    let path = dir.join("audit-chain.jsonl");
+    let forced = Collisions::at(1_700_000_000_000);
+    let digest = "e".repeat(64);
+    reset_file(&path, &digest)?;
+    let (writer, _) = held_by(&path, resetting(&digest))?;
+    tear_and_block_the_tail(&path, &forced)?;
+    assert!(writer.append(draft(50)).is_err());
+    assert_eq!(forced.tokens_left(), 0, "the sync failed at the torn tail");
+    refuses_after_cut(&writer, &path)?;
+    assert_eq!(events(&path)?.len(), 2, "the opening and the recorded cut");
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+fn refuses_after_cut(writer: &ChainWriter, path: &Path) -> TestResult {
+    let error = writer.append(draft(51)).err().ok_or("not anchored yet")?;
+    assert!(
+        error.to_string().contains("must be anchored first"),
+        "{error}"
+    );
+    refuses(writer, path, "must be anchored first")
+}
+
+/// However many syncs fail, and at whichever record, and also when an opening
+/// was anchored in the part that a failed sync read.
+#[test]
+fn chain_the_held_check_stays_owed_until_it_is_made() -> TestResult {
+    let dir = sandbox("held-owed")?;
+    let path = dir.join("audit-chain.jsonl");
+    write(&path, 5)?;
+    let whole = lines(&path)?;
+    let (writer, holder) = held_by(&path, conflicting(&events(&path)?[0].digest))?;
+    for broken in [3, 4] {
+        let mut now = whole.clone();
+        now[broken] = "garbage".to_owned();
+        rewrite(&path, &now)?;
+        refuses(&writer, &path, "not an audit event")?;
+    }
+    rewrite(&path, &whole)?;
+    refuses(&writer, &path, "not the one the anchor holder holds")?;
+    // The right record, which only a failed sync read, passes the check.
+    let (writer, holder_2) = held_by(&path, None)?;
+    let mut held = conflicting(&events(&path)?[0].digest);
+    if let Some(anchor) = held.as_mut().and_then(|held| held.anchor.as_mut()) {
+        anchor.digest.clone_from(&events(&path)?[1].digest);
+    }
+    holder_2.now(held);
+    add_garbage(&path)?;
+    refuses(&writer, &path, "not an audit event")?;
+    rewrite(&path, &whole)?;
+    writer.append(draft(9)).map_err(|e| e.to_string())?;
+    // And is not made again.
+    holder_2.now(conflicting(&events(&path)?[0].digest));
+    writer.append(draft(10)).map_err(|e| e.to_string())?;
+    drop(holder);
+    let _ = std::fs::remove_dir_all(dir);
+
+    let dir = sandbox("opening-owed")?;
+    let path = dir.join("audit-chain.jsonl");
+    let digest = "e".repeat(64);
+    reset_file(&path, &digest)?;
+    let first = ChainWriter::open(&path, ORCELD_LOG).map_err(|e| e.to_string())?;
+    first.set_anchorer(Arc::new(ResetHolder(digest.clone())));
+    first.append(draft(1)).map_err(|e| e.to_string())?;
+    let whole = lines(&path)?;
+    let (writer, _) = held_by(&path, resetting(&digest))?;
+    add_garbage(&path)?;
+    refuses(&writer, &path, "not an audit event")?;
+    rewrite(&path, &whole)?;
+    writer.append(draft(2)).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// A holder that answered is not done without, whatever happens before the
+/// check is made; one that never answered is.
+#[test]
+fn chain_a_holder_that_answered_is_waited_for() -> TestResult {
+    for how in ["again", "lost view", "followed"] {
+        let dir = sandbox("held-waits")?;
+        let path = dir.join("audit-chain.jsonl");
+        write(&path, 3)?;
+        let whole = lines(&path)?;
+        let file_id = events(&path)?[0].digest.clone();
+        let (writer, holder) = held_by(&path, conflicting(&file_id))?;
+        add_garbage(&path)?;
+        refuses(&writer, &path, "not an audit event")?;
+        holder.now(None);
+        match how {
+            "followed" => {
+                move_aside(&path, ORCELD_LOG).map_err(|e| e.to_string())?;
+            }
+            _ => rewrite(&path, &whole)?,
+        }
+        if how == "lost view" {
+            writer.lose_view();
+        }
+        refuses(&writer, &path, "answered before")?;
+        holder.now(conflicting(&file_id));
+        if how != "followed" {
+            refuses(&writer, &path, "not the one the anchor holder holds")?;
+        } else {
+            // It links past the held record, which is all the holder can say.
+            writer.append(draft(9)).map_err(|e| e.to_string())?;
+        }
+        // One that never answered: as without a holder.
+        let (silent, _) = held_by(&path, None)?;
+        add_garbage(&path)?;
+        let now = lines(&path)?;
+        refuses(&silent, &path, "not an audit event")?;
+        rewrite(&path, &now[..now.len() - 1])?;
+        silent.append(draft(9)).map_err(|e| e.to_string())?;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    Ok(())
+}
+
+/// The check is made of the records the writer read, not of others put in
+/// their place.
+#[test]
+fn chain_the_held_check_is_of_the_records_that_were_read() -> TestResult {
+    let dir = sandbox("held-rewritten")?;
+    let path = dir.join("audit-chain.jsonl");
+    write(&path, 3)?;
+    let whole = lines(&path)?;
+    let (writer, _) = held_by(&path, Some(crate::HeldState::default()))?;
+    add_garbage(&path)?;
+    refuses(&writer, &path, "not an audit event")?;
+    rewrite(&path, &whole[..1])?;
+    let other = ChainWriter::open(&path, ORCELD_LOG).map_err(|e| e.to_string())?;
+    for n in 4..7 {
+        other.append(draft(n)).map_err(|e| e.to_string())?;
+    }
+    let length = |lines: &[String]| lines.iter().map(String::len).sum::<usize>();
+    assert_eq!(length(&lines(&path)?), length(&whole));
+    refuses(&writer, &path, "not the ones this writer read")?;
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// A failed sync forgets no record it read: they are neither cut nor
+/// rewritten unseen.
+#[test]
+fn chain_records_a_failed_sync_read_are_not_cut_or_rewritten() -> TestResult {
+    let dir = sandbox("read-cut")?;
+    let path = dir.join("audit-chain.jsonl");
+    let writer = write(&path, 3)?;
+    let verified = lines(&path)?;
+    write(&path, 2)?;
+    let read = lines(&path)?;
+    add_garbage(&path)?;
+    refuses(&writer, &path, "not an audit event")?;
+    rewrite(&path, &verified)?;
+    refuses(&writer, &path, "records were cut")?;
+    write(&path, 4)?;
+    refuses(&writer, &path, "broken at seq 6")?;
+    rewrite(&path, &read)?;
+    let appended = writer.append(draft(9)).map_err(|e| e.to_string())?;
+    assert_eq!(appended.event.seq, 6);
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// Nor the linked file it followed: the file before it is not put back, also
+/// when that is the reset file the holder holds. Moving the linked file
+/// aside is followed.
+#[test]
+fn chain_a_file_a_failed_sync_followed_is_not_undone() -> TestResult {
+    for reset in [false, true] {
+        let dir = sandbox("followed-undone")?;
+        let path = dir.join("audit-chain.jsonl");
+        let digest = "e".repeat(64);
+        if reset {
+            reset_file(&path, &digest)?;
+        }
+        write(&path, 2)?;
+        let first = lines(&path)?;
+        let file_id = events(&path)?[0].digest.clone();
+        let mut held = conflicting(&file_id);
+        if let Some(anchor) = held.as_mut().and_then(|held| held.anchor.as_mut()) {
+            anchor.seq = 0;
+            anchor.digest.clone_from(&file_id);
+        }
+        let (writer, _) = held_by(&path, held.filter(|_| reset))?;
+        writer.append(draft(1)).map_err(|e| e.to_string())?;
+        let first_grown = lines(&path)?;
+        move_aside(&path, ORCELD_LOG).map_err(|e| e.to_string())?;
+        write(&path, 2)?;
+        add_garbage(&path)?;
+        let linked = lines(&path)?;
+        refuses(&writer, &path, "not an audit event")?;
+        for put_back in [&first, &first_grown] {
+            rewrite(&path, put_back)?;
+            refuses(&writer, &path, "does not link to it")?;
+        }
+        rewrite(&path, &linked)?;
+        refuses(&writer, &path, "not an audit event")?;
+        let moved = move_aside(&path, ORCELD_LOG).map_err(|e| e.to_string())?;
+        if !reset {
+            let appended = writer.append(draft(9)).map_err(|e| e.to_string())?;
+            assert_eq!(appended.at.file_id, moved.file_id);
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    Ok(())
+}
+
+/// Nor the reset file: another one that names the same reset record is not
+/// taken for it.
+#[test]
+fn chain_a_reset_file_a_failed_sync_read_is_not_replaced() -> TestResult {
+    let dir = sandbox("reset-forged")?;
+    let path = dir.join("audit-chain.jsonl");
+    let digest = "e".repeat(64);
+    reset_file(&path, &digest)?;
+    let (writer, _) = held_by(&path, resetting(&digest))?;
+    add_garbage(&path)?;
+    refuses(&writer, &path, "not an audit event")?;
+    let forged = dir.join("forged.jsonl");
+    reset_file(&forged, &digest)?;
+    rewrite(&path, &lines(&forged)?)?;
+    refuses(&writer, &path, "does not link to it")?;
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// A writer that starts over keeps a refusal, and that an opening is not
+/// anchored, for the same file, until the holder answers.
+#[test]
+fn chain_starting_over_keeps_what_the_holder_said() -> TestResult {
+    let dir = sandbox("carried")?;
+    let path = dir.join("audit-chain.jsonl");
+    write(&path, 3)?;
+    let whole = lines(&path)?;
+    let (writer, holder) = held_by(&path, conflicting(&events(&path)?[0].digest))?;
+    refuses(&writer, &path, "not the one the anchor holder holds")?;
+    holder.now(None);
+    for _ in 0..2 {
+        writer.lose_view();
+        refuses(&writer, &path, "not the one the anchor holder holds")?;
+        // Also when nothing of the file could be read in between.
+        rewrite(&path, &["garbage".to_owned()])?;
+        writer.lose_view();
+        assert!(writer.append(draft(1)).is_err());
+        writer.lose_view();
+        rewrite(&path, &whole)?;
+    }
+    refuses(&writer, &path, "not the one the anchor holder holds")?;
+    holder.now(Some(crate::HeldState::default()));
+    writer.append(draft(1)).map_err(|e| e.to_string())?;
+    // Another file is not the one that was refused.
+    holder.now(conflicting(&events(&path)?[0].digest));
+    writer.lose_view();
+    refuses(&writer, &path, "not the one the anchor holder holds")?;
+    holder.now(None);
+    writer.lose_view();
+    std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+    writer.append(draft(1)).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_dir_all(dir);
+
+    let dir = sandbox("carried-opening")?;
+    let path = dir.join("audit-chain.jsonl");
+    let digest = "e".repeat(64);
+    reset_file(&path, &digest)?;
+    let (writer, holder) = held_by(&path, resetting(&digest))?;
+    refuses(&writer, &path, "must be anchored first")?;
+    holder.now(None);
+    for _ in 0..2 {
+        writer.lose_view();
+        refuses(&writer, &path, "must be anchored first")?;
+    }
+    // Another writer had it anchored.
+    let whole = lines(&path)?;
+    let other = ChainWriter::open(&path, ORCELD_LOG).map_err(|e| e.to_string())?;
+    other.set_anchorer(Arc::new(ResetHolder(digest)));
+    other.append(draft(1)).map_err(|e| e.to_string())?;
+    writer.lose_view();
+    writer.append(draft(2)).map_err(|e| e.to_string())?;
+    // Another file has no opening to wait for, also when a failed sync read
+    // part of it first.
+    for fails in [false, true] {
+        rewrite(&path, &whole)?;
+        let (writer, holder) = held_by(&path, resetting(&"e".repeat(64)))?;
+        refuses(&writer, &path, "must be anchored first")?;
+        holder.now(None);
+        writer.lose_view();
+        std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+        if fails {
+            write(&path, 1)?;
+            let other = lines(&path)?;
+            add_garbage(&path)?;
+            refuses(&writer, &path, "not an audit event")?;
+            rewrite(&path, &other)?;
+            writer.lose_view();
+        }
+        writer.append(draft(1)).map_err(|e| e.to_string())?;
+    }
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
