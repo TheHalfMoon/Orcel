@@ -514,8 +514,14 @@ impl<'a> Installer<'a> {
         // Last, and only if the rest went: while part of an interrupted migration's copies remain,
         // the marker is what keeps orceld from starting on them.
         let marker = orcel_platform::stores::MIGRATION_IN_PROGRESS.path(&self.layout.root);
+        // The command holds the lock on this file, so it is never removed (`unix_lock`).
+        let kept_lock = cfg!(unix).then(|| self.layout.lifecycle_lock());
         for path in self.layout.retained_data() {
             if !path.exists() {
+                continue;
+            }
+            if kept_lock.as_ref() == Some(&path) {
+                report.retained.push(path);
                 continue;
             }
             if options.purge_data && path == marker {
@@ -546,13 +552,21 @@ impl<'a> Installer<'a> {
             match fs::remove_dir(&self.layout.root) {
                 Ok(()) => report.purged.push(self.layout.root.clone()),
                 Err(_) => {
-                    // Name what's in the way: it isn't Orcel's, so a purge left it.
-                    if let Ok(entries) = fs::read_dir(&self.layout.root) {
-                        report.residual.extend(
-                            entries.filter_map(|entry| entry.ok().map(|entry| entry.path())),
-                        );
+                    // Name what's in the way: it isn't Orcel's, so a purge left it. The kept
+                    // lock alone is as it should be.
+                    let in_the_way: Option<Vec<PathBuf>> =
+                        fs::read_dir(&self.layout.root).ok().map(|entries| {
+                            entries
+                                .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+                                .filter(|path| !report.retained.contains(path))
+                                .collect()
+                        });
+                    let only_the_lock = !report.retained.is_empty()
+                        && in_the_way.as_ref().is_some_and(Vec::is_empty);
+                    if !only_the_lock {
+                        report.residual.extend(in_the_way.unwrap_or_default());
+                        report.residual.push(self.layout.root.clone());
                     }
-                    report.residual.push(self.layout.root.clone());
                 }
             }
         }
@@ -870,7 +884,14 @@ mod tests {
             .uninstall(&UninstallOptions { purge_data: true })
             .unwrap();
         assert!(report.residual.is_empty(), "{:?}", report.residual);
-        assert!(!root.exists());
+        // All but the lifecycle lock, which is never removed where it is a file.
+        let lock = layout.lifecycle_lock();
+        assert_eq!(report.retained.contains(&lock), cfg!(unix));
+        assert_eq!(lock.exists(), cfg!(unix));
+        assert_eq!(root.exists(), cfg!(unix));
+        if cfg!(unix) {
+            assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+        }
     }
 
     /// A purge removes what's known to be Orcel's. Anything else stays, and is reported.

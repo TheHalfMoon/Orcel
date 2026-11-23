@@ -570,7 +570,15 @@ fn uninstall(args: &mut Args) -> Result<Output, LifecycleError> {
     human.push_str("Orcel uninstalled.\n");
     for (label, paths) in [
         ("Removed", &report.removed),
-        ("Kept (user data)", &report.retained),
+        (
+            if purge_data {
+                // Linux and macOS only; a purge keeps nothing else.
+                "Kept (the empty lock file; delete the folder when no Orcel command runs)"
+            } else {
+                "Kept (user data)"
+            },
+            &report.retained,
+        ),
         ("Purged", &report.purged),
         ("Could not remove", &report.residual),
     ] {
