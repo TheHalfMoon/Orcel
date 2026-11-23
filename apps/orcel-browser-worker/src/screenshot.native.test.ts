@@ -170,20 +170,33 @@ test("#438: a screenshot of a page whose renderer answers nothing fails on time,
     await page.setContent(PAGE);
     await capturePng(page);
     const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+    // The timeout ends only the wait: the navigation itself goes on.
     await assert.rejects(page.goto(url, { timeout: 1_500 }), { name: "TimeoutError" });
+    for (const until = Date.now() + 60_000; waiting.length === 0 && Date.now() < until; ) await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.ok(waiting.length >= 1, "the control: the navigation reached the server and is pending");
     const began = performance.now();
     await assert.rejects(capturePng(page, undefined, 2_000), (error: unknown) => error instanceof ScreenshotError && error.reason === "failed");
     const elapsed = performance.now() - began;
     assert.ok(elapsed >= 1_500 && elapsed < 10_000, `${elapsed} ms`);
-    // The page moves on; the stuck census ends, and nothing of it is left.
+    // The page moves on, so the stuck census ends and lets the page go.
     const loaded = page.waitForURL(url, { timeout: 30_000 });
     for (const response of waiting) response.setHeader("content-type", "text/html").end(PAGE);
     await loaded;
+    // Counts Playwright's mask overlays as they come.
+    await page.evaluate(() => {
+      const seen = window as unknown as { overlays: number };
+      seen.overlays = 0;
+      new MutationObserver((changes) => {
+        for (const change of changes) for (const node of change.addedNodes) if (node.nodeName.toLowerCase() === "x-pw-glass") seen.overlays += 1;
+      }).observe(document, { childList: true, subtree: true });
+    });
     const decoded = decodePng((await capturePng(page)).png);
     assert.deepEqual(decoded.pixel(200, 44), [0, 255, 0], "the ordinary field keeps its colour");
     for (const top of [100, 180, 260, 340]) assert.deepEqual(decoded.pixel(200, top + 24), [0, 0, 0], `the secret field at ${top} is masked`);
-    // Unmasked again in the page itself.
-    assert.equal(await page.evaluate(() => document.querySelectorAll("x-pw-glass").length), 0);
+    // That capture put its masks in the page and took them out again.
+    const overlays = await page.evaluate(() => [(window as unknown as { overlays: number }).overlays, document.querySelectorAll("x-pw-glass").length]);
+    assert.ok((overlays[0] as number) >= 1, "the control: the masks were in the page");
+    assert.equal(overlays[1], 0, "no mask is left in the page");
   } finally {
     await browser.close();
     server.closeAllConnections();

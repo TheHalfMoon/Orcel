@@ -268,8 +268,19 @@ export async function runExclusive<T>(key: object, task: () => Promise<T>): Prom
 
 /// Run `task` alone on `key`, answering within `budget`. The answer is on time
 /// even when the task is stuck, but the key stays held until the task itself
-/// ends: nothing else captures the page while a late capture may still be
-/// running or removing its masks. A task whose turn comes too late does nothing.
+/// ends: no other screenshot of the page starts before that. A task whose turn
+/// comes too late does nothing.
+///
+/// What this does not cover:
+/// - Other work. Once the caller has its failure the worker takes the host's
+///   next frame, so an action on the page can run while the stuck step is still
+///   pending. That step is a read (a count, a box, the layout metrics), or a
+///   capture that outlived its own timeout, which is set to end before the
+///   budget does. No further step follows it.
+/// - What a failed task leaves running. On its own timeout Playwright removes
+///   its masks and its style without anything waiting for that, and it hides
+///   leftover masks before its next capture. When one frame's census fails,
+///   another frame's reads may go on until they are answered or time out.
 export function runBounded<T>(key: object, budget: ScreenshotBudget, task: () => Promise<T>): Promise<T> {
   return budget.within(
     runExclusive(key, async () => {
@@ -312,6 +323,11 @@ async function placesOf(locator: ShotLocator, budget: ScreenshotBudget): Promise
 }
 export interface ShotFrame {
   locator(selector: string): ShotLocator;
+}
+/// The session a full page's layout metrics are read with.
+export interface MetricsSession {
+  send(method: "Page.getLayoutMetrics"): Promise<unknown>;
+  detach(): Promise<void>;
 }
 export interface ShotPage {
   frames(): ShotFrame[];
@@ -371,4 +387,48 @@ export async function capturePng(
     throw new ScreenshotError("busy");
   }
   return { png, ...checkCapture(png) };
+}
+
+/// The page a screenshot is of, as the worker knows it.
+export interface ShotSubject {
+  page: ShotPage & { url(): string; isClosed(): boolean };
+  /// Whether a document is being replaced.
+  loading(): boolean;
+  /// Whether the page's tab is still the active one.
+  active(): boolean;
+  metrics(): Promise<MetricsSession>;
+}
+
+/// One screenshot of `subject`, from here to the answer within `budget`.
+export async function takeScreenshot(
+  subject: ShotSubject,
+  fullPage: boolean,
+  budget: ScreenshotBudget = new ScreenshotBudget()
+): Promise<{ png: Buffer; width: number; height: number; url: string; truncated: boolean }> {
+  const { page } = subject;
+  if (page.isClosed()) throw new ScreenshotError("failed");
+  if (subject.loading()) throw new ScreenshotError("busy");
+  return runBounded(page, budget, async () => {
+    const before = page.url();
+    let clip: { x: number; y: number; width: number; height: number } | undefined;
+    let truncated = false;
+    if (fullPage) {
+      // The engine's own layout metrics: no page script runs.
+      budget.enter("metrics");
+      let session: MetricsSession | undefined;
+      try {
+        session = await subject.metrics();
+        ({ clip, truncated } = fullPageClip(await session.send("Page.getLayoutMetrics")));
+      } catch (error) {
+        throw budget.failure(errorCode(error));
+      } finally {
+        await session?.detach().catch(() => {});
+      }
+    }
+    const shot = await capturePng(page, clip, budget);
+    // A capture that raced a navigation, or a tab change, is of no one
+    // document.
+    if (subject.loading() || page.isClosed() || page.url() !== before || !subject.active()) throw new ScreenshotError("busy");
+    return { ...shot, url: before, truncated };
+  });
 }

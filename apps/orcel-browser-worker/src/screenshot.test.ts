@@ -23,9 +23,11 @@ import {
   ScreenshotBudget,
   ScreenshotError,
   SECRET_FIELD_SELECTOR,
+  takeScreenshot,
   toBase64Pieces,
   type ShotFrame,
-  type ShotPage
+  type ShotPage,
+  type ShotSubject
 } from "./screenshot.js";
 
 const capturePng = (page: ShotPage, clip?: Parameters<typeof capture>[1]) => capture(page, clip, new ScreenshotBudget(SCREENSHOT_BUDGET_MS, () => {}));
@@ -288,10 +290,6 @@ test("#438: the whole screenshot's budget is above the capture and well under th
   assert.ok(deadline, "WORKER_SCREENSHOT_TIMEOUT");
   assert.ok(SCREENSHOT_BUDGET_MS + 4_000 <= Number(deadline[1]) * 1_000, `${SCREENSHOT_BUDGET_MS} ms vs ${deadline[1]} s`);
   assert.ok(SCREENSHOT_BUDGET_MS >= SCREENSHOT_TIMEOUT_MS + CENSUS_RESERVE_MS);
-  // The worker's session takes it, from before the page's turn to the answer.
-  const entry = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../src/entry.ts"), "utf8");
-  assert.ok(entry.includes("const budget = new ScreenshotBudget();\n        return runBounded(page, budget, async () => {"));
-  assert.ok(entry.includes("await capturePng(page, clip, budget)"));
 });
 
 test("#438: a field whose box never comes fails the screenshot on time, and the page stays held until it ends", async () => {
@@ -415,6 +413,152 @@ test("#438: a screenshot whose turn comes after its budget does nothing, and let
   await turns();
   assert.equal(ran, false);
   assert.equal(await runBounded(key, new ScreenshotBudget(5_000, () => {}), async () => "free"), "free");
+});
+
+/// Let everything that can run now run, with timers mocked.
+const settle = async () => {
+  for (let n = 0; n < 3; n++) await new Promise((resolve) => setImmediate(resolve));
+};
+
+test("#438: the answer comes at the budget's end, to the millisecond", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const budget = new ScreenshotBudget(1_000, () => {}, () => 0);
+  let outcome = "pending";
+  budget.within(new Promise(() => {})).catch((error: ScreenshotError) => (outcome = error.reason));
+  t.mock.timers.tick(999);
+  await settle();
+  assert.equal(outcome, "pending");
+  t.mock.timers.tick(1);
+  await settle();
+  assert.equal(outcome, "failed");
+  // From then on the budget is over whatever a clock says (this one stands still).
+  assert.throws(() => budget.remaining(), ScreenshotError);
+  assert.throws(() => budget.enter("capture"), ScreenshotError);
+});
+
+test("#438: a screenshot that ended in time leaves no timer behind to report it failed", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const reports: string[] = [];
+  const budget = new ScreenshotBudget(1_000, (stage) => reports.push(stage), () => 0);
+  assert.equal(await budget.within(Promise.resolve("picture")), "picture");
+  t.mock.timers.tick(5_000);
+  await settle();
+  assert.deepEqual(reports, []);
+  assert.equal(budget.remaining(), 1_000);
+});
+
+/// The worker's active tab, as `takeScreenshot` sees it; every part can be replaced.
+function subject(parts: { [K in keyof ShotSubject]?: ShotSubject[K] } = {}, onPage: Partial<ShotSubject["page"]> = {}): ShotSubject {
+  return {
+    page: { frames: () => [still], screenshot: async () => png(10, 10), url: () => "https://example.test/", isClosed: () => false, ...onPage },
+    loading: () => false,
+    active: () => true,
+    metrics: () => Promise.reject(new Error("not asked for")),
+    ...parts
+  };
+}
+
+/// What one screenshot gives, and what it reported.
+async function taken(of: ShotSubject, fullPage = false): Promise<[string, ...string[]]> {
+  const reports: string[] = [];
+  const budget = new ScreenshotBudget(5_000, (stage, code) => reports.push(`${stage}: ${code}`));
+  const outcome = await takeScreenshot(of, fullPage, budget).then(
+    (shot) => `picture ${shot.url} ${shot.truncated}`,
+    (error: unknown) => {
+      assert.ok(error instanceof ScreenshotError, String(error));
+      return error.reason as string;
+    }
+  );
+  return [outcome, ...reports];
+}
+
+test("#438: a full page's metrics are a step of the screenshot: staged, typed, and their session let go of", async () => {
+  const seen: string[] = [];
+  const asking = (answer: () => Promise<unknown>) =>
+    subject(
+      {
+        metrics: async () => ({
+          send: (method) => (seen.push(method), answer()),
+          detach: async () => void seen.push("detach")
+        })
+      },
+      {
+        screenshot: async (options) => {
+          seen.push(`clip ${JSON.stringify(options.clip)}`);
+          return png(10, 10);
+        }
+      }
+    );
+  assert.deepEqual(await taken(asking(async () => ({ cssContentSize: { width: 800, height: 9_000 } })), true), ["picture https://example.test/ true"]);
+  assert.deepEqual(seen.splice(0), ["Page.getLayoutMetrics", "detach", `clip {"x":0,"y":0,"width":800,"height":${MAX_SCREENSHOT_HEIGHT}}`]);
+  // The command fails, or the session never opens: typed, one line, no capture.
+  assert.deepEqual(await taken(asking(() => Promise.reject(new Error("https://example.test/?q=secret"))), true), ["failed", "metrics: Error"]);
+  assert.deepEqual(seen.splice(0), ["Page.getLayoutMetrics", "detach"]);
+  assert.deepEqual(await taken(subject({ metrics: () => Promise.reject(new Error("closed")) }), true), ["failed", "metrics: Error"]);
+  // A viewport screenshot asks for none.
+  assert.deepEqual(await taken(asking(async () => ({}))), ["picture https://example.test/ false"]);
+  assert.deepEqual(seen.splice(0), ["clip undefined"]);
+});
+
+test("#438: the worker's screenshot takes the whole budget by default, its metrics included", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const write = t.mock.method(process.stderr, "write", () => true);
+  let outcome = "pending";
+  takeScreenshot(subject({ metrics: () => new Promise(() => {}) }), true).catch((error: ScreenshotError) => (outcome = error.reason));
+  t.mock.timers.tick(SCREENSHOT_BUDGET_MS - 100);
+  await settle();
+  assert.equal(outcome, "pending");
+  t.mock.timers.tick(200);
+  await settle();
+  write.mock.restore();
+  assert.equal(outcome, "failed");
+  assert.deepEqual(
+    write.mock.calls.map((call) => call.arguments[0] as unknown).filter((text) => String(text).startsWith("orcel-browser-worker:")),
+    ["orcel-browser-worker: screenshot failed at metrics: budget\n"]
+  );
+});
+
+test("#438: what the metrics took is gone from the capture's time", async () => {
+  let now = 0;
+  const asked: unknown[] = [];
+  const of = subject(
+    {
+      metrics: async () => {
+        now += 8_000;
+        return { send: async () => ({}), detach: async () => {} };
+      }
+    },
+    { screenshot: async (options) => (asked.push(options.timeout), png(10, 10)) }
+  );
+  await takeScreenshot(of, true, new ScreenshotBudget(SCREENSHOT_BUDGET_MS, () => {}, () => now));
+  assert.deepEqual(asked, [6_000]);
+});
+
+test("OB-03: a screenshot that raced a navigation, a close or a tab change is refused", async () => {
+  assert.deepEqual(await taken(subject()), ["picture https://example.test/ false"]);
+  // Before anything is captured.
+  let captures = 0;
+  const counting = { screenshot: async () => ((captures += 1), png(10, 10)) };
+  assert.deepEqual(await taken(subject({}, { ...counting, isClosed: () => true })), ["failed"]);
+  assert.deepEqual(await taken(subject({ loading: () => true }, counting)), ["busy"]);
+  assert.equal(captures, 0);
+  // Each true only once the capture has run.
+  const racing = (what: "loading" | "closed" | "url" | "tab") => {
+    let captured = false;
+    const now = (kind: string) => captured && what === kind;
+    return subject(
+      { loading: () => now("loading"), active: () => !now("tab") },
+      {
+        isClosed: () => now("closed"),
+        url: () => (now("url") ? "https://example.test/other" : "https://example.test/"),
+        screenshot: async () => {
+          captured = true;
+          return png(10, 10);
+        }
+      }
+    );
+  };
+  for (const what of ["loading", "closed", "url", "tab"] as const) assert.deepEqual(await taken(racing(what)), ["busy"], what);
 });
 
 test("#438: a slow census is taken from the capture's time, which never becomes 0 (no timeout)", async () => {

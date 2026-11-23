@@ -121,22 +121,25 @@ export async function probeBrowser(attach: () => Promise<ProbeSession>, ms = 2_0
   const deadline = new Promise<"no_answer">((resolve) => {
     timer = setTimeout(() => resolve("no_answer"), ms);
   });
-  const attaching = attach();
   const mark = (answer: string, history: string, version: string) => [
     `browser_attach_${answer}`,
     `browser_history_${history}`,
     `browser_version_${version}`
   ];
+  let attaching: Promise<ProbeSession> | undefined;
   try {
-    const attached = await Promise.race([settled(attaching), deadline]);
+    // Async, so that throwing at once is an "error" too.
+    const starting = (attaching = (async () => attach())());
+    const attached = await Promise.race([settled(starting), deadline]);
     if (attached !== "answered") return mark(attached, "not_sent", "not_sent");
-    const session = await attaching;
-    const [history, version] = await Promise.all(PROBE_METHODS.map((method) => Promise.race([settled(session.send(method)), deadline])));
+    const session = await starting;
+    const ask = (method: (typeof PROBE_METHODS)[number]) => Promise.race([settled((async () => session.send(method))()), deadline]);
+    const [history, version] = await Promise.all(PROBE_METHODS.map(ask));
     return mark(attached, history!, version!);
   } finally {
     clearTimeout(timer);
     // Never waited for: detaching can wait behind a stalled page. It also lets
     // go of a session that attaches late.
-    void attaching.then((session) => session.detach()).catch(() => {});
+    void attaching?.then((session) => session.detach()).catch(() => {});
   }
 }

@@ -133,3 +133,36 @@ test("#584: one deadline for the whole probe; a session that attaches late is le
   const stuck = { ...session(() => Promise.resolve({})), detach: never };
   assert.equal((await probeBrowser(async () => stuck, 1_000)).length, 3);
 });
+
+test("#584: every step of the probe ends at the one deadline", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const settle = async () => {
+    for (let n = 0; n < 3; n++) await new Promise((resolve) => setImmediate(resolve));
+  };
+  const stuck = session(never);
+  let attach: () => void = () => {};
+  const attaching = new Promise<typeof stuck>((resolve) => (attach = () => resolve(stuck)));
+  let marks: string[] = [];
+  void probeBrowser(() => attaching, 2_000).then((found) => (marks = found));
+  // Attaching takes most of it; the reads get the rest, not 2 s of their own.
+  t.mock.timers.tick(1_500);
+  attach();
+  await settle();
+  assert.deepEqual(stuck.seen, ["Page.getNavigationHistory", "Browser.getVersion"]);
+  t.mock.timers.tick(499);
+  await settle();
+  assert.deepEqual(marks, []);
+  t.mock.timers.tick(1);
+  await settle();
+  assert.deepEqual(marks, ["browser_attach_answered", "browser_history_no_answer", "browser_version_no_answer"]);
+});
+
+test("#584: attaching that throws at once is an error, and the probe's timer is cleared", async (t) => {
+  const cleared = t.mock.method(globalThis, "clearTimeout");
+  const throwing = (): never => {
+    throw new Error("closed");
+  };
+  assert.deepEqual(await probeBrowser(throwing, 50), ["browser_attach_error", "browser_history_not_sent", "browser_version_not_sent"]);
+  assert.equal(cleared.mock.callCount(), 1);
+  assert.deepEqual(await probeBrowser(async () => ({ send: throwing, detach: async () => {} }), 50), ["browser_attach_answered", "browser_history_error", "browser_version_error"]);
+});

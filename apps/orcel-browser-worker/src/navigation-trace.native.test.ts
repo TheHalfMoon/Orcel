@@ -37,11 +37,13 @@ test("#584: a healthy engine answers the probe while a navigation is pending, an
     const page = await context.newPage();
     await attachRedirectGuard(context, page, { decide: async () => true });
     assert.equal(await page.evaluate("1"), 1, "the control: the renderer answers before the navigation");
+    // The timeout ends only the wait: the navigation itself goes on.
     await assert.rejects(page.goto(url, { timeout: 2_000 }), { name: "TimeoutError" });
+    for (const until = Date.now() + 60_000; requests === 0 && Date.now() < until; ) await new Promise((resolve) => setTimeout(resolve, 100));
     assert.ok(requests >= 1, "the control: the navigation reached the server and is pending");
     const answered = ["browser_attach_answered", "browser_history_answered", "browser_version_answered"];
     assert.deepEqual(await probeBrowser(() => context.newCDPSession(page), 10_000), answered);
-    // The same again: the first probe left nothing behind that stops it.
+    // A second probe of the same pending navigation is answered too.
     assert.deepEqual(await probeBrowser(() => context.newCDPSession(page), 10_000), answered);
     // Shown, not required: what the probe used to ask (#584). A later engine
     // may answer it, and that would be no fault of the worker's.

@@ -15,7 +15,8 @@ import { encodeFrame, FETCH_TEXT_MEDIA, FrameDecoder, isVisibleArgv, MAX_EXTRACT
 import { CONTENT_STYLES, EXTRACT_DEFAULTS, extractMarkdown } from "./extract/index.js";
 import type { LayoutSnapshot } from "./extract/model.js";
 import { toPieces } from "./extract/pieces.js";
-import { netErrorCode, probeBrowser, traceLine, traceMark, traceStart, traceWatchEventLoop } from "./navigation-trace.js";
+import { gotoFailure } from "./goto-failure.js";
+import { traceMark, traceStart, traceWatchEventLoop } from "./navigation-trace.js";
 import { watchNavigation } from "./refusals.js";
 import { installRoutes } from "./routes.js";
 import { boundSnapshot } from "./snapshot.js";
@@ -34,7 +35,7 @@ import { waitForText } from "./actions/wait.js";
 import { uploadFile } from "./actions/upload.js";
 import { DialogLog } from "./actions/dialogs.js";
 import { NavigationError, TabError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy, type TabsState } from "./worker.js";
-import { capturePng, errorCode, fullPageClip, runBounded, ScreenshotBudget, ScreenshotError } from "./screenshot.js";
+import { ScreenshotError, takeScreenshot } from "./screenshot.js";
 import { denyDesktopPermissions, interceptFileChoosers } from "./desktop-guard.js";
 import { admitPopup, MAX_PENDING_POPUPS, MAX_TABS, NavigationWatch, TabRegistry } from "./tabs.js";
 import { captureOutline, OUTLINE_BUDGET_MS, readOnlyCdp, type BoundedOutline } from "./outline/capture.js";
@@ -232,28 +233,13 @@ const playwrightLauncher: Launcher = {
       } catch (error) {
         stopWatching();
         watch.stop();
-        const message = String((error as Error).message);
-        // The engine reports its own cancellations with the same error as
-        // Orcel's refusals: "denied" only for a refusal Orcel made. Anything
-        // else falls through to "failed" below (logged with its error code).
-        if (message.includes("ERR_BLOCKED_BY_CLIENT")) {
-          if (watch.refusedByOrcel(url)) throw new NavigationError("denied");
-          traceMark("blocked_not_by_orcel");
-        }
-        if ((error as Error).name === "TimeoutError") {
-          // #438: where it stalled, for the host's failure diagnostics. #584: and whether
-          // the engine's browser process answers. The renderer is not asked: while a
-          // navigation is pending it answers nothing even when healthy.
-          for (const mark of await probeBrowser(() => context.newCDPSession(page))) traceMark(mark);
-          traceMark(`page_closed_${page.isClosed()}`);
-          process.stderr.write(`orcel-browser-worker: ${traceLine()}
-`);
-          throw new NavigationError("timeout");
-        }
-        // #584: why the engine gave up, which "failed" alone doesn't say.
-        process.stderr.write(`orcel-browser-worker: goto failed ${netErrorCode(message)} ${traceLine()}
-`);
-        throw new NavigationError("failed");
+        throw new NavigationError(
+          await gotoFailure(error, {
+            refusedByOrcel: () => watch.refusedByOrcel(url),
+            closed: () => page.isClosed(),
+            attach: () => context.newCDPSession(page)
+          })
+        );
       }
     };
     return {
@@ -548,35 +534,16 @@ const playwrightLauncher: Launcher = {
         // learns the tabs.
         if (active === null || tab === null) throw new ScreenshotError("busy");
         const page = active;
-        if (page.isClosed()) throw new ScreenshotError("failed");
-        const loading = () => watches.get(page)?.loading === true;
-        if (loading()) throw new ScreenshotError("busy");
-        // From here to the answer is one budget, under the host's deadline.
-        const budget = new ScreenshotBudget();
-        return runBounded(page, budget, async () => {
-          const before = page.url();
-          let clip: { x: number; y: number; width: number; height: number } | undefined;
-          let truncated = false;
-          if (fullPage) {
-            // The engine's own layout metrics: no page script runs.
-            budget.enter("metrics");
-            const session = await context.newCDPSession(page);
-            let metrics: unknown;
-            try {
-              metrics = await session.send("Page.getLayoutMetrics");
-            } catch (error) {
-              throw budget.failure(errorCode(error));
-            } finally {
-              await session.detach().catch(() => {});
-            }
-            ({ clip, truncated } = fullPageClip(metrics));
-          }
-          const shot = await capturePng(page, clip, budget);
-          // A capture that raced a navigation, or a tab change, is of no one
-          // document.
-          if (loading() || page.isClosed() || page.url() !== before || tabs.active !== tab) throw new ScreenshotError("busy");
-          return { ...shot, tab, url: before, truncated };
-        });
+        const shot = await takeScreenshot(
+          {
+            page,
+            loading: () => watches.get(page)?.loading === true,
+            active: () => tabs.active === tab,
+            metrics: () => context.newCDPSession(page)
+          },
+          fullPage
+        );
+        return { ...shot, tab };
       },
       async tabNew() {
         if (tabs.size >= MAX_TABS) throw new TabError("cap");
