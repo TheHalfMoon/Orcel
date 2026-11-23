@@ -1,9 +1,5 @@
-//! Review of #847: what Git itself follows out of a repository while its
-//! top level, Git folder and common folder still report the repository: a
-//! reference backend at another place (`extensions.refStorage`), a Git
-//! folder that is partly a link, and a working tree a branch switch
-//! re-applies a sparse checkout to (through a junction). Real Git, real
-//! repositories.
+//! Review of #847: Git stays in the repository it reports, and no operation
+//! the provider offers writes the working tree. Real Git, real repositories.
 
 use orcel_contracts::FailureCode;
 use orcel_provider_git::GitProvider;

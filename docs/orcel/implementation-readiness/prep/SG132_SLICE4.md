@@ -277,28 +277,39 @@ show it.
   60 s limit fails closed, as do the entry and depth caps. Residuals: very large working trees outside ignored
   folders are refused rather than walked. A same-user process could add a nested `.git` file between the walk and Git's own walk
   (the same TOCTOU class as the configuration gate).
-- **What Git follows out of a repository (review of #847; fixed in the provider, so for Safe mode too).** Four ways
-  Git itself left the repository while `rev-parse` still reported it, each reproduced with real Git before the fix:
-  (1) `extensions.refStorage = files://<another>/.git` moved HEAD, the refs and the reflogs to another repository,
-  for reads, commits and branches. The gate now accepts only `noop`, `worktreeConfig`, `preciousObjects` and
-  `relativeWorktrees` (booleans), `objectFormat` (`sha1`, `sha256`), `refStorage` (`files` exactly, so reftable
-  repositories are refused) and `partialClone` (a plain remote name), in `config` and `config.worktree`, whatever
-  their case; any other extension or value refuses the repository (`CAPABILITY_DENIED`).
-  (2) `git_branch_create` used `switch -c`, which re-applies a sparse checkout and wrote and deleted working tree
-  files, through a junction too. A branch is now made with `update-ref` (only if it does not exist) and
-  `symbolic-ref HEAD`; nothing is checked out. `add`, `restore --staged` and `commit` write no working tree file
-  (tested on the same repository). (3) A part of the Git folder that is a link or junction (`HEAD`, `index`, `refs`,
-  `logs`, `objects` and what is under the first two, and the like) sent refs, reflogs or objects elsewhere; refused.
-  (4) Git for Windows follows a junction as a folder: a diff showed a file outside the repository behind a tracked
-  folder, `status` listed names outside behind an untracked one, and `add` staged through both. A tracked folder that
-  is a link or junction, a junction that is not ignored, and a path to stage through any link are refused
-  (`PATH_ESCAPE`); an index over the output bound in a working tree with links is refused. Tests with real Git:
-  `orcel-provider-git/tests/review847_confinement.rs`. Full Control's `write_text` and `mkdir` refuse a Git directory
-  by its content (`HEAD` with `objects` and `refs`, or with `commondir`, or `config` beside two of the first three),
-  not only under the name `.git`, so a separate Git directory or a bare repository cannot be reconfigured:
-  `fc_worker_filesystem_never_writes_into_a_git_directory_by_content`. Left: a hard link to a file Git writes in place
-  (a reflog, `COMMIT_EDITMSG`), and a same-user process swapping a folder between the check and Git's use of it. A
-  branch creation that ends between its two commands leaves a branch HEAD does not name (reconciled as unknown).
+- **What the provider requires of a repository (reviews of #847 and #849; Safe mode too).** Reading a repository's
+  files and refusing what Git would follow elsewhere is **defence in depth, NOT a boundary**: Git has more ways to
+  leave a repository than a parser can list, and a later Git adds more. The boundary is to be OS confinement of the
+  Git process, which is being designed. Until then, before Git runs the provider requires:
+  - **Extensions:** `noop`, `worktreeConfig`, `preciousObjects`, `relativeWorktrees` (booleans), `objectFormat`
+    (`sha1`, `sha256`), `refStorage` (`files` exactly) and `partialClone` (a plain remote name), in `config` and
+    `config.worktree`, whatever their case. Any other, or another value, refuses the repository.
+  - **Further keys refused:** `rerere.*`, `bundle.*`, `fetch.bundleURI`, `fetch.bundleCreationToken`,
+    `core.unsetenvvars`, `core.virtualFilesystem`, and a `file:` URL that is not a plain local `file:///` path.
+  - **Pointers:** a `.git` file and a `commondir` only in Git's own form (the exact prefix, the path, line ends at the
+    end), no surrounding or non-ASCII whitespace, and on Windows no path relative to a drive or its root.
+  - **The same repository:** a `.git` Git would not accept refuses instead of looking further up, and the top level,
+    Git directory and common directory Git reports must be the ones the gate read.
+  - **Git folder:** its refs, logs, objects (with `objects/info` and `objects/pack`) and the files Git writes there are
+    not links or junctions; no alternate store; no `MERGE_RR` or `rr-cache` (rerere and the untracked cache are also
+    turned off on every command).
+  - **Index:** every name, over the whole index (256 MiB of listing; larger is refused), is a plain UTF-8 path: not
+    absolute, no empty, `.`, `..` or `.git` component. On Windows also no backslash, colon, trailing dot or space,
+    control character or device name; elsewhere those are ordinary names. On Windows no folder above an entry is a
+    link or junction.
+  - **Working tree:** on Windows no junction that is not ignored; a path to stage is link-free. The nested walk goes on
+    where Git does: below a nested `.git` Git does not accept, and below one the index has files in.
+  - **Branches:** made with `update-ref` (only if new, also not in another case or as a folder of another) and
+    `symbolic-ref HEAD`, without a checkout. Push and fetch evidence is written to the ref itself.
+  With these, no operation the provider offers is known to write a working tree file; the tests run `add`, `restore
+  --staged`, `commit`, branch creation and the reads over a sparse checkout. Full Control's `write_text` and `mkdir`
+  also refuse a Git directory by its content (`HEAD` with `objects` and `refs`, or with `commondir`, or `config`
+  beside two of the first three). Tests: `review847_confinement.rs`, `repository_shape.rs`,
+  `fc_worker_filesystem_never_writes_into_a_git_directory_by_content`. Repositories refused now and not before:
+  reftable or another extension, rerere in use, a junction that is not ignored, alternates by any name. Left: a hard
+  link to a file Git writes in place, and a same-user process changing a file or folder between the check and Git's
+  use of it. A branch creation that ends between its two commands leaves a branch HEAD does not name (reconciled as
+  unknown).
 - **Approval binding.** The per-action approval binds the request (paths, message, branch), not the file contents
   staged at that moment (the Safe-mode git mutation binds that material); the worker's own state check still
   refuses a repository that changed between its read and its write.

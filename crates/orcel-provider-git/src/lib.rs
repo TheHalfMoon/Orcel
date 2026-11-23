@@ -1,4 +1,5 @@
 pub mod fetch;
+mod index;
 mod mutation;
 mod nested;
 pub mod push;
@@ -187,14 +188,9 @@ impl GitProvider {
             ));
         }
 
+        let checked = repo_config::check_repository(&self.workspace_root, &candidate)?;
         let output = self.run_git_raw(&candidate, &["rev-parse", "--show-toplevel"])?;
-        let reported = output.stdout.trim();
-        if reported.is_empty() {
-            return Err(GitProviderError::new(
-                FailureCode::InvalidRequest,
-                "Git did not report a repository root",
-            ));
-        }
+        let [reported] = reported_folders(&output.stdout)?;
         let repo = std::fs::canonicalize(reported).map_err(|error| {
             GitProviderError::new(
                 FailureCode::InvalidRequest,
@@ -214,40 +210,54 @@ impl GitProvider {
                 "--git-common-dir",
             ],
         )?;
-        let mut seen = 0;
-        let mut common = None;
-        for dir in dirs.stdout.lines().filter(|line| !line.trim().is_empty()) {
-            let dir = std::fs::canonicalize(dir.trim()).map_err(|error| {
+        let [git_dir, common_dir] = reported_folders(&dirs.stdout)?;
+        let resolve = |folder: &Path| {
+            std::fs::canonicalize(folder).map_err(|error| {
                 GitProviderError::new(
                     FailureCode::InvalidRequest,
                     format!("resolve the repository's Git directory: {error}"),
                 )
-            })?;
-            if dir != self.workspace_root && !dir.starts_with(&self.workspace_root) {
+            })
+        };
+        let (git_dir, common) = (
+            resolve(Path::new(git_dir))?,
+            resolve(Path::new(common_dir))?,
+        );
+        for dir in [&git_dir, &common] {
+            if dir != &self.workspace_root && !dir.starts_with(&self.workspace_root) {
                 return Err(GitProviderError::new(
                     FailureCode::PathEscape,
                     "the repository's Git data is outside the trusted workspace",
                 ));
             }
-            // Review of #847: its refs, logs and objects are its own.
-            repo_config::check_git_folder(&dir)?;
-            seen += 1;
-            common = Some(dir);
         }
-        if seen != 2 {
+        // Review of #849: the repository Git uses is the one the gate read.
+        let same = match &checked {
+            Some(checked) => {
+                resolve(&checked.top_level)? == repo
+                    && resolve(&checked.git_dir)? == git_dir
+                    && resolve(&checked.common_dir)? == common
+            }
+            None => false,
+        };
+        if !same {
             return Err(GitProviderError::new(
-                FailureCode::InvalidRequest,
-                "Git did not report the repository's Git directories",
+                FailureCode::PathEscape,
+                "Git resolved another repository than the one that was checked",
             ));
         }
+        // Review of #847: its refs, logs and objects are its own.
+        repo_config::check_git_folder(&git_dir)?;
+        if common != git_dir {
+            repo_config::check_git_folder(&common)?;
+        }
         // Alternates make Git read objects from another store, anywhere.
-        if common.is_some_and(|common| {
-            common
-                .join("objects")
-                .join("info")
-                .join("alternates")
-                .exists()
-        }) {
+        if common
+            .join("objects")
+            .join("info")
+            .join("alternates")
+            .exists()
+        {
             return Err(GitProviderError::new(
                 FailureCode::PathEscape,
                 "the repository borrows objects from another store (objects/info/alternates)",
@@ -255,48 +265,46 @@ impl GitProvider {
         }
         // Follow-up to #824: no untracked nested folder's `.git` may lead
         // Git to a share, a device, a link or out of the workspace.
-        let links = nested::check_nested(
+        let index = self.check_index(&repo)?;
+        nested::check_nested(
             &self.workspace_root,
             &repo,
             &mut |dirs| self.ignored_dirs(&repo, dirs),
-            &mut |dirs| self.tracked_dirs(&repo, dirs),
+            &mut |dirs| Ok(index.tracked(dirs)),
         )?;
-        if cfg!(windows) {
-            self.refuse_tracked_behind_links(&repo, links)?;
-        }
         Ok(repo)
     }
 
-    /// Review of #847: Git for Windows follows a junction as a folder, so a
-    /// tracked file behind one is read (a diff shows it), staged and written
-    /// outside the repository. No folder above a tracked entry, under the
-    /// name the index gives it (whatever its case, or a short name), is a
-    /// link or junction. `links`: the working tree has one somewhere, so an
-    /// index too large to check is refused. Elsewhere Git itself does not
-    /// follow a link.
-    fn refuse_tracked_behind_links(
-        &self,
-        repo: &Path,
-        links: bool,
-    ) -> Result<(), GitProviderError> {
-        let index = self.run_git(repo, &["ls-files", "-z"])?;
-        if index.stdout_truncated && links {
+    /// Reviews of #847 and #849: every name in the index is a plain path in
+    /// the working tree ([`index`]), checked over the whole index before
+    /// anything compares it with the working tree; a larger one than the
+    /// bound is refused. On Windows, where Git follows a junction as a
+    /// folder, no folder above an entry (under the name the index gives it)
+    /// is a link or junction, and neither is a nested repository's own.
+    fn check_index(&self, repo: &Path) -> Result<index::IndexFolders, GitProviderError> {
+        repo_config::check_repository(&self.workspace_root, repo)?;
+        let ceiling = self.workspace_root.parent();
+        let neutral = neutralizing_args_with(&self.program, ceiling, repo)?;
+        let mut args: Vec<&str> = neutral.args.iter().map(String::as_str).collect();
+        args.extend(["ls-files", "--stage", "-z"]);
+        let (listing, truncated) = run_plain_bytes(
+            &self.program,
+            ceiling,
+            repo,
+            &args,
+            None,
+            index::MAX_INDEX_BYTES,
+        )?;
+        if truncated {
             return Err(GitProviderError::new(
-                FailureCode::ProviderUnavailable,
-                "the working tree has links or junctions and Git's index exceeded its bound, so they cannot be checked",
+                FailureCode::CapabilityDenied,
+                "Git's index is too large to check; Orcel does not run Git in the repository",
             ));
         }
-        let mut checked = std::collections::BTreeSet::new();
-        for path in index.stdout.split('\0') {
-            let mut end = 0;
-            while let Some(at) = path[end..].find('/') {
-                end += at;
-                let folder = &path[..end];
-                end += 1;
-                if !checked.insert(folder) {
-                    continue;
-                }
-                if is_link(&repo.join(folder)) {
+        let folders = index::IndexFolders::parse(&listing)?;
+        if cfg!(windows) {
+            for path in folders.folders().chain(folders.gitlinks()) {
+                if is_link(&repo.join(path)) {
                     return Err(GitProviderError::new(
                         FailureCode::PathEscape,
                         "a tracked folder is now a link or junction; Orcel does not run Git in the repository",
@@ -304,7 +312,7 @@ impl GitProvider {
                 }
             }
         }
-        Ok(())
+        Ok(folders)
     }
 
     /// Which of `dirs` (repository-relative, `/`-separated) the
@@ -450,6 +458,29 @@ impl GitProvider {
     }
 }
 
+/// Exactly `N` folders `rev-parse` printed, one per line, as printed: only
+/// the line ends are removed.
+fn reported_folders<const N: usize>(stdout: &str) -> Result<[&str; N], GitProviderError> {
+    let unusable = || {
+        GitProviderError::new(
+            FailureCode::InvalidRequest,
+            "Git did not report the repository's folders",
+        )
+    };
+    let body = stdout.strip_suffix('\n').ok_or_else(unusable)?;
+    let lines: Vec<&str> = body
+        .split('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line))
+        .collect();
+    if lines
+        .iter()
+        .any(|line| line.is_empty() || line.contains('\u{FFFD}'))
+    {
+        return Err(unusable());
+    }
+    <[&str; N]>::try_from(lines).map_err(|_| unusable())
+}
+
 /// Whether `path` itself is a link or junction.
 pub(crate) fn is_link(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
@@ -527,6 +558,14 @@ fn neutralizing_args_with(
         "maintenance.auto=false".to_owned(),
         "-c".to_owned(),
         "core.alternateRefsCommand=".to_owned(),
+        // Reviews of #849: no recorded resolution is replayed into the
+        // working tree, and no cached folder names are walked.
+        "-c".to_owned(),
+        "rerere.enabled=false".to_owned(),
+        "-c".to_owned(),
+        "rerere.autoUpdate=false".to_owned(),
+        "-c".to_owned(),
+        "core.untrackedCache=false".to_owned(),
     ];
     let mut drivers: Vec<&str> = Vec::new();
     let mut fields = listed.stdout.split('\0');
@@ -601,6 +640,24 @@ fn run_plain_full(
     args: &[&str],
     input: Option<Vec<u8>>,
 ) -> Result<CommandOutput, GitProviderError> {
+    let (stdout, stdout_truncated) =
+        run_plain_bytes(program, ceiling, cwd, args, input, MAX_STDOUT_BYTES)?;
+    Ok(CommandOutput {
+        stdout: String::from_utf8_lossy(&stdout).into_owned(),
+        stdout_truncated,
+    })
+}
+
+/// [`run_plain_full`]: the bytes of stdout, at most `most`, and whether there
+/// were more.
+fn run_plain_bytes(
+    program: &Path,
+    ceiling: Option<&Path>,
+    cwd: &Path,
+    args: &[&str],
+    input: Option<Vec<u8>>,
+    most: usize,
+) -> Result<(Vec<u8>, bool), GitProviderError> {
     let accept_one = input.is_some();
     let mut command = Command::new(program);
     command
@@ -689,7 +746,7 @@ fn run_plain_full(
             let _ = stdin.write_all(&input);
         });
     }
-    let stdout_thread = thread::spawn(move || read_bounded(stdout, MAX_STDOUT_BYTES));
+    let stdout_thread = thread::spawn(move || read_bounded(stdout, most));
     let stderr_thread = thread::spawn(move || read_bounded(stderr, MAX_STDERR_BYTES));
 
     let deadline = Instant::now() + COMMAND_TIMEOUT;
@@ -729,7 +786,6 @@ fn run_plain_full(
         GitProviderError::new(FailureCode::InternalError, "git stderr reader panicked")
     })??;
 
-    let stdout = String::from_utf8_lossy(&stdout_bytes).into_owned();
     let stderr = String::from_utf8_lossy(&stderr_bytes).into_owned();
 
     if !status.success() && !(accept_one && status.code() == Some(1)) {
@@ -745,10 +801,7 @@ fn run_plain_full(
         ));
     }
 
-    Ok(CommandOutput {
-        stdout,
-        stdout_truncated,
-    })
+    Ok((stdout_bytes, stdout_truncated))
 }
 
 fn read_bounded(reader: impl Read, max_bytes: usize) -> Result<(Vec<u8>, bool), GitProviderError> {

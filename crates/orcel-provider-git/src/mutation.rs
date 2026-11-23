@@ -180,6 +180,7 @@ impl GitProvider {
         if named.stdout.trim_end_matches(['\r', '\n']) != branch {
             return Err(invalid("Git branch name is not a plain branch name"));
         }
+        self.refuse_branch_collision(&repo, branch)?;
         // Review of #847: no checkout. `switch -c` re-applies a sparse
         // checkout, writing and deleting working tree files (through a
         // junction too); the branch starts at HEAD, so nothing in the
@@ -333,6 +334,33 @@ impl GitProvider {
             "branch": result_branch,
             "parent": parent,
         }))
+    }
+
+    /// Review of #849: no branch exists that is `branch` in another case, or
+    /// that one of the two would be a folder of: on a file system that
+    /// ignores case they are one loose ref, whatever is packed.
+    fn refuse_branch_collision(&self, repo: &Path, branch: &str) -> Result<(), GitProviderError> {
+        let refs = self.run_git(
+            repo,
+            &["for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads"],
+        )?;
+        if refs.stdout_truncated {
+            return Err(provider_error("Git ref evidence exceeded its bound"));
+        }
+        let wanted = branch.to_lowercase();
+        let below = |name: &str, folder: &str| {
+            name.strip_prefix(folder)
+                .is_some_and(|rest| rest.starts_with('/'))
+        };
+        if refs.stdout.lines().any(|existing| {
+            let existing = existing.to_lowercase();
+            existing == wanted || below(&existing, &wanted) || below(&wanted, &existing)
+        }) {
+            return Err(invalid(
+                "a branch of that name exists already, perhaps in another case or as a folder of one",
+            ));
+        }
+        Ok(())
     }
 
     /// The tip of `refs/heads/<branch>` in the repository at `relative`;

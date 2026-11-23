@@ -31,10 +31,9 @@
 //! folder in the Git directory refuses the repository (a submodule's own
 //! configuration and filters are outside this gate).
 //!
-//! Review of #847: a repository extension can move what Git uses to another
-//! place while `rev-parse` still reports this repository
-//! (`extensions.refStorage = files://<another>/.git` moves HEAD, the refs
-//! and the reflogs), so only the extensions known here, with the values
+//! Reviews of #847 and #849: this gate is defence in depth, not a boundary.
+//! A repository extension can move what Git uses to another place while
+//! `rev-parse` still reports this repository, so only the extensions known here, with the values
 //! known here, are accepted ([`extension_allowed`]); any other, also one a
 //! later Git adds, refuses the repository. The parts of the Git folder Git
 //! writes through are not links or junctions ([`WRITTEN_THROUGH`],
@@ -93,6 +92,8 @@ const REFUSED_SECTIONS: &[&str] = &[
     "difftool",
     "mergetool",
     "guitool",
+    "bundle",
+    "rerere",
     "browser",
     "man",
     "instaweb",
@@ -112,6 +113,8 @@ const REFUSED_CORE: &[&str] = &[
     "hookspath",
     "alternaterefscommand",
     "worktree",
+    "unsetenvvars",
+    "virtualfilesystem",
 ];
 
 /// Whether a repository extension (`extensions.<name>`, lowercase) has a
@@ -165,6 +168,7 @@ pub(crate) fn refusal(entry: &Entry) -> Option<String> {
         || (section == "remote"
             && sub
             && matches!(name, "uploadpack" | "receivepack" | "vcs" | "proxy"))
+        || (section == "fetch" && !sub && matches!(name, "bundleuri" | "bundlecreationtoken"))
         || (section == "submodule" && sub && name == "update");
     if denied {
         return Some(format!(
@@ -191,6 +195,15 @@ pub(crate) fn names_a_share_or_device(text: &str) -> bool {
     let text = text.strip_prefix(":(optional)").unwrap_or(text);
     let bytes = text.as_bytes();
     let slash = |b: u8| b == b'\\' || b == b'/';
+    // A file URL names a local path only as `file:///` and a plain path.
+    if bytes.len() >= 5 && bytes[..5].eq_ignore_ascii_case(b"file:") {
+        let local = text[5..]
+            .strip_prefix("///")
+            .is_some_and(|path| !path.starts_with(['/', '\\']) && !path.contains('%'));
+        if !local {
+            return true;
+        }
+    }
     (bytes.len() >= 2 && slash(bytes[0]) && slash(bytes[1]))
         || text.starts_with(r"\??\")
         || text.contains(r"\\?\")
@@ -385,19 +398,68 @@ pub(crate) fn read_bounded(path: &Path, what: &str) -> Result<Option<Vec<u8>>, G
         .map_err(|error| unreadable(format!("{what}: {error}")))
 }
 
-/// A folder a `.git` file or `commondir` names, refused if it is a share
-/// or device path, resolved against `base` when relative.
+/// The path a `.git` file (`prefix` is `gitdir: `) or a `commondir` (no
+/// prefix) holds, only in the form Git itself reads as the same path: the
+/// exact prefix, then the path, then nothing but line ends at the end of the
+/// file. Whitespace around the path, any line end or control character in
+/// it, and whitespace outside ASCII are refused, not trimmed.
+pub(crate) fn pointer_text(
+    bytes: Vec<u8>,
+    prefix: &str,
+    what: &str,
+) -> Result<String, GitProviderError> {
+    let text = String::from_utf8(bytes).map_err(|_| unreadable(format!("{what} is not UTF-8")))?;
+    let path = text
+        .strip_prefix(prefix)
+        .ok_or_else(|| unreadable(format!("{what} is not in Git's own form")))?
+        .trim_end_matches(['\n', '\r']);
+    if path.is_empty()
+        || path.starts_with(char::is_whitespace)
+        || path.ends_with(char::is_whitespace)
+        || path
+            .chars()
+            .any(|c| c.is_control() || (c.is_whitespace() && !c.is_ascii()) || c == '\u{feff}')
+    {
+        return Err(unreadable(format!("{what} is not in Git's own form")));
+    }
+    Ok(path.to_owned())
+}
+
+/// A folder a `.git` file or `commondir` names ([`pointer_text`]), refused if
+/// it is a share or device path, resolved against `base` when relative. On
+/// Windows only `C:\...` (either slash) and plain relative paths: not `\x`
+/// or `C:x`, whose meaning depends on a current drive or folder, no other
+/// colon, and no component that ends in a dot or a space.
 pub(crate) fn pointed_folder(
     text: &str,
     base: &Path,
     what: &str,
 ) -> Result<PathBuf, GitProviderError> {
-    let text = text.trim();
-    if text.is_empty() || names_a_share_or_device(text) || text.contains('\0') {
-        return Err(GitProviderError::new(
+    let bad = || {
+        GitProviderError::new(
             FailureCode::PathEscape,
             format!("the repository's {what} names a network share, a device or nothing"),
-        ));
+        )
+    };
+    if text.is_empty() || names_a_share_or_device(text) || text.contains('\0') {
+        return Err(bad());
+    }
+    if cfg!(windows) {
+        let bytes = text.as_bytes();
+        let drive = bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && matches!(bytes[2], b'/' | b'\\');
+        let rest = if drive { &text[3..] } else { text };
+        if (!drive && text.starts_with(['/', '\\'])) || rest.contains(':') {
+            return Err(bad());
+        }
+        if rest
+            .split(['/', '\\'])
+            .any(|part| !matches!(part, "." | "..") && (part.ends_with('.') || part.ends_with(' ')))
+        {
+            return Err(bad());
+        }
     }
     let path = Path::new(text);
     let path = if path.is_absolute() {
@@ -411,6 +473,38 @@ pub(crate) fn pointed_folder(
         ))),
         _ => Ok(path),
     }
+}
+
+/// Whether Git accepts `dir` as a Git directory, by its own rule: a valid
+/// `HEAD`, and `objects` and `refs` (in the common directory when `commondir`
+/// names one). Stricter than Git where they differ, so a `true` is Git's too.
+pub(crate) fn is_git_directory(dir: &Path) -> bool {
+    let common = match read_bounded(&dir.join("commondir"), "commondir") {
+        Ok(None) => dir.to_path_buf(),
+        Ok(Some(bytes)) => match pointer_text(bytes, "", "commondir")
+            .and_then(|text| pointed_folder(&text, dir, "commondir"))
+        {
+            Ok(common) => common,
+            Err(_) => return false,
+        },
+        Err(_) => return false,
+    };
+    let Ok(Some(head)) = read_bounded(&dir.join("HEAD"), "HEAD") else {
+        return false;
+    };
+    let valid = match head.strip_prefix(b"ref:") {
+        Some(rest) => {
+            let at = rest
+                .iter()
+                .position(|b| !matches!(b, b' ' | b'\t'))
+                .unwrap_or(rest.len());
+            rest[at..].starts_with(b"refs/")
+        }
+        None => head.len() >= 40 && head[..40].iter().all(u8::is_ascii_hexdigit),
+    };
+    let folder =
+        |name: &str| std::fs::symlink_metadata(common.join(name)).is_ok_and(|m| m.is_dir());
+    valid && folder("objects") && folder("refs")
 }
 
 fn check_file(path: &Path, what: &str) -> Result<(), GitProviderError> {
@@ -428,6 +522,10 @@ fn check_file(path: &Path, what: &str) -> Result<(), GitProviderError> {
 
 /// What Git writes (or replaces) in its folder, by name: none may be a link
 /// or a junction (review of #847).
+/// Recorded conflict resolutions, which a commit could replay into working
+/// tree files: refused when present (and turned off on every command).
+const REFUSED_STATE: &[&str] = &["MERGE_RR", "rr-cache"];
+
 const WRITTEN_THROUGH: &[&str] = &[
     "HEAD",
     "ORIG_HEAD",
@@ -456,17 +554,30 @@ fn refuse_link(path: &Path) -> Result<(), GitProviderError> {
 
 /// Review of #847: nothing under a Git folder's `refs` and `logs`, and no
 /// direct entry of its `objects`, is a link or junction, so a ref, a reflog
-/// or an object is written in the Git folder and nowhere else.
+/// or an object is written in the Git folder and nowhere else; the same for
+/// `objects/info` and `objects/pack`, with no other store named in it.
 pub(crate) fn check_git_folder(dir: &Path) -> Result<(), GitProviderError> {
     check_git_folder_within(dir, MAX_GIT_FOLDER_ENTRIES)
 }
 
 fn check_git_folder_within(dir: &Path, most: usize) -> Result<(), GitProviderError> {
     let mut left = most;
-    let mut pending: Vec<(PathBuf, bool)> = ["refs", "logs", "objects"]
-        .iter()
-        .map(|name| (dir.join(name), *name != "objects"))
-        .collect();
+    let objects = dir.join("objects");
+    for name in ["alternates", "http-alternates"] {
+        if std::fs::symlink_metadata(objects.join("info").join(name)).is_ok() {
+            return Err(GitProviderError::new(
+                FailureCode::PathEscape,
+                "the repository borrows objects from another store",
+            ));
+        }
+    }
+    let mut pending: Vec<(PathBuf, bool)> = vec![
+        (dir.join("refs"), true),
+        (dir.join("logs"), true),
+        (objects.join("info"), true),
+        (objects.join("pack"), true),
+        (objects, false),
+    ];
     while let Some((folder, deep)) = pending.pop() {
         refuse_link(&folder)?;
         let entries = match std::fs::read_dir(&folder) {
@@ -493,13 +604,25 @@ fn check_git_folder_within(dir: &Path, most: usize) -> Result<(), GitProviderErr
     Ok(())
 }
 
+/// The folders the gate checked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CheckedFolders {
+    pub(crate) top_level: PathBuf,
+    pub(crate) git_dir: PathBuf,
+    pub(crate) common_dir: PathBuf,
+}
+
 /// The gate, before any Git command runs with `cwd` as its working folder
 /// inside `workspace_root` (both resolved): `cwd` is not inside a `.git`
 /// folder; the nearest `.git` from `cwd` up to the workspace root is a plain
 /// folder or a `.git` file whose `gitdir:` (and that folder's `commondir`)
 /// names no share, device or link; and none of the configuration files
-/// they lead to sets a refused key or names a share.
-pub(crate) fn check_repository(workspace_root: &Path, cwd: &Path) -> Result<(), GitProviderError> {
+/// they lead to sets a refused key or names a share. The folders it read, for
+/// the caller to compare with the ones Git reports; `None` without a `.git`.
+pub(crate) fn check_repository(
+    workspace_root: &Path,
+    cwd: &Path,
+) -> Result<Option<CheckedFolders>, GitProviderError> {
     let cwd = std::fs::canonicalize(cwd).map_err(|error| {
         GitProviderError::new(
             FailureCode::InvalidRequest,
@@ -534,24 +657,31 @@ pub(crate) fn check_repository(workspace_root: &Path, cwd: &Path) -> Result<(), 
                     dot_git
                 } else {
                     let bytes = read_bounded(&dot_git, ".git file")?.unwrap_or_default();
-                    let text = String::from_utf8(bytes)
-                        .map_err(|_| unreadable(".git file is not UTF-8"))?;
-                    let pointed = text
-                        .lines()
-                        .next()
-                        .and_then(|line| line.strip_prefix("gitdir:"))
-                        .ok_or_else(|| unreadable(".git file names no gitdir"))?;
-                    pointed_folder(pointed, current, ".git file's gitdir")?
+                    let pointed = pointer_text(bytes, "gitdir: ", ".git file")?;
+                    pointed_folder(&pointed, current, ".git file's gitdir")?
                 };
                 let mut folders = vec![git_dir.clone()];
                 if let Some(bytes) = read_bounded(&git_dir.join("commondir"), "commondir")? {
-                    let text = String::from_utf8(bytes)
-                        .map_err(|_| unreadable("commondir is not UTF-8"))?;
+                    let text = pointer_text(bytes, "", "commondir")?;
                     folders.push(pointed_folder(&text, &git_dir, "commondir")?);
+                }
+                // Git skips a `.git` it does not accept and looks further
+                // up, where the gate has not looked.
+                if !is_git_directory(&git_dir) {
+                    return Err(refused(
+                        "the repository's .git is not one Git accepts; Orcel does not run Git in it",
+                    ));
                 }
                 for dir in &folders {
                     for name in WRITTEN_THROUGH {
                         refuse_link(&dir.join(name))?;
+                    }
+                    for name in REFUSED_STATE {
+                        if std::fs::symlink_metadata(dir.join(name)).is_ok() {
+                            return Err(refused(
+                                "the repository holds recorded conflict resolutions (rerere); Orcel does not run Git in it",
+                            ));
+                        }
                     }
                     check_file(&dir.join("config"), "config")?;
                     check_file(&dir.join("config.worktree"), "config.worktree")?;
@@ -573,7 +703,11 @@ pub(crate) fn check_repository(workspace_root: &Path, cwd: &Path) -> Result<(), 
                         ));
                     }
                 }
-                return Ok(());
+                return Ok(Some(CheckedFolders {
+                    top_level: current.to_path_buf(),
+                    common_dir: folders.last().cloned().unwrap_or_else(|| git_dir.clone()),
+                    git_dir,
+                }));
             }
             Err(_) => {}
         }
@@ -582,7 +716,7 @@ pub(crate) fn check_repository(workspace_root: &Path, cwd: &Path) -> Result<(), 
         }
         folder = current.parent();
     }
-    Ok(())
+    Ok(None)
 }
 
 /// The same rules over Git's own listing (`config --list --show-scope

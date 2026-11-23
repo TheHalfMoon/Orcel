@@ -807,6 +807,14 @@ impl GitProvider {
         dest: &str,
         pinned: &IpAddr,
     ) -> Result<(), GitProviderError> {
+        // Review of #849: the fetched ref is itself, not a name for another
+        // (`fetch` has no `--no-deref`).
+        if self.run_git(repo, &["symbolic-ref", "-q", dest]).is_ok() {
+            return Err(GitProviderError::new(
+                FailureCode::CapabilityDenied,
+                "the fetch destination ref is a symbolic ref",
+            ));
+        }
         let resolve_value = format!("+{}:{}:{}", destination.hostname, destination.port, pinned);
         let refspec = format!("{source}:{dest}");
         // libcurl opens this path itself and has no `/dev/null` mapping.

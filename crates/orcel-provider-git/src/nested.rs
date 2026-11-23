@@ -21,12 +21,13 @@
 //! a repository before it skips it). For each nested folder with a
 //! `.git` entry it refuses a `.git` that is a link, a `gitdir:` or
 //! `commondir` naming a share, a device, a link or a place outside the
-//! workspace, and does not descend further. The walk is bounded
+//! workspace. It does not descend below a nested repository Git accepts,
+//! unless the index has files there (Git goes on in both cases). The walk is bounded
 //! ([`MAX_ENTRIES`] entries, [`MAX_DEPTH`] levels); past either bound the
 //! repository is refused (fail closed). Every other command runs with
 //! `status.showUntrackedFiles=no`.
 
-use crate::repo_config::{pointed_folder, read_bounded};
+use crate::repo_config::{is_git_directory, pointed_folder, pointer_text, read_bounded};
 use crate::GitProviderError;
 use orcel_contracts::FailureCode;
 use std::collections::BTreeSet;
@@ -144,8 +145,7 @@ fn check_git_entries(git_dir: &Path) -> Result<(), GitProviderError> {
 fn check_git_folder(root: &Path, git_dir: &Path) -> Result<(), GitProviderError> {
     check_git_entries(git_dir)?;
     if let Some(bytes) = read_bounded(&git_dir.join("commondir"), "nested commondir")? {
-        let text = String::from_utf8(bytes)
-            .map_err(|_| escape("a nested repository's commondir is not UTF-8"))?;
+        let text = pointer_text(bytes, "", "nested commondir")?;
         let common = pointed_folder(&text, git_dir, "nested repository's commondir")?;
         inside_without_links(root, &common, "a nested repository's commondir")?;
         if common.is_dir() {
@@ -155,51 +155,51 @@ fn check_git_folder(root: &Path, git_dir: &Path) -> Result<(), GitProviderError>
     Ok(())
 }
 
-/// One nested folder's `.git` entry.
-fn check_nested_entry(root: &Path, folder: &Path, dot_git: &Path) -> Result<(), GitProviderError> {
+/// One nested folder's `.git` entry; whether Git accepts it as a repository
+/// (and so does not walk the folder, unless it tracks files in it).
+fn check_nested_entry(
+    root: &Path,
+    folder: &Path,
+    dot_git: &Path,
+) -> Result<bool, GitProviderError> {
     let metadata = std::fs::symlink_metadata(dot_git)
         .map_err(|error| escape(format!("a nested .git cannot be read: {error}")))?;
     if metadata.file_type().is_symlink() {
         return Err(escape("a nested folder's .git is a link or junction"));
     }
     if metadata.is_dir() {
-        return check_git_folder(root, dot_git);
+        check_git_folder(root, dot_git)?;
+        return Ok(is_git_directory(dot_git));
     }
     let bytes = read_bounded(dot_git, "nested .git file")?.unwrap_or_default();
-    let text = String::from_utf8(bytes).map_err(|_| escape("a nested .git file is not UTF-8"))?;
-    let Some(pointed) = text
-        .lines()
-        .next()
-        .and_then(|line| line.strip_prefix("gitdir:"))
-    else {
+    if !bytes.starts_with(b"gitdir:") {
         // Git ignores a .git file without gitdir: (the folder is walked
         // as ordinary files).
-        return Ok(());
-    };
-    let target = pointed_folder(pointed, folder, "nested .git file's gitdir")?;
+        return Ok(false);
+    }
+    let pointed = pointer_text(bytes, "gitdir: ", "nested .git file")?;
+    let target = pointed_folder(&pointed, folder, "nested .git file's gitdir")?;
     inside_without_links(root, &target, "a nested .git file's gitdir")?;
     if target.is_dir() {
         check_git_folder(root, &target)?;
     }
-    Ok(())
+    Ok(is_git_directory(&target))
 }
 
 /// The walk (see the module documentation). `ignored` answers which of the
 /// given repository-relative folders the exclude rules ignore; `tracked`
-/// which of them hold tracked entries. Answers whether the walk met a link
-/// or junction (which it does not follow).
+/// which of them hold tracked entries. Follows no link or junction.
 pub(crate) fn check_nested(
     workspace_root: &Path,
     repo: &Path,
     ignored: &mut Lookup<'_>,
     tracked: &mut Lookup<'_>,
-) -> Result<bool, GitProviderError> {
-    let mut links = false;
+) -> Result<(), GitProviderError> {
     let mut level: Vec<(PathBuf, String)> = vec![(repo.to_path_buf(), String::new())];
     let mut seen = 0usize;
     for depth in 0..=MAX_DEPTH {
         if level.is_empty() {
-            return Ok(links);
+            return Ok(());
         }
         if depth == MAX_DEPTH {
             return Err(bounded(format!(
@@ -235,7 +235,6 @@ pub(crate) fn check_nested(
                 let file_type = entry
                     .file_type()
                     .map_err(|error| escape(format!("read an entry's type: {error}")))?;
-                links |= file_type.is_symlink();
                 let child = || {
                     if relative.is_empty() {
                         name.to_owned()
@@ -250,9 +249,12 @@ pub(crate) fn check_nested(
                 }
             }
             if let Some(dot_git) = nested_git {
-                // A nested repository: Git stops here, and so does the walk.
-                check_nested_entry(workspace_root, folder, &dot_git)?;
-                continue;
+                // A nested repository: Git stops here, and so does the walk,
+                // unless Git does not accept it or tracks files in it.
+                let accepted = check_nested_entry(workspace_root, folder, &dot_git)?;
+                if accepted && tracked(std::slice::from_ref(relative))?.is_empty() {
+                    continue;
+                }
             }
             children.extend(subfolders);
         }
@@ -294,5 +296,5 @@ pub(crate) fn check_nested(
         }
         level = walked;
     }
-    Ok(links)
+    Ok(())
 }
