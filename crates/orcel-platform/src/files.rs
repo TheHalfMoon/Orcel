@@ -59,7 +59,8 @@ pub fn write_private_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// `to` and then loses `from`. An error there takes the link away again where
 /// the directory allows it (an append-only one does not, and the link stays);
 /// that error, or a crash in between, leaves the same file at both names,
-/// never at neither. A filesystem without hard links either fails closed.
+/// never at neither, where the directory can be synced. A filesystem without
+/// hard links either fails closed.
 pub fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
@@ -623,12 +624,7 @@ mod tests {
         }
         let moves: [Move; 2] = [
             |from, to| {
-                link_then_unlink_with(
-                    from,
-                    to,
-                    |_| failed(),
-                    |_| Err(io::Error::other("unlinked before the sync")),
-                )
+                link_then_unlink_with(from, to, |_| failed(), |from| std::fs::remove_file(from))
             },
             |from, to| link_then_unlink_with(from, to, |_| Ok(()), |_| failed()),
         ];
