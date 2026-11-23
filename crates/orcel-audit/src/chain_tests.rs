@@ -1263,7 +1263,8 @@ const OPENING_WITHOUT_NONCE: &str = concat!(
 "
 );
 
-/// A chain written before opening records had a nonce: it verifies, is continued and is moved aside as before.
+/// A chain written before opening records had a nonce: it verifies, is
+/// continued and is moved aside as before.
 #[test]
 fn chain_a_file_opened_without_a_nonce_verifies_and_is_continued() -> TestResult {
     let dir = sandbox("no-nonce")?;
