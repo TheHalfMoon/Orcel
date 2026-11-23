@@ -16,6 +16,19 @@ use std::io::{self, BufRead, Write};
 use std::path::Path;
 use std::path::PathBuf;
 
+/// As std's `eprintln!`, except that a failed write is ignored: std's panics,
+/// so a standard error that cannot be written (a full disk, a closed pipe)
+/// would end orceld at its readiness line, before it serves anything. Defined
+/// before the modules, so it applies to every line this binary logs. Unit
+/// tests keep std's, which the test harness captures.
+#[cfg(not(test))]
+macro_rules! eprintln {
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stderr(), $($arg)*);
+    }};
+}
+
 mod app_api;
 // WP1-03: the audit chain's anchor holder, its sharing with the browser
 // broker's receipts, and `orceld audit-verify`.
