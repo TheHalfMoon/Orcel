@@ -469,6 +469,7 @@ fn authorize(
             executor,
             claims: claims(),
             job_ack: crate::core::dispatch_jobs::executor_runs_in_job(executor),
+            standing: None,
         },
     )
 }
@@ -1420,6 +1421,7 @@ fn a_browser_lease_covers_the_browser_executor_only() -> Result<(), String> {
         executor,
         claims: browser_claims.clone(),
         job_ack: false,
+        standing: None,
     };
     ok(core.handle(&orceld(), as_browser(ExecutorClass::Browser)))?;
     assert_eq!(
@@ -1730,6 +1732,7 @@ fn review_f4_f7_browser_authorize_checks_family_and_origin_and_the_box_says_brow
             ..claims()
         },
         job_ack: false,
+        standing: None,
     };
     ok(core.handle(&orceld(), ask("click", Some("https://fixture.test"))))?;
     ok(core.handle(&orceld(), ask("navigate", Some("https://fixture.test"))))?;
@@ -2113,6 +2116,7 @@ fn authorize_paths(
                 ..claims()
             },
             job_ack: crate::core::dispatch_jobs::executor_runs_in_job(executor),
+            standing: None,
         },
     )
 }
@@ -2811,6 +2815,7 @@ fn wp110_unconfirmed_jobs_end_after_the_ack_timeout_and_confirmed_ones_stay() ->
                         ..claims()
                     },
                     job_ack: false,
+                    standing: None,
                 },
             )),
             Some(FailureCode::InvalidRequest),
@@ -2826,6 +2831,7 @@ fn wp110_unconfirmed_jobs_end_after_the_ack_timeout_and_confirmed_ones_stay() ->
             executor: ExecutorClass::DesktopInput,
             claims: claims(),
             job_ack: false,
+            standing: None,
         },
     ))?;
     assert_eq!(older_desktop["job_handle"], Value::Null);
@@ -2837,6 +2843,7 @@ fn wp110_unconfirmed_jobs_end_after_the_ack_timeout_and_confirmed_ones_stay() ->
         executor: ExecutorClass::DesktopInput,
         claims: claims(),
         job_ack: false,
+        standing: None,
     })
     .map_err(|e| e.to_string())?;
     assert!(wire.get("job_ack").is_none());
@@ -3135,6 +3142,7 @@ fn authorize_desktop_as(
                 ..claims()
             },
             job_ack: false,
+            standing: None,
         },
     )
 }
@@ -3224,6 +3232,7 @@ fn wp110_desktop_authorize_checks_the_calling_client_against_the_lease() -> Resu
                         ..claims()
                     },
                     job_ack: true,
+                    standing: None,
                 },
             )
         };
@@ -3283,3 +3292,7 @@ fn wp110_shell_process_dispatches_name_their_paths() -> Result<(), String> {
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
+
+// WP1-14: standing approvals (spec 4.15).
+#[path = "standing_tests.rs"]
+mod standing_tests;

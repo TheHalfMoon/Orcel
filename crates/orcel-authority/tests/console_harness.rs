@@ -477,6 +477,84 @@ fn wp110_desktop_host_jobs_and_acknowledgements_need_orceld_and_a_held_job() {
     );
 }
 
+/// WP1-14 (SG132_SLICE10.md): the standing approval requests over the real
+/// pipe. Nothing in console mode can issue one (no owner CLI image, no
+/// observed unlock, no indicator), orceld and claimed origins are refused,
+/// an unknown approval covers nothing, and the status and list report it.
+#[test]
+fn standing_requests_over_the_pipe_fail_closed() {
+    use orcel_authority::core::standing::StandingScope;
+    use orcel_authority::lease::LeaseScope;
+    use orcel_authority::protocol::StandingClaim;
+    let begin = |origin| Request::StandingBegin {
+        origin,
+        scope: LeaseScope::DesktopFullUser {
+            executors: vec![ExecutorClass::Filesystem, ExecutorClass::ShellProcess],
+            roots: vec![r"C:\work".into()],
+            shells: true,
+        },
+        minutes: None,
+        principal_id: format!("cl-{}", "a".repeat(32)),
+        task: "t".into(),
+        standing: StandingScope {
+            executors: vec![ExecutorClass::ShellProcess],
+            operations: vec!["git_commit".into()],
+            roots: vec![r"C:\work\repo".into()],
+            origins: Vec::new(),
+            commands: Vec::new(),
+            minutes: None,
+        },
+    };
+    let trusted = start("standing", true);
+    let as_orceld = client(&trusted);
+    let status = as_orceld.status().expect("status");
+    assert_eq!(
+        status["standing_approvals"]["indicator_alive"],
+        Value::Bool(false)
+    );
+    assert_eq!(
+        code(as_orceld.call(&begin(ClaimedOrigin::OwnerCli))),
+        Some(FailureCode::CapabilityDenied)
+    );
+    let no_lease = format!("al-{}", "0".repeat(32));
+    let unknown = format!("sa-{}", "0".repeat(32));
+    let covered = as_orceld.authorize_standing(
+        &no_lease,
+        ExecutorClass::ShellProcess,
+        claims(),
+        StandingClaim {
+            standing_id: unknown.clone(),
+            program: None,
+        },
+    );
+    assert_eq!(code(covered), Some(FailureCode::LeaseInvalid));
+    assert_eq!(
+        code(as_orceld.standing_revoke(&unknown)),
+        Some(FailureCode::LeaseInvalid)
+    );
+    let listed = as_orceld.list().expect("list");
+    assert_eq!(listed["standing"], Value::Array(Vec::new()));
+    let plain = start("standing-plain", false);
+    let other = client(&plain);
+    for origin in [
+        ClaimedOrigin::OwnerCli,
+        ClaimedOrigin::Mcp,
+        ClaimedOrigin::Agent,
+        ClaimedOrigin::Remote,
+    ] {
+        assert_eq!(
+            code(other.call(&begin(origin))),
+            Some(FailureCode::CapabilityDenied)
+        );
+    }
+    let complete = other.call(&Request::StandingComplete {
+        intent_id: format!("in-{}", "0".repeat(32)),
+        code: "AAAA-AAAA".into(),
+        signature_hex: "00".into(),
+    });
+    assert!(complete.is_err());
+}
+
 #[test]
 fn malformed_frames_are_refused_and_the_audit_chain_verifies_after_shutdown() {
     use orcel_authority::protocol::{read_frame, write_frame, Response};

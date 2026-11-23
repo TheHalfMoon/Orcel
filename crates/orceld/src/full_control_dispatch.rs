@@ -14,10 +14,13 @@
 //!    roots for paths); a process run or a git operation that changes the
 //!    repository then needs the person's fresh per-action approval
 //!    ([`ActionApproval`], SG-000096), bound to the action digest, before
-//!    anything is authorized;
+//!    anything is authorized, unless a standing approval (spec 4.15, WP1-14,
+//!    SG132_SLICE10.md) the service reports in effect covers it for the
+//!    same lease, client and task, inside its operations, folders and
+//!    programs ([`covering_standing`]); a remote caller is never covered;
 //! 3. asks the service's `Authorize`, which checks lease, epoch, binding,
-//!    executor and roots again and writes its audit record before it
-//!    answers; for the filesystem and process/git families the answer must
+//!    executor and roots again (and the standing approval, when one is
+//!    named) and writes its audit record before it answers; for the filesystem and process/git families the answer must
 //!    carry the dispatch's service-made, unnamed Job Object as an
 //!    assign-only handle the service duplicated into this process
 //!    (`job_id`, `job_handle`), or nothing runs; SG132_SLICE5.md: the handle
@@ -46,8 +49,9 @@
 //! per-action approval; nothing here approves or grants anything.
 
 use orcel_authority::core::dispatch_jobs::is_job_id;
+use orcel_authority::core::standing::{same_program, Cover, PinnedProgram, StandingApproval};
 use orcel_authority::lease::{check_dispatch_path, path_within_roots, LeaseBody, LeaseScope};
-use orcel_authority::protocol::{AuthorizeClaims, DispatchOutcome};
+use orcel_authority::protocol::{AuthorizeClaims, DispatchOutcome, StandingClaim};
 use orcel_contracts::{ExecutorClass, FailureCode, RequestEnvelope};
 use orcel_provider_fs::ProviderError;
 use serde_json::Value;
@@ -153,11 +157,18 @@ pub(crate) trait AuthorityPort {
     /// The active leases of this user and logon session the verified
     /// service reported, each with a verified signature.
     fn leases(&self) -> Result<Vec<LeaseBody>, ProviderError>;
+    /// WP1-14: the standing approvals of this user and logon session the
+    /// verified service reports in effect (in force, with a live indicator).
+    /// The service checks the one named again at `Authorize`.
+    fn standing(&self) -> Result<Vec<StandingApproval>, ProviderError>;
+    /// `standing`: WP1-14, the standing approval named in place of the
+    /// action's own approval (`None` for every other dispatch).
     fn authorize(
         &self,
         lease_id: &str,
         executor: ExecutorClass,
         claims: AuthorizeClaims,
+        standing: Option<&StandingClaim>,
     ) -> Result<Value, ProviderError>;
     fn outcome(
         &self,
@@ -202,12 +213,15 @@ pub(crate) trait ActionApproval {
 pub(crate) trait WorkerLauncher {
     /// Starts the worker suspended, assigns it with `job.handle` (and closes
     /// that handle on every path), calls `confirm`, and resumes the worker
-    /// only if it succeeds (terminating it otherwise).
+    /// only if it succeeds (terminating it otherwise). `pinned`: review of
+    /// #844, the program a standing approval covered the run with; the
+    /// worker refuses to start any other contents or file.
     fn run(
         &self,
         job: &JobGrant,
         roots: &[String],
         op: &crate::fc_worker::WorkerOp,
+        pinned: Option<&PinnedProgram>,
         confirm: &dyn Fn() -> Result<(), ProviderError>,
     ) -> Result<Value, ProviderError>;
 }
@@ -270,17 +284,24 @@ pub(crate) fn authorize(
     action: &Action<'_>,
     now_ms: u64,
 ) -> Result<Ticket, ProviderError> {
-    authorize_with(port, action, now_ms, &|_| Ok(()))
+    authorize_with(port, action, now_ms, &|_, _| Ok(None))
 }
 
-/// [`authorize`], calling `before` with the action digest once a lease
-/// covers the action and before the service is asked (the per-action
-/// approval; a refusal there authorizes nothing).
+/// What runs between the lease check and `Authorize`: given the action
+/// digest and the chosen lease, the per-action approval (`Ok(None)`) or the
+/// standing approval that stands in for it.
+type BeforeAuthorize<'a> =
+    dyn Fn(&str, &LeaseBody) -> Result<Option<StandingClaim>, ProviderError> + 'a;
+
+/// [`authorize`], calling `before` with the action digest and the chosen
+/// lease once a lease covers the action and before the service is asked:
+/// the per-action approval (a refusal there authorizes nothing), or the
+/// standing approval that stands in for it, which `Authorize` then names.
 fn authorize_with(
     port: &dyn AuthorityPort,
     action: &Action<'_>,
     now_ms: u64,
-    before: &dyn Fn(&str) -> Result<(), ProviderError>,
+    before: &BeforeAuthorize<'_>,
 ) -> Result<Ticket, ProviderError> {
     if !port.installed() {
         return match action.family {
@@ -350,7 +371,7 @@ fn authorize_with(
         }));
     };
     let digest = action_digest(action, now_ms);
-    before(&digest)?;
+    let standing = before(&digest, &body)?;
     let claims = AuthorizeClaims {
         request_id: request_id_for_audit(action.request, now_ms),
         capability: action.request.capability.clone(),
@@ -364,7 +385,7 @@ fn authorize_with(
         origin: None,
         paths: (!action.paths.is_empty()).then(|| action.paths.clone()),
     };
-    let answer = port.authorize(&body.lease_id, executor, claims)?;
+    let answer = port.authorize(&body.lease_id, executor, claims, standing.as_ref())?;
     // SG132_SLICE5.md: a job handle that came with an answer refused here
     // is left alone (never acknowledged, used or closed): the service
     // closes it in this process after its acknowledgement timeout.
@@ -381,6 +402,15 @@ fn authorize_with(
         return Err(unavailable(
             "the authority authorized a different lease than the one asked for",
         ));
+    }
+    // WP1-14: a dispatch admitted in place of its own approval must be
+    // admitted under exactly the standing approval named.
+    if let Some(claim) = &standing {
+        if answer["standing_id"].as_str() != Some(claim.standing_id.as_str()) {
+            return Err(unavailable(
+                "the authority did not confirm the standing approval this dispatch named",
+            ));
+        }
     }
     let handle = answer["job_handle"].as_u64().filter(|handle| *handle != 0);
     let job = match (&answer["job_id"], handle, action.family.runs_in_job()) {
@@ -453,13 +483,50 @@ pub(crate) fn record_outcome<T>(
 /// caller is `fc_requests` (`fc.fs`, `fc.process`, `fc.git`), which names
 /// the calling client's reference as `principal_id`; the MCP tools are the
 /// next slice.
+///
+/// WP1-14: `remote` is whether the request came from a remote caller
+/// (refused before this by `fc_requests::refuse_untrusted`); a remote caller
+/// is never covered by a standing approval, whatever else holds.
 pub(crate) fn run_in_worker(
     port: &dyn AuthorityPort,
     launcher: &dyn WorkerLauncher,
     approval: &dyn ActionApproval,
     request: &RequestEnvelope,
     principal_id: Option<&str>,
+    remote: bool,
     now_ms: u64,
+) -> Result<Value, ProviderError> {
+    run_in_worker_pinned(
+        port,
+        launcher,
+        approval,
+        request,
+        principal_id,
+        remote,
+        now_ms,
+        &pin_now,
+    )
+}
+
+/// Review of #844: the program at `path` as it is now (its contents'
+/// SHA-256 and its file identity); `None` when it cannot be read, which
+/// means no standing approval covers the run (the person is asked).
+fn pin_now(path: &str) -> Option<PinnedProgram> {
+    orcel_authority::core::standing::pin_program(path).ok()
+}
+
+/// [`run_in_worker`] with `pinner` pinning the program a run names (tests
+/// pin without files).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_in_worker_pinned(
+    port: &dyn AuthorityPort,
+    launcher: &dyn WorkerLauncher,
+    approval: &dyn ActionApproval,
+    request: &RequestEnvelope,
+    principal_id: Option<&str>,
+    remote: bool,
+    now_ms: u64,
+    pinner: &dyn Fn(&str) -> Option<PinnedProgram>,
 ) -> Result<Value, ProviderError> {
     let op: crate::fc_worker::WorkerOp = serde_json::from_value(request.arguments.clone())
         .map_err(|error| {
@@ -480,12 +547,53 @@ pub(crate) fn run_in_worker(
         principal_id,
         paths: op.paths(),
     };
-    let approve = |digest: &str| {
-        if op.needs_approval() {
-            approval.approve(&op, request, digest)
-        } else {
-            Ok(())
+    // The pin a standing approval covered the run with, for the worker to
+    // check on the file it holds right before the start.
+    let covered_pin: RefCell<Option<PinnedProgram>> = RefCell::new(None);
+    let approve = |digest: &str, body: &LeaseBody| {
+        if !op.needs_approval() {
+            return Ok(None);
         }
+        // WP1-14: a standing approval in effect that covers exactly this
+        // operation stands in for the person's per-action approval; the
+        // service checks it again. Otherwise the person is asked. Review of
+        // #844: a run is covered only by its program's contents and file as
+        // pinned at grant; a program that cannot be pinned now is not.
+        if !remote {
+            let standing = port.standing()?;
+            // Re-review of #844: hash only a program some approval in
+            // effect pins at this path; any other run is asked, unread.
+            let pinned = run_program(&op)
+                .filter(|program| {
+                    standing.iter().any(|approval| {
+                        approval
+                            .commands
+                            .iter()
+                            .any(|pin| same_program(&pin.path, program))
+                    })
+                })
+                .and_then(pinner);
+            let runs = run_program(&op).is_some();
+            if !runs || pinned.is_some() {
+                if let Some(covering) = covering_standing(
+                    &standing,
+                    body,
+                    &op,
+                    request,
+                    principal_id,
+                    remote,
+                    pinned.as_ref(),
+                    now_ms,
+                ) {
+                    covered_pin.replace(pinned.clone());
+                    return Ok(Some(StandingClaim {
+                        standing_id: covering.id.clone(),
+                        program: pinned,
+                    }));
+                }
+            }
+        }
+        approval.approve(&op, request, digest).map(|()| None)
     };
     let ticket = authorize_with(port, &action, now_ms, &approve)?;
     let Ticket::Service(grant) = &ticket else {
@@ -499,9 +607,62 @@ pub(crate) fn run_in_worker(
         ));
     };
     let confirm = || port.dispatch_active(&grant.authorization_id);
-    let result = launcher.run(job, &grant.roots, &op, &confirm);
+    let pinned = covered_pin.borrow().clone();
+    let result = launcher.run(job, &grant.roots, &op, pinned.as_ref(), &confirm);
     record_outcome(port, &ticket, &result);
     result
+}
+
+/// The program a process run starts (`None` for every other operation).
+fn run_program(op: &crate::fc_worker::WorkerOp) -> Option<&str> {
+    match op {
+        crate::fc_worker::WorkerOp::Run { program, .. } => Some(program.as_str()),
+        _ => None,
+    }
+}
+
+/// WP1-14 (spec 4.15, SG132_SLICE10.md): the standing approval, among
+/// `standing` (those the service reports in effect), that covers `op` under
+/// the lease `body` for the calling client `principal_id`: the same lease,
+/// client and task, the operation's executor and name, its capability, every
+/// path it touches inside the approval's folders, and for a run its program
+/// `pinned` now (path, contents' SHA-256, file identity) equal to one the
+/// approval pinned at grant. Only operations that otherwise ask a per-action
+/// approval are covered; a remote caller, an unidentified client and
+/// anything else never are (the person is asked). The rule is
+/// `StandingApproval::check_cover`, which the service's `Authorize` applies
+/// again.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn covering_standing<'a>(
+    standing: &'a [StandingApproval],
+    body: &LeaseBody,
+    op: &crate::fc_worker::WorkerOp,
+    request: &RequestEnvelope,
+    principal_id: Option<&str>,
+    remote: bool,
+    pinned: Option<&PinnedProgram>,
+    now_ms: u64,
+) -> Option<&'a StandingApproval> {
+    if remote || !op.needs_approval() {
+        return None;
+    }
+    let principal = principal_id?;
+    let paths = op.paths();
+    let cover = Cover {
+        lease_id: &body.lease_id,
+        principal_id: principal,
+        task: &body.task,
+        executor: op.family().executor(),
+        capability: &request.capability,
+        operation: op.name(),
+        paths: &paths,
+        program: pinned,
+        origin: None,
+        now_ms,
+    };
+    standing
+        .iter()
+        .find(|approval| approval.check_cover(&cover).is_ok())
 }
 
 thread_local! {

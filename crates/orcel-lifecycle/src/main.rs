@@ -90,6 +90,19 @@ Full User desktop control (local only):
       donors, relay, and remote callers cannot mint, widen, or renew a lease.
   orcel full-control revoke               Revoke Full User desktop input immediately.
   orcel full-control status               Show Safe/Full User state and expiry.
+  orcel full-control standing grant --client <cl-ref> --task <label> --root <path>...
+      --operations <list> --folder <path>... [--program <exe>]... [--minutes <1-720>]
+      [--standing-minutes <n>]
+      With the Orcel authority service: a Full User lease (filesystem and shells over the
+      roots) and a standing approval for one client and task, granted together through the
+      same lock, unlock, service box and Windows Hello. The listed operations (run, git_add,
+      git_unstage, git_commit, git_branch_create) inside the folders then do not ask each
+      time. run needs --program: each is pinned now to its contents (SHA-256) and file, shown
+      in the box, and asks again once either changes. Never Admin, remote callers or browser
+      actions. Needs a live Orcel indicator; until it exists the service refuses.
+  orcel full-control standing revoke [--id <sa-...>]
+                                          End standing approvals; their leases stay.
+  orcel full-control standing status      List standing approvals and the indicator state.
 
 Orcel authority service (SG-000132; Windows):
   orcel authority status                  Show the service's mode, epoch and enrollment.

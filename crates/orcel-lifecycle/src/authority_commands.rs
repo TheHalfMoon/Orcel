@@ -130,6 +130,179 @@ pub fn full_control_grant(args: &mut Args) -> Result<Output, LifecycleError> {
     })
 }
 
+/// WP1-14: `orcel full-control standing grant|revoke|status` (spec 4.15).
+/// Owner-only at the PC: a grant goes through the service's own gate (the
+/// installed CLI's image, the observed unlock, the service's box, Windows
+/// Hello); revoke and status reach only this Windows user's and logon
+/// session's approvals, as the service binds them. Approvals stay with
+/// the service's box and Windows Hello: nothing here approves anything.
+pub fn full_control_standing(args: &mut Args) -> Result<Output, LifecycleError> {
+    let action = args.positional("full-control standing action (grant, revoke, status)")?;
+    match action.as_str() {
+        "grant" => standing_grant(args),
+        "revoke" => {
+            let only = args.value("--id")?;
+            args.finish()?;
+            let client = installed_client()?;
+            let mut revoked = Vec::new();
+            for entry in authority_grant::standing_approvals(&client)? {
+                let Some(id) = entry["approval"]["id"].as_str() else {
+                    continue;
+                };
+                if entry["state"].as_str() != Some("active")
+                    || only.as_deref().is_some_and(|only| only != id)
+                {
+                    continue;
+                }
+                client
+                    .standing_revoke(id)
+                    .map_err(|error| LifecycleError::state(error.to_string()))?;
+                revoked.push(id.to_owned());
+            }
+            if let Some(only) = &only {
+                if revoked.is_empty() {
+                    return Err(LifecycleError::state(format!(
+                        "no active standing approval {only} of this logon session"
+                    )));
+                }
+            }
+            Ok(Output {
+                exit_code: 0,
+                human: format!(
+                    "Standing approvals revoked by the Orcel authority service: {}. Their leases stay; revoke those with `orcel full-control revoke`.\n",
+                    json!(revoked)
+                ),
+                json: json!({ "ok": true, "revoked": revoked }),
+            })
+        }
+        "status" => {
+            args.finish()?;
+            let client = installed_client()?;
+            let status = client
+                .status()
+                .map_err(|error| LifecycleError::state(error.to_string()))?;
+            let standing = authority_grant::standing_approvals(&client)?;
+            let indicator = status["standing_approvals"]["indicator_alive"] == Value::Bool(true);
+            let active = standing
+                .iter()
+                .filter(|entry| entry["state"].as_str() == Some("active"))
+                .count();
+            Ok(Output {
+                exit_code: 0,
+                human: format!(
+                    "Standing approvals of this logon session: {active} active of {} listed; indicator heartbeat {}.{}\n",
+                    standing.len(),
+                    if indicator { "live" } else { "not live" },
+                    if indicator {
+                        ""
+                    } else {
+                        " Without a live indicator (WP1-12) no standing approval is granted or used: every action keeps its own approval."
+                    }
+                ),
+                json: json!({
+                    "ok": true,
+                    "indicator_alive": indicator,
+                    "standing": standing,
+                }),
+            })
+        }
+        other => Err(LifecycleError::usage(format!(
+            "unknown full-control standing action {other:?}; use grant, revoke or status"
+        ))),
+    }
+}
+
+/// `orcel full-control standing grant --client <cl-ref> --task <label>
+/// --root <path>... --operations <list> --folder <path>... [--program
+/// <exe>]... [--minutes <n>] [--standing-minutes <n>]`.
+fn standing_grant(args: &mut Args) -> Result<Output, LifecycleError> {
+    let minutes = minutes(args)?;
+    let client_ref = args.value("--client")?.ok_or_else(|| {
+        LifecycleError::usage(
+            "--client <cl-...> names the one client the standing approval is for (fc_status shows it)",
+        )
+    })?;
+    let task = args
+        .value("--task")?
+        .ok_or_else(|| LifecycleError::usage("--task <label> declares the task"))?;
+    let roots = values(args, "--root")?;
+    let operations = args
+        .value("--operations")?
+        .ok_or_else(|| {
+            LifecycleError::usage(
+                "--operations <list> names what does not ask: run, git_add, git_unstage, git_commit, git_branch_create",
+            )
+        })
+        .and_then(|list| authority_grant::parse_operations(&list))?;
+    let folders = values(args, "--folder")?;
+    let programs = values(args, "--program")?;
+    let standing_minutes = match args.value("--standing-minutes")? {
+        Some(value) => Some(
+            value
+                .parse::<u64>()
+                .map_err(|_| LifecycleError::usage("--standing-minutes is a number of minutes"))?,
+        ),
+        None => None,
+    };
+    args.finish()?;
+    // Review of #844: each program is pinned now (its contents' SHA-256 and
+    // its file identity), shown here and in the service's box; a run is
+    // covered only while the program is still exactly that file.
+    let commands = authority_grant::pin_programs(&programs)?;
+    for pinned in &commands {
+        eprintln!("Pinned program: {}", pinned.describe());
+    }
+    let request = authority_grant::standing_request(
+        client_ref,
+        task,
+        roots,
+        minutes,
+        orcel_authority::core::standing::StandingScope {
+            executors: vec![orcel_contracts::ExecutorClass::ShellProcess],
+            operations,
+            roots: folders,
+            origins: Vec::new(),
+            commands,
+            minutes: standing_minutes,
+        },
+    )?;
+    service_standing_grant(&request)
+}
+
+#[cfg(windows)]
+fn service_standing_grant(
+    request: &authority_grant::StandingRequest,
+) -> Result<Output, LifecycleError> {
+    let client = installed_client()?;
+    let signer = hello_signer(&client)?;
+    let (lease, standing) =
+        authority_grant::run_standing_grant(&client, request, &signer, &mut progress)?;
+    Ok(Output {
+        exit_code: 0,
+        human: format!(
+            "Granted by the Orcel authority service: lease {} ({}), and standing approval {} for client {} and task {:?}: {} do not ask inside [{}] until {} ms. It ends with Stop, locking the PC, sign-out, revoke or the lease's end.\n",
+            lease.body.lease_id,
+            lease.body.scope.describe(),
+            standing.id,
+            standing.principal_id,
+            standing.task,
+            standing.operations.join(", "),
+            standing.roots.join(", "),
+            standing.expires_at_ms
+        ),
+        json: json!({ "ok": true, "lease": lease, "standing": standing }),
+    })
+}
+
+#[cfg(not(windows))]
+fn service_standing_grant(
+    _request: &authority_grant::StandingRequest,
+) -> Result<Output, LifecycleError> {
+    Err(LifecycleError::prerequisite(
+        "the Orcel authority service is Windows only in this slice",
+    ))
+}
+
 /// `orcel full-control revoke` when the service is installed: every
 /// active desktop lease of this logon session is revoked.
 pub fn full_control_revoke() -> Result<Value, LifecycleError> {

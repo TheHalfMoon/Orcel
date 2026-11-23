@@ -12,6 +12,8 @@
 //!   print the one-time code, wait for the service-observed unlock and the
 //!   confirmation, then sign the challenge, which is bound to the digest of
 //!   the confirmation text, with the enrolled key.
+//! - WP1-14: `orcel full-control standing grant`: the same gate for a lease
+//!   and the standing approval (spec 4.15) issued with it.
 //!
 //! The service decides everything; this side only carries the human's
 //! answers. Every wait is bounded by the service's own intent and window
@@ -19,6 +21,9 @@
 
 use crate::LifecycleError;
 use orcel_authority::client::AuthorityClient;
+use orcel_authority::core::standing::{
+    PinnedProgram, StandingApproval, StandingScope, STANDING_OPERATIONS,
+};
 use orcel_authority::lease::{BrowserFamily, LeaseScope, SignedLease, MAX_ORIGINS};
 use orcel_authority::protocol::{ClaimedOrigin, Request};
 use orcel_authority::{hex, sha256_hex, unhex, AuthorityError};
@@ -210,22 +215,18 @@ fn await_presence(
     }
 }
 
-/// `orcel full-control grant` and `orcel browser grant` through the service.
-pub fn run_grant(
+/// The grant gate both grants share: record the intent (`begin`), print the
+/// one-time code, wait for the observed unlock and the confirmation, sign
+/// the challenge with Windows Hello, and complete it (`complete`, given the
+/// intent id, the code and the signature). Returns the completion's answer.
+fn run_intent(
     client: &AuthorityClient,
-    request: &GrantRequest,
+    begin: &Request,
+    complete: &dyn Fn(String, String, String) -> Request,
     signer: &dyn HelloSigner,
     progress: &mut dyn FnMut(&str),
-) -> Result<SignedLease, LifecycleError> {
-    let begun = client
-        .call(&Request::GrantBegin {
-            origin: ClaimedOrigin::OwnerCli,
-            scope: request.scope.clone(),
-            minutes: Some(request.minutes),
-            principal_id: request.principal_id.clone(),
-            task: request.task.clone(),
-        })
-        .map_err(authority)?;
+) -> Result<Value, LifecycleError> {
+    let begun = client.call(begin).map_err(authority)?;
     let intent_id = text(&begun, "intent_id")?;
     let code = text(&begun, "code")?;
     progress(&format!(
@@ -243,15 +244,147 @@ pub fn run_grant(
         });
         LifecycleError::state(format!("Windows Hello did not sign: {error}"))
     })?;
-    let done = client
-        .call(&Request::PresenceComplete {
-            intent_id,
-            code,
-            signature_hex: hex(&signature),
-        })
-        .map_err(authority)?;
+    client
+        .call(&complete(intent_id, code, hex(&signature)))
+        .map_err(authority)
+}
+
+fn lease_of(done: &Value) -> Result<SignedLease, LifecycleError> {
     serde_json::from_value(done["lease"].clone())
         .map_err(|error| LifecycleError::state(format!("the service returned no lease: {error}")))
+}
+
+/// `orcel full-control grant` and `orcel browser grant` through the service.
+pub fn run_grant(
+    client: &AuthorityClient,
+    request: &GrantRequest,
+    signer: &dyn HelloSigner,
+    progress: &mut dyn FnMut(&str),
+) -> Result<SignedLease, LifecycleError> {
+    let begin = Request::GrantBegin {
+        origin: ClaimedOrigin::OwnerCli,
+        scope: request.scope.clone(),
+        minutes: Some(request.minutes),
+        principal_id: request.principal_id.clone(),
+        task: request.task.clone(),
+    };
+    let complete = |intent_id, code, signature_hex| Request::PresenceComplete {
+        intent_id,
+        code,
+        signature_hex,
+    };
+    let done = run_intent(client, &begin, &complete, signer, progress)?;
+    lease_of(&done)
+}
+
+/// WP1-14: one standing approval request (spec 4.15): the lease it is
+/// granted with and what it covers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StandingRequest {
+    pub scope: LeaseScope,
+    pub minutes: u64,
+    /// The identified client (`cl-` client reference, as `fc_status` shows
+    /// it).
+    pub client_ref: String,
+    pub task: String,
+    pub standing: StandingScope,
+}
+
+/// Parses `--operations` (comma separated) for a standing approval.
+pub fn parse_operations(list: &str) -> Result<Vec<String>, LifecycleError> {
+    list.split(',')
+        .map(|name| {
+            let name = name.trim();
+            if STANDING_OPERATIONS.contains(&name) {
+                Ok(name.to_owned())
+            } else {
+                Err(LifecycleError::usage(format!(
+                    "unknown operation {name:?}; use run, git_add, git_unstage, git_commit or git_branch_create"
+                )))
+            }
+        })
+        .collect()
+}
+
+/// Review of #844: pins each `--program` as it is now (path, SHA-256 of its
+/// contents, file identity).
+pub fn pin_programs(paths: &[String]) -> Result<Vec<PinnedProgram>, LifecycleError> {
+    paths
+        .iter()
+        .map(|path| {
+            orcel_authority::core::standing::pin_program_for_grant(path).map_err(|error| {
+                LifecycleError::usage(format!("--program {path}: {}", error.message))
+            })
+        })
+        .collect()
+}
+
+/// WP1-14: the lease and standing approval a standing grant asks for. The
+/// lease grants the filesystem and shell/process executors over `roots`;
+/// the standing approval covers `operations` inside `folders` (and, for a
+/// run, only its pinned programs, which a run requires). Validated here as
+/// the service validates it.
+pub fn standing_request(
+    client_ref: String,
+    task: String,
+    roots: Vec<String>,
+    minutes: u64,
+    standing: StandingScope,
+) -> Result<StandingRequest, LifecycleError> {
+    let scope = desktop_scope(
+        Some(vec![ExecutorClass::Filesystem, ExecutorClass::ShellProcess]),
+        roots,
+        true,
+    )?
+    .ok_or_else(|| LifecycleError::usage("a standing grant names its lease's roots"))?;
+    standing
+        .validate(&scope, &client_ref, minutes)
+        .map_err(|error| LifecycleError::usage(error.message))?;
+    Ok(StandingRequest {
+        scope,
+        minutes,
+        client_ref,
+        task,
+        standing,
+    })
+}
+
+/// WP1-14: `orcel full-control standing grant` through the service: the
+/// lease and its standing approval, through the same intent, unlock,
+/// service-rendered confirmation and Windows Hello as a grant.
+pub fn run_standing_grant(
+    client: &AuthorityClient,
+    request: &StandingRequest,
+    signer: &dyn HelloSigner,
+    progress: &mut dyn FnMut(&str),
+) -> Result<(SignedLease, StandingApproval), LifecycleError> {
+    let begin = Request::StandingBegin {
+        origin: ClaimedOrigin::OwnerCli,
+        scope: request.scope.clone(),
+        minutes: Some(request.minutes),
+        principal_id: request.client_ref.clone(),
+        task: request.task.clone(),
+        standing: request.standing.clone(),
+    };
+    let complete = |intent_id, code, signature_hex| Request::StandingComplete {
+        intent_id,
+        code,
+        signature_hex,
+    };
+    let done = run_intent(client, &begin, &complete, signer, progress)?;
+    let standing = serde_json::from_value(done["standing"].clone()).map_err(|error| {
+        LifecycleError::state(format!(
+            "the service returned no standing approval: {error}"
+        ))
+    })?;
+    Ok((lease_of(&done)?, standing))
+}
+
+/// WP1-14: the standing approvals of this user and logon session, as the
+/// service lists them (each with its state and whether it is in effect).
+pub fn standing_approvals(client: &AuthorityClient) -> Result<Vec<Value>, LifecycleError> {
+    let listed = client.list().map_err(authority)?;
+    Ok(listed["standing"].as_array().cloned().unwrap_or_default())
 }
 
 /// `orcel authority enroll` (the caller is elevated; the service checks).
@@ -632,6 +765,69 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
         Ok(())
     }
+    #[test]
+    fn standing_grant_requests_are_checked_as_the_service_checks_them() {
+        let client = format!("cl-{}", "ab".repeat(16));
+        let standing = |operations: &str, folders: &[&str], programs: Option<Vec<&str>>| {
+            Ok::<_, LifecycleError>(StandingScope {
+                executors: vec![ExecutorClass::ShellProcess],
+                operations: parse_operations(operations)?,
+                roots: folders.iter().map(|f| (*f).to_owned()).collect(),
+                origins: Vec::new(),
+                commands: programs
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|path| PinnedProgram {
+                        path: path.to_owned(),
+                        sha256: "ab".repeat(32),
+                        identity: "1-2".to_owned(),
+                    })
+                    .collect(),
+                minutes: None,
+            })
+        };
+        let roots = vec![r"D:\work".to_owned()];
+        let ok = standing(
+            "run,git_commit",
+            &[r"D:\work\repo"],
+            Some(vec![r"D:\work\repo\tool.exe"]),
+        )
+        .and_then(|scope| {
+            standing_request(client.clone(), "build".to_owned(), roots.clone(), 30, scope)
+        });
+        let Ok(request) = ok else {
+            assert!(ok.is_ok(), "{ok:?}");
+            return;
+        };
+        assert!(matches!(
+            request.scope,
+            LeaseScope::DesktopFullUser { shells: true, .. }
+        ));
+        // Unknown operations, folders outside the roots, an unidentified
+        // client and Admin are refused before anything is sent.
+        assert!(parse_operations("run,delete").is_err());
+        let outside = standing("git_commit", &[r"E:\elsewhere"], None).and_then(|scope| {
+            standing_request(client.clone(), "b".into(), roots.clone(), 30, scope)
+        });
+        assert!(outside.is_err());
+        let unidentified = standing("git_commit", &[r"D:\work\repo"], None).and_then(|scope| {
+            standing_request("orcel-owner".into(), "b".into(), roots.clone(), 30, scope)
+        });
+        assert!(unidentified.is_err());
+        let admin = standing("git_commit", &[r"D:\work\repo"], None).and_then(|mut scope| {
+            scope.executors = vec![ExecutorClass::Admin];
+            standing_request(client.clone(), "b".into(), roots.clone(), 30, scope)
+        });
+        assert!(admin.is_err());
+        // Review of #844: a run needs pinned programs, and a program that
+        // cannot be read cannot be pinned.
+        let any_program = standing("run", &[r"D:\work\repo"], None).and_then(|scope| {
+            standing_request(client.clone(), "b".into(), roots.clone(), 30, scope)
+        });
+        assert!(any_program.is_err());
+        assert!(pin_programs(&[r"Z:\no\such\tool.exe".to_owned()]).is_err());
+    }
+
     #[test]
     fn sg132_desktop_grants_default_to_the_narrow_scope_and_widen_explicitly() {
         assert_eq!(desktop_scope(None, Vec::new(), false).ok(), Some(None));

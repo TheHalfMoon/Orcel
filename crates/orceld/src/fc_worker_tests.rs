@@ -19,6 +19,7 @@ fn request_bytes(token: &str, op: WorkerOp, roots: Vec<String>) -> Vec<u8> {
         token: token.to_owned(),
         roots,
         op,
+        pinned: None,
     })
     .expect("encode")
 }
@@ -66,8 +67,9 @@ mod windows {
     use crate::full_control_dispatch_tests::{lease, request, FakeApproval};
     use orcel_authority::caller::CallerFacts;
     use orcel_authority::core::dispatch_jobs::{JobHost, JobProfile};
+    use orcel_authority::core::standing::StandingApproval;
     use orcel_authority::lease::{LeaseBody, LeaseScope};
-    use orcel_authority::protocol::{AuthorizeClaims, DispatchOutcome};
+    use orcel_authority::protocol::{AuthorizeClaims, DispatchOutcome, StandingClaim};
     use orcel_authority::win::jobs::{ClientProcess, ClientSlot, ServiceJobs};
     use orcel_contracts::ExecutorClass;
     use orcel_provider_fs::ProviderError;
@@ -203,11 +205,15 @@ mod windows {
         fn leases(&self) -> Result<Vec<LeaseBody>, ProviderError> {
             Ok(vec![self.lease.clone()])
         }
+        fn standing(&self) -> Result<Vec<StandingApproval>, ProviderError> {
+            Ok(Vec::new())
+        }
         fn authorize(
             &self,
             lease_id: &str,
             _executor: ExecutorClass,
             _claims: AuthorizeClaims,
+            _standing: Option<&StandingClaim>,
         ) -> Result<Value, ProviderError> {
             let (id, handle) = self.make_job(JobProfile::Dispatch);
             let authorization = format!("az-{}", &format!("{}{}", unique(), unique())[..32]);
@@ -286,7 +292,15 @@ mod windows {
             op.name(),
             serde_json::to_value(&op).expect("op"),
         );
-        run_in_worker(port, &launcher, &FakeApproval::default(), &request, None, 5)
+        run_in_worker(
+            port,
+            &launcher,
+            &FakeApproval::default(),
+            &request,
+            None,
+            false,
+            5,
+        )
     }
 
     #[test]
@@ -423,6 +437,7 @@ mod windows {
             &WorkerOp::Stat {
                 path: root.display().to_string(),
             },
+            None,
             &|| {
                 seen.set(port.jobs.borrow().active_processes(&id));
                 Err(ProviderError::new(FailureCode::LeaseInvalid, "revoked"))
@@ -708,6 +723,7 @@ mod windows {
                 },
                 &[root.display().to_string()],
                 &helper_op(&root, &cwd, 30_000, 4_096),
+                None,
                 &|| Ok(()),
             )
             .expect("the worker replied although a descendant still runs");
@@ -762,6 +778,47 @@ mod windows {
                 Some(FailureCode::InvalidRequest)
             );
         }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Review of #844 (WP1-14): a run a standing approval covered starts
+    /// only the pinned file with the pinned contents, checked on the handle
+    /// the worker holds; a changed program starts nothing.
+    #[test]
+    fn fc_worker_a_standing_run_starts_only_its_pinned_program() {
+        let (root, cwd) = helper_root("pinned", "exit7");
+        let roots = vec![root.display().to_string()];
+        let program = root.join(HELPER_EXE).display().to_string();
+        let op = helper_op(&root, &cwd, 20_000, 4_096);
+        let pinned = orcel_authority::core::standing::pin_program(&program).expect("pin");
+        let ran = crate::fc_worker::perform_pinned(&op, &roots, Some(&pinned)).expect("pinned run");
+        assert_eq!(ran["exit_code"], 7);
+        for changed in [
+            orcel_authority::core::standing::PinnedProgram {
+                sha256: "cd".repeat(32),
+                ..pinned.clone()
+            },
+            orcel_authority::core::standing::PinnedProgram {
+                identity: "0000000a-0000000000000002".to_owned(),
+                ..pinned.clone()
+            },
+        ] {
+            let refused = crate::fc_worker::perform_pinned(&op, &roots, Some(&changed));
+            assert_eq!(
+                refused.err().map(|e| e.code),
+                Some(FailureCode::TargetStale)
+            );
+        }
+        // A pin on any other operation is refused.
+        let stat = WorkerOp::Stat {
+            path: program.clone(),
+        };
+        assert_eq!(
+            crate::fc_worker::perform_pinned(&stat, &roots, Some(&pinned))
+                .err()
+                .map(|e| e.code),
+            Some(FailureCode::InvalidRequest)
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1595,13 +1652,17 @@ mod windows {
             fn leases(&self) -> Result<Vec<LeaseBody>, ProviderError> {
                 self.0.leases()
             }
+            fn standing(&self) -> Result<Vec<StandingApproval>, ProviderError> {
+                self.0.standing()
+            }
             fn authorize(
                 &self,
                 lease_id: &str,
                 executor: ExecutorClass,
                 claims: AuthorizeClaims,
+                standing: Option<&StandingClaim>,
             ) -> Result<Value, ProviderError> {
-                self.0.authorize(lease_id, executor, claims)
+                self.0.authorize(lease_id, executor, claims, standing)
             }
             fn outcome(
                 &self,
@@ -1646,13 +1707,17 @@ mod windows {
             fn leases(&self) -> Result<Vec<LeaseBody>, ProviderError> {
                 self.0.leases()
             }
+            fn standing(&self) -> Result<Vec<StandingApproval>, ProviderError> {
+                self.0.standing()
+            }
             fn authorize(
                 &self,
                 lease_id: &str,
                 executor: ExecutorClass,
                 claims: AuthorizeClaims,
+                standing: Option<&StandingClaim>,
             ) -> Result<Value, ProviderError> {
-                self.0.authorize(lease_id, executor, claims)
+                self.0.authorize(lease_id, executor, claims, standing)
             }
             fn outcome(
                 &self,

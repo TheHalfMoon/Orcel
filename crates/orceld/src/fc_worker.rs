@@ -31,6 +31,7 @@
 //! program's descendants) can never hold orceld's reply pipe.
 
 use crate::full_control_dispatch::Family;
+use orcel_authority::core::standing::PinnedProgram;
 use orcel_contracts::FailureCode;
 use orcel_provider_fs::ProviderError;
 use serde::{Deserialize, Serialize};
@@ -133,8 +134,11 @@ impl WorkerOp {
 
     /// Whether the operation needs the person's fresh per-action approval
     /// before Authorize (SG-000096 A3: every new process; git operations
-    /// that change the repository), on every call: standing approvals
-    /// (WP1-14) do not exist yet.
+    /// that change the repository), on every call, unless a standing
+    /// approval (spec 4.15, WP1-14, SG132_SLICE10.md) of the same lease,
+    /// client and task covers it; the dispatcher decides that
+    /// (`full_control_dispatch::covering_standing`) and the service checks it
+    /// again at `Authorize`.
     ///
     /// The exception: the SG-000132 amendment "SG-000132 amendment: Full Control file writes covered by the lease, and the fc_* tool surface" (2026-11-19,
     /// `.specgrain/specs/SG-000132.json` `amendments`; the founder's answers
@@ -282,6 +286,11 @@ pub(crate) struct WorkerRequest {
     pub token: String,
     pub roots: Vec<String>,
     pub op: WorkerOp,
+    /// Review of #844 (WP1-14): for a run a standing approval covered, the
+    /// program as pinned at grant; the worker starts it only if the file it
+    /// holds open is that file with those contents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned: Option<PinnedProgram>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -809,8 +818,28 @@ fn refuse_hard_links(file: &std::fs::File) -> Result<(), ProviderError> {
     Ok(())
 }
 
-/// Performs one operation inside `roots`.
+/// Performs one operation inside `roots` (no pinned program: the run was
+/// approved per action). The Windows worker tests (`fc_worker_tests`'
+/// `windows` module) drive the worker's operations through it, so it exists
+/// only in Windows test builds.
+#[cfg(all(test, windows))]
 pub(crate) fn perform(op: &WorkerOp, roots: &[String]) -> Result<Value, ProviderError> {
+    perform_pinned(op, roots, None)
+}
+
+/// [`perform`]; a run a standing approval covered starts only the `pinned`
+/// program (review of #844). `pinned` on any other operation refuses.
+pub(crate) fn perform_pinned(
+    op: &WorkerOp,
+    roots: &[String],
+    pinned: Option<&PinnedProgram>,
+) -> Result<Value, ProviderError> {
+    if pinned.is_some() && !matches!(op, WorkerOp::Run { .. }) {
+        return Err(failure(
+            FailureCode::InvalidRequest,
+            "only a run names a pinned program",
+        ));
+    }
     match op {
         WorkerOp::Stat { path } => {
             let resolved = existing(path, roots)?;
@@ -967,7 +996,15 @@ pub(crate) fn perform(op: &WorkerOp, roots: &[String]) -> Result<Value, Provider
             cwd,
             timeout_ms,
             max_output_bytes,
-        } => exec::run_program(program, args, cwd, *timeout_ms, *max_output_bytes, roots),
+        } => exec::run_program(
+            program,
+            args,
+            cwd,
+            *timeout_ms,
+            *max_output_bytes,
+            roots,
+            pinned,
+        ),
         WorkerOp::GitStatus { repository } => {
             exec::run_git(repository, exec::GitAction::Status, roots)
         }
@@ -1039,7 +1076,7 @@ pub(crate) fn serve(input: &mut impl Read, output: &mut impl Write, in_job: bool
         }
     };
     let result = if in_job {
-        perform(&request.op, &request.roots)
+        perform_pinned(&request.op, &request.roots, request.pinned.as_ref())
     } else {
         Err(failure(
             FailureCode::CapabilityDenied,
@@ -1485,6 +1522,7 @@ mod launch {
             job: &JobGrant,
             roots: &[String],
             op: &WorkerOp,
+            pinned: Option<&orcel_authority::core::standing::PinnedProgram>,
             confirm: &dyn Fn() -> Result<(), ProviderError>,
         ) -> Result<Value, ProviderError> {
             // The assign-only handle the service duplicated into this
@@ -1497,6 +1535,7 @@ mod launch {
                 token: token.clone(),
                 roots: roots.to_vec(),
                 op: op.clone(),
+                pinned: pinned.cloned(),
             })
             .map_err(|error| ProviderError::new(FailureCode::InternalError, error.to_string()))?;
             let (process, mut stdin, stdout) = self.start(job, confirm)?;

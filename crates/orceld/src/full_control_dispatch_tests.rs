@@ -10,10 +10,11 @@ use crate::full_control_dispatch::{
     run_in_worker as dispatch_worker, with_desktop_outcomes, Action, ActionApproval, AuthorityPort,
     BoundedExecution, Family, HostLauncher, JobGrant, Ticket, WorkerLauncher,
 };
+use orcel_authority::core::standing::{PinnedProgram, StandingApproval};
 use orcel_authority::lease::{
     BrowserFamily, GrantEvidence, LeaseBody, LeaseScope, ObservedRequester, LEASE_CONTRACT,
 };
-use orcel_authority::protocol::{AuthorizeClaims, DispatchOutcome};
+use orcel_authority::protocol::{AuthorizeClaims, DispatchOutcome, StandingClaim};
 use orcel_contracts::{ExecutorClass, FailureCode, RequestEnvelope};
 use orcel_provider_fs::ProviderError;
 use serde_json::{json, Value};
@@ -88,6 +89,12 @@ pub(crate) struct FakeService {
     installed: bool,
     pub(crate) unreachable: bool,
     leases: Vec<LeaseBody>,
+    /// WP1-14: the standing approvals the service reports in effect, and a
+    /// refusal of every `Authorize` that names one.
+    pub(crate) standing: Vec<StandingApproval>,
+    pub(crate) refuse_standing: Option<FailureCode>,
+    /// The standing approval each `Authorize` named, in order.
+    pub(crate) named_standing: Vec<Option<StandingClaim>>,
     /// Replaces the Authorize answer when set.
     answer: Option<Value>,
     /// Ends the dispatch's job right after answering (a revoke that lands
@@ -155,15 +162,31 @@ impl AuthorityPort for FakePort {
         Ok(service.leases.clone())
     }
 
+    fn standing(&self) -> Result<Vec<StandingApproval>, ProviderError> {
+        let service = self.0.borrow();
+        if service.unreachable {
+            return Err(unavailable());
+        }
+        Ok(service.standing.clone())
+    }
+
     fn authorize(
         &self,
         lease_id: &str,
         executor: ExecutorClass,
         claims: AuthorizeClaims,
+        standing: Option<&StandingClaim>,
     ) -> Result<Value, ProviderError> {
         let mut service = self.0.borrow_mut();
         if service.unreachable {
             return Err(unavailable());
+        }
+        service.named_standing.push(standing.cloned());
+        if let (Some(_), Some(code)) = (standing, &service.refuse_standing) {
+            return Err(ProviderError::new(
+                code.clone(),
+                "the service refused the standing approval",
+            ));
         }
         service.calls.push("authorize");
         service.next += 1;
@@ -191,6 +214,7 @@ impl AuthorityPort for FakePort {
                 "lease_id": lease_id,
                 "job_id": job,
                 "job_handle": handle,
+                "standing_id": standing.map(|claim| claim.standing_id.clone()),
             })
         }))
     }
@@ -260,6 +284,8 @@ pub(crate) struct FakeLauncher {
     service: FakePort,
     fails: Option<FailureCode>,
     pub(crate) runs: Cell<u32>,
+    /// The pinned program each run was handed (review of #844).
+    pub(crate) pinned: RefCell<Vec<Option<PinnedProgram>>>,
 }
 
 impl WorkerLauncher for FakeLauncher {
@@ -268,10 +294,12 @@ impl WorkerLauncher for FakeLauncher {
         job: &JobGrant,
         roots: &[String],
         op: &WorkerOp,
+        pinned: Option<&PinnedProgram>,
         confirm: &dyn Fn() -> Result<(), ProviderError>,
     ) -> Result<Value, ProviderError> {
         assert!(job.handle != 0 && job.id.starts_with("fcj-"));
         let _ = &self.service;
+        self.pinned.borrow_mut().push(pinned.cloned());
         confirm()?;
         self.runs.set(self.runs.get() + 1);
         assert_eq!(roots, [r"C:\work".to_owned()]);
@@ -315,6 +343,7 @@ pub(crate) fn launcher(service: &FakePort) -> FakeLauncher {
         service: service.clone(),
         fails: None,
         runs: Cell::new(0),
+        pinned: RefCell::new(Vec::new()),
     }
 }
 
@@ -352,6 +381,7 @@ fn run_in_worker(
         &FakeApproval::default(),
         &request,
         principal_id,
+        false,
         now_ms,
     )
 }
@@ -854,6 +884,7 @@ fn fc_dispatch_the_operation_is_the_request_arguments_or_nothing() {
             &FakeApproval::default(),
             &request,
             None,
+            false,
             5,
         );
         assert_eq!(
@@ -872,6 +903,7 @@ fn fc_dispatch_the_operation_is_the_request_arguments_or_nothing() {
             &FakeApproval::default(),
             &renamed,
             None,
+            false,
             5
         )),
         Some(FailureCode::InvalidRequest)
@@ -883,6 +915,7 @@ fn fc_dispatch_the_operation_is_the_request_arguments_or_nothing() {
         &FakeApproval::default(),
         &fs_request(),
         None,
+        false,
         5,
     )
     .expect("ran");
@@ -1337,8 +1370,16 @@ fn fc_dispatch_process_and_git_mutations_need_a_fresh_approval_bound_to_the_dige
     let approval = FakeApproval::default();
     let launched = launcher(&port);
     let run = run_op(r"C:\work\tools\tool.exe", r"C:\work");
-    let ran = dispatch_worker(&port, &launched, &approval, &worker_request(&run), None, 5)
-        .expect("approved and ran");
+    let ran = dispatch_worker(
+        &port,
+        &launched,
+        &approval,
+        &worker_request(&run),
+        None,
+        false,
+        5,
+    )
+    .expect("approved and ran");
     assert_eq!(ran["ran"], json!([r"C:\work", r"C:\work\tools\tool.exe"]));
     {
         let service = port.0.borrow();
@@ -1397,7 +1438,16 @@ fn fc_dispatch_process_and_git_mutations_need_a_fresh_approval_bound_to_the_dige
         ),
     ] {
         let before = approval.asked.borrow().len();
-        dispatch_worker(&port, &launched, &approval, &worker_request(&op), None, 6).expect("ran");
+        dispatch_worker(
+            &port,
+            &launched,
+            &approval,
+            &worker_request(&op),
+            None,
+            false,
+            6,
+        )
+        .expect("ran");
         assert_eq!(
             approval.asked.borrow().len() - before,
             usize::from(asks),
@@ -1420,6 +1470,7 @@ fn fc_dispatch_process_and_git_mutations_need_a_fresh_approval_bound_to_the_dige
             &declined,
             &worker_request(&run),
             None,
+            false,
             7
         )),
         Some(FailureCode::ApprovalDenied)
@@ -1446,6 +1497,7 @@ fn fc_dispatch_process_and_git_mutations_need_a_fresh_approval_bound_to_the_dige
             &unasked,
             &worker_request(&run),
             None,
+            false,
             8
         )),
         Some(FailureCode::LeaseRequired)
@@ -1472,6 +1524,7 @@ fn fc_dispatch_process_and_git_paths_stay_in_the_roots_and_take_no_free_argument
                 &approval,
                 &worker_request(&op),
                 None,
+                false,
                 5
             )),
             Some(FailureCode::PathEscape),
@@ -1491,6 +1544,7 @@ fn fc_dispatch_process_and_git_paths_stay_in_the_roots_and_take_no_free_argument
                 &approval,
                 &worker_request(&op),
                 None,
+                false,
                 5
             )),
             Some(FailureCode::InvalidRequest),
@@ -1521,6 +1575,7 @@ fn fc_dispatch_process_and_git_paths_stay_in_the_roots_and_take_no_free_argument
                 &approval,
                 &request,
                 None,
+                false,
                 5
             )),
             Some(FailureCode::InvalidRequest),
@@ -1529,4 +1584,443 @@ fn fc_dispatch_process_and_git_paths_stay_in_the_roots_and_take_no_free_argument
     }
     assert!(port.0.borrow().authorized.is_empty());
     assert!(approval.asked.borrow().is_empty());
+}
+
+// ---------------------------------------------------------------------
+// WP1-14 (SG132_SLICE10.md): standing approvals at the dispatcher.
+// ---------------------------------------------------------------------
+
+const REPO: &str = r"C:\work\repo";
+const REPO_TOOL: &str = r"C:\work\repo\tool.exe";
+
+fn standing_approval(lease: &LeaseBody) -> StandingApproval {
+    StandingApproval {
+        contract: orcel_authority::core::standing::STANDING_CONTRACT.to_owned(),
+        id: format!("sa-{}", "5".repeat(32)),
+        lease_id: lease.lease_id.clone(),
+        principal_id: lease.principal_id.clone(),
+        task: lease.task.clone(),
+        executors: vec![ExecutorClass::ShellProcess],
+        operations: vec!["run".to_owned(), "git_commit".to_owned()],
+        roots: vec![REPO.to_owned()],
+        origins: Vec::new(),
+        commands: vec![test_pin(REPO_TOOL)],
+        issued_at_ms: 1_000,
+        expires_at_ms: 1_000 + 10 * 60_000,
+    }
+}
+
+/// The request as `fc_requests` names it (`fc.fs`, `fc.process`, `fc.git`):
+/// a standing approval covers an operation only under its own capability.
+fn fc_request(op: &WorkerOp) -> RequestEnvelope {
+    let capability = match op.family() {
+        Family::Filesystem => "fc.fs",
+        Family::Process => "fc.process",
+        Family::Git | Family::DesktopInput => "fc.git",
+    };
+    request(capability, op.name(), serde_json::to_value(op).expect("op"))
+}
+
+fn commit_op(repository: &str) -> WorkerOp {
+    WorkerOp::GitCommit {
+        repository: repository.to_owned(),
+        message: "tidy".to_owned(),
+    }
+}
+
+/// A port with one lease and one standing approval in effect, as `change`
+/// leaves it.
+fn standing_port(change: impl FnOnce(&mut StandingApproval)) -> FakePort {
+    let body = lease('1', full_scope());
+    let mut approval = standing_approval(&body);
+    change(&mut approval);
+    let port = FakePort::installed(vec![body]);
+    port.with(|service| service.standing = vec![approval]);
+    port
+}
+
+/// One worker operation as the calling client `principal`, local or
+/// remote.
+fn dispatch_as(
+    port: &FakePort,
+    approval: &FakeApproval,
+    op: &WorkerOp,
+    principal: Option<&str>,
+    remote: bool,
+    now_ms: u64,
+) -> Result<Value, ProviderError> {
+    dispatch_pinned(port, approval, op, principal, remote, now_ms, &|path| {
+        Some(test_pin(path))
+    })
+}
+
+/// [`dispatch_as`] with `pinner` standing in for reading the program now.
+fn dispatch_pinned(
+    port: &FakePort,
+    approval: &FakeApproval,
+    op: &WorkerOp,
+    principal: Option<&str>,
+    remote: bool,
+    now_ms: u64,
+    pinner: &dyn Fn(&str) -> Option<PinnedProgram>,
+) -> Result<Value, ProviderError> {
+    crate::full_control_dispatch::run_in_worker_pinned(
+        port,
+        &launcher(port),
+        approval,
+        &fc_request(op),
+        principal,
+        remote,
+        now_ms,
+        pinner,
+    )
+}
+
+/// A program as pinned at grant (a fixed SHA-256 and file identity).
+fn test_pin(path: &str) -> PinnedProgram {
+    PinnedProgram {
+        path: path.to_owned(),
+        sha256: "ab".repeat(32),
+        identity: "0000000a-0000000000000001".to_owned(),
+    }
+}
+
+#[test]
+fn fc_dispatch_standing_covers_a_run_only_with_its_pinned_contents_and_file() {
+    let client = client();
+    let run = run_op(REPO_TOOL, REPO);
+    let cases: Vec<(&str, Option<PinnedProgram>)> = vec![
+        (
+            "rewritten since the grant",
+            Some(PinnedProgram {
+                sha256: "cd".repeat(32),
+                ..test_pin(REPO_TOOL)
+            }),
+        ),
+        (
+            "replaced by another file",
+            Some(PinnedProgram {
+                identity: "0000000a-0000000000000002".to_owned(),
+                ..test_pin(REPO_TOOL)
+            }),
+        ),
+        ("unreadable now", None),
+    ];
+    for (name, now) in cases {
+        let port = standing_port(|_| {});
+        let approval = FakeApproval::default();
+        dispatch_pinned(&port, &approval, &run, Some(&client), false, 5, &|_| {
+            now.clone()
+        })
+        .expect(name);
+        assert_eq!(approval.asked.borrow().len(), 1, "{name}: asked");
+        assert_eq!(last_named(&port), None, "{name}: not covered");
+    }
+    // Re-review of #844: a program no approval in effect pins is never read
+    // or hashed (asked unread), and neither is a remote caller's.
+    let read = Cell::new(0u32);
+    for (program, remote) in [(r"C:\work\repo\other.exe", false), (REPO_TOOL, true)] {
+        let port = standing_port(|_| {});
+        let approval = FakeApproval::default();
+        dispatch_pinned(
+            &port,
+            &approval,
+            &run_op(program, REPO),
+            Some(&client),
+            remote,
+            5,
+            &|path| {
+                read.set(read.get() + 1);
+                Some(test_pin(path))
+            },
+        )
+        .expect("asked");
+        assert_eq!(approval.asked.borrow().len(), 1);
+    }
+    assert_eq!(read.get(), 0, "nothing was hashed");
+    // Covered: the worker is handed the pin to check on the file it holds.
+    let port = standing_port(|_| {});
+    let launched = launcher(&port);
+    crate::full_control_dispatch::run_in_worker_pinned(
+        &port,
+        &launched,
+        &FakeApproval::default(),
+        &fc_request(&run),
+        Some(&client),
+        false,
+        5,
+        &|path| Some(test_pin(path)),
+    )
+    .expect("covered");
+    assert_eq!(*launched.pinned.borrow(), vec![Some(test_pin(REPO_TOOL))]);
+    // A commit is covered without a program, and the worker gets no pin.
+    let launched = launcher(&port);
+    crate::full_control_dispatch::run_in_worker_pinned(
+        &port,
+        &launched,
+        &FakeApproval::default(),
+        &fc_request(&commit_op(REPO)),
+        Some(&client),
+        false,
+        5,
+        &|_| None,
+    )
+    .expect("covered commit");
+    assert_eq!(*launched.pinned.borrow(), vec![None]);
+}
+
+/// The standing approval the last `Authorize` named.
+fn last_named(port: &FakePort) -> Option<StandingClaim> {
+    port.0
+        .borrow()
+        .named_standing
+        .last()
+        .cloned()
+        .unwrap_or_default()
+}
+
+#[test]
+fn fc_dispatch_standing_covers_a_matching_run_and_commit_without_asking() {
+    let port = standing_port(|_| {});
+    let approval = FakeApproval::default();
+    let client = client();
+    let run = run_op(REPO_TOOL, REPO);
+    dispatch_as(&port, &approval, &run, Some(&client), false, 5).expect("covered run");
+    assert_eq!(
+        last_named(&port),
+        Some(StandingClaim {
+            standing_id: format!("sa-{}", "5".repeat(32)),
+            program: Some(test_pin(REPO_TOOL)),
+        })
+    );
+    dispatch_as(&port, &approval, &commit_op(REPO), Some(&client), false, 5)
+        .expect("covered commit");
+    assert_eq!(
+        last_named(&port).map(|claim| claim.program),
+        Some(None),
+        "a commit names no program"
+    );
+    assert!(approval.asked.borrow().is_empty(), "nothing was asked");
+    // Each covered dispatch still had its own audit-first Authorize.
+    assert_eq!(port.0.borrow().authorized.len(), 2);
+    // fc.status shows the agent what will not ask.
+    let status = crate::fc_requests::status(&port, &client, 5).expect("status");
+    assert_eq!(
+        status["standing"][0]["operations"],
+        json!(["run", "git_commit"])
+    );
+    assert_eq!(status["standing"][0]["folders"], json!([REPO]));
+}
+
+#[test]
+fn fc_dispatch_standing_mismatches_ask_as_before() {
+    let client = client();
+    let other_client = format!("cl-{}", "e".repeat(32));
+    let cases: Vec<(&str, FakePort, WorkerOp, u64)> = vec![
+        (
+            "another program",
+            standing_port(|_| {}),
+            run_op(r"C:\work\repo\other.exe", REPO),
+            5,
+        ),
+        (
+            "a folder outside",
+            standing_port(|_| {}),
+            run_op(r"C:\work\tool.exe", r"C:\work"),
+            5,
+        ),
+        (
+            "an operation not named",
+            standing_port(|_| {}),
+            WorkerOp::GitAdd {
+                repository: REPO.to_owned(),
+                paths: vec!["a.txt".to_owned()],
+            },
+            5,
+        ),
+        (
+            "another client",
+            standing_port(|approval| approval.principal_id = other_client.clone()),
+            run_op(REPO_TOOL, REPO),
+            5,
+        ),
+        (
+            "another task",
+            standing_port(|approval| approval.task = "another task".to_owned()),
+            run_op(REPO_TOOL, REPO),
+            5,
+        ),
+        (
+            "another lease",
+            standing_port(|approval| approval.lease_id = format!("al-{}", "9".repeat(32))),
+            run_op(REPO_TOOL, REPO),
+            5,
+        ),
+        (
+            "expired",
+            standing_port(|_| {}),
+            run_op(REPO_TOOL, REPO),
+            1_000 + 10 * 60_000,
+        ),
+        (
+            "an executor not named",
+            standing_port(|approval| approval.executors = vec![ExecutorClass::Filesystem]),
+            run_op(REPO_TOOL, REPO),
+            5,
+        ),
+    ];
+    for (name, port, op, now) in cases {
+        let approval = FakeApproval::default();
+        dispatch_as(&port, &approval, &op, Some(&client), false, now).expect(name);
+        assert_eq!(approval.asked.borrow().len(), 1, "{name}: asked once");
+        assert_eq!(
+            last_named(&port),
+            None,
+            "{name}: no standing approval named"
+        );
+    }
+    // A declined prompt still refuses, standing approvals or not.
+    let port = standing_port(|_| {});
+    let declining = FakeApproval {
+        deny: true,
+        ..FakeApproval::default()
+    };
+    let refused = dispatch_as(
+        &port,
+        &declining,
+        &run_op(r"C:\work\repo\other.exe", REPO),
+        Some(&client),
+        false,
+        5,
+    );
+    assert_eq!(code(refused), Some(FailureCode::ApprovalDenied));
+    assert!(port.0.borrow().authorized.is_empty());
+}
+
+#[test]
+fn fc_dispatch_standing_never_covers_a_remote_or_unidentified_caller() {
+    let port = standing_port(|_| {});
+    let approval = FakeApproval::default();
+    let client = client();
+    let run = run_op(REPO_TOOL, REPO);
+    // Remote: asked, whatever matches.
+    dispatch_as(&port, &approval, &run, Some(&client), true, 5).expect("asked");
+    assert_eq!(approval.asked.borrow().len(), 1);
+    assert_eq!(last_named(&port), None);
+    // No client named: asked.
+    dispatch_as(&port, &approval, &run, None, false, 5).expect("asked");
+    assert_eq!(approval.asked.borrow().len(), 2);
+    assert_eq!(last_named(&port), None);
+    // The rule itself refuses remote callers and operations that never ask.
+    let body = lease('1', full_scope());
+    let standing = [standing_approval(&body)];
+    let request = fc_request(&run);
+    assert!(crate::full_control_dispatch::covering_standing(
+        &standing,
+        &body,
+        &run,
+        &request,
+        Some(&client),
+        true,
+        Some(&test_pin(REPO_TOOL)),
+        5
+    )
+    .is_none());
+    assert!(crate::full_control_dispatch::covering_standing(
+        &standing,
+        &body,
+        &run,
+        &request,
+        Some(&client),
+        false,
+        Some(&test_pin(REPO_TOOL)),
+        5
+    )
+    .is_some());
+    // A run with no pin (the program could not be read) is never covered.
+    assert!(crate::full_control_dispatch::covering_standing(
+        &standing,
+        &body,
+        &run,
+        &request,
+        Some(&client),
+        false,
+        None,
+        5
+    )
+    .is_none());
+    let write = WorkerOp::WriteText {
+        path: r"C:\work\repo\a.txt".to_owned(),
+        text: "x".to_owned(),
+        create_new: true,
+    };
+    assert!(crate::full_control_dispatch::covering_standing(
+        &standing,
+        &body,
+        &write,
+        &fc_request(&write),
+        Some(&client),
+        false,
+        None,
+        5
+    )
+    .is_none());
+    // A lease-covered write asks nothing and names no standing approval.
+    dispatch_as(&port, &approval, &write, Some(&client), false, 5).expect("write");
+    assert_eq!(approval.asked.borrow().len(), 2);
+    assert_eq!(last_named(&port), None);
+}
+
+#[test]
+fn fc_dispatch_a_refused_or_unconfirmed_standing_authorize_runs_nothing() {
+    let client = client();
+    // A covered commit (no program to pin).
+    let run = commit_op(REPO);
+    // The service refuses (no live indicator, revoked meanwhile, ...).
+    let port = standing_port(|_| {});
+    port.with(|service| service.refuse_standing = Some(FailureCode::IndicatorUnavailable));
+    let approval = FakeApproval::default();
+    let launched = launcher(&port);
+    let refused = dispatch_worker(
+        &port,
+        &launched,
+        &approval,
+        &fc_request(&run),
+        Some(&client),
+        false,
+        5,
+    );
+    assert_eq!(code(refused), Some(FailureCode::IndicatorUnavailable));
+    assert_eq!(launched.runs.get(), 0);
+    assert!(approval.asked.borrow().is_empty());
+    // An answer that does not confirm the named approval runs nothing.
+    let port = standing_port(|_| {});
+    port.with(|service| {
+        service.answer = Some(json!({
+            "authorization_id": format!("az-{}", "1".repeat(32)),
+            "lease_id": lease('1', full_scope()).lease_id,
+            "job_id": format!("fcj-{}", "1".repeat(32)),
+            "job_handle": 0x4004,
+            "standing_id": null,
+        }))
+    });
+    let launched = launcher(&port);
+    let refused = dispatch_worker(
+        &port,
+        &launched,
+        &approval,
+        &fc_request(&run),
+        Some(&client),
+        false,
+        5,
+    );
+    assert_eq!(code(refused), Some(FailureCode::AuthorityUnavailable));
+    assert_eq!(launched.runs.get(), 0);
+    // An unreachable service lists nothing and refuses.
+    let port = standing_port(|_| {});
+    port.with(|service| service.unreachable = true);
+    assert_eq!(
+        code(dispatch_as(&port, &approval, &run, Some(&client), false, 5)),
+        Some(FailureCode::AuthorityUnavailable)
+    );
 }

@@ -415,7 +415,7 @@ fn fc_requests_shapes_are_validated_before_anything_is_asked() {
     cases.push((status_args, FailureCode::InvalidRequest));
     for (request, expected) in cases {
         assert_eq!(
-            code(dispatch(&port, &launched, &approval, &request, 5)),
+            code(dispatch(&port, &launched, &approval, &request, false, 5)),
             Some(expected),
             "{}/{}",
             request.capability,
@@ -434,7 +434,14 @@ fn fc_requests_without_a_lease_every_tool_refuses_lease_required() {
     let approval = FakeApproval::default();
     for op in every_op() {
         assert_eq!(
-            code(dispatch(&port, &launched, &approval, &fc_request(&op), 5)),
+            code(dispatch(
+                &port,
+                &launched,
+                &approval,
+                &fc_request(&op),
+                false,
+                5
+            )),
             Some(FailureCode::LeaseRequired),
             "{op:?}"
         );
@@ -454,6 +461,7 @@ fn fc_requests_without_a_lease_every_tool_refuses_lease_required() {
             &launcher(&files_only),
             &approval,
             &fc_request(&op),
+            false,
             5,
         );
         if op.family() == Family::Filesystem {
@@ -474,6 +482,7 @@ fn fc_requests_without_a_lease_every_tool_refuses_lease_required() {
             &launcher(&absent),
             &approval,
             &fc_request(&every_op()[0]),
+            false,
             5
         )),
         Some(FailureCode::AuthorityUnavailable)
@@ -487,7 +496,7 @@ fn fc_requests_the_principal_is_the_calling_clients_reference() {
     let launched = launcher(&port);
     let approval = FakeApproval::default();
     for op in every_op() {
-        dispatch(&port, &launched, &approval, &fc_request(&op), 5).expect("bound client");
+        dispatch(&port, &launched, &approval, &fc_request(&op), false, 5).expect("bound client");
     }
     for (_, _, claims) in &port.0.borrow().authorized {
         assert_eq!(claims.principal_id, client_ref("c"));
@@ -497,7 +506,7 @@ fn fc_requests_the_principal_is_the_calling_clients_reference() {
     other.client_session_id = "another-session".into();
     let before = port.0.borrow().authorized.len();
     assert_eq!(
-        code(dispatch(&port, &launched, &approval, &other, 6)),
+        code(dispatch(&port, &launched, &approval, &other, false, 6)),
         Some(FailureCode::CapabilityDenied)
     );
     assert_eq!(port.0.borrow().authorized.len(), before);
@@ -516,7 +525,7 @@ fn fc_requests_file_writes_are_lease_covered_and_ask_nothing() {
         .filter(|op| matches!(op, WorkerOp::WriteText { .. } | WorkerOp::Mkdir { .. }))
     {
         assert!(!op.needs_approval(), "{op:?}");
-        dispatch(&port, &launched, &approval, &fc_request(&op), 5).expect("written");
+        dispatch(&port, &launched, &approval, &fc_request(&op), false, 5).expect("written");
     }
     assert!(approval.asked.borrow().is_empty());
     let service = port.0.borrow();
@@ -556,7 +565,15 @@ fn fc_requests_process_and_git_mutations_ask_every_call() {
     for round in 0..2u64 {
         for op in every_op() {
             let before = approval.asked.borrow().len();
-            dispatch(&port, &launched, &approval, &fc_request(&op), 10 + round).expect("ran");
+            dispatch(
+                &port,
+                &launched,
+                &approval,
+                &fc_request(&op),
+                false,
+                10 + round,
+            )
+            .expect("ran");
             let asked = approval.asked.borrow().len() - before;
             assert_eq!(asked, usize::from(asking.contains(&op.name())), "{op:?}");
             assert_eq!(op.needs_approval(), asking.contains(&op.name()));
@@ -595,6 +612,7 @@ fn fc_requests_process_and_git_mutations_ask_every_call() {
             &launched,
             &declined,
             &fc_request(&every_op()[5]),
+            false,
             20
         )),
         Some(FailureCode::ApprovalDenied)
@@ -622,7 +640,8 @@ fn fc_requests_status_shows_the_lease_scope_and_grants_nothing() {
     let port = FakePort::installed(vec![lease('1', full_scope()), foreign, unbound, browser]);
     let launched = launcher(&port);
     let approval = FakeApproval::default();
-    let answer = dispatch(&port, &launched, &approval, &status_request(), 2_000).expect("status");
+    let answer =
+        dispatch(&port, &launched, &approval, &status_request(), false, 2_000).expect("status");
     assert_eq!(answer["client_ref"], json!(client_ref("c")));
     assert_eq!(answer["authority"], json!("installed"));
     assert_eq!(answer["grants"], json!("nothing"));
@@ -934,7 +953,14 @@ fn fc_requests_bad_arguments_are_refused_before_the_prompt() {
             Some(expected.clone())
         );
         assert_eq!(
-            code(dispatch(&port, &launched, &approval, &fc_request(&op), 5)),
+            code(dispatch(
+                &port,
+                &launched,
+                &approval,
+                &fc_request(&op),
+                false,
+                5
+            )),
             Some(expected),
             "{}",
             op.name()

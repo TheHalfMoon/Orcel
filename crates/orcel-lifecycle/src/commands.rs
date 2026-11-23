@@ -996,7 +996,7 @@ pub fn emergency_revoke(args: &mut Args) -> Result<Output, LifecycleError> {
 }
 
 pub fn full_control(args: &mut Args) -> Result<Output, LifecycleError> {
-    let action = args.positional("full-control action (grant, revoke, status)")?;
+    let action = args.positional("full-control action (grant, revoke, status, standing)")?;
     let layout = Layout::for_current_user()?;
     // SG-000132 slice 2, desktop lease migration step: once the authority
     // service is installed, grants come from it only. The user-readable
@@ -1004,6 +1004,11 @@ pub fn full_control(args: &mut Args) -> Result<Output, LifecycleError> {
     // service is not installed and never issues once it is.
     let service = crate::authority_commands::use_service();
     match action.as_str() {
+        // WP1-14: standing approvals exist only in the authority service.
+        "standing" if service => crate::authority_commands::full_control_standing(args),
+        "standing" => Err(LifecycleError::prerequisite(
+            "standing approvals are issued only by the Orcel authority service, which is not installed (SG132_INSTALL_RUNBOOK.md)",
+        )),
         "grant" if service => crate::authority_commands::full_control_grant(args),
         "revoke" if service => {
             args.finish()?;

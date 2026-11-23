@@ -11,9 +11,13 @@
 //! WP1-10 adds `job_id` and `job_handle` to `Authorize`, `DispatchActive`
 //! and the dispatch `Outcome`; SG132_SLICE5.md adds `JobAck` and
 //! `DesktopHostJob`.
-//! Standing approvals and the indicator heartbeat are later slices; their
-//! requests are not accepted yet.
+//! WP1-14 (SG132_SLICE10.md) adds `StandingBegin`, `StandingComplete`,
+//! `StandingRevoke` and the optional `standing` claim of `Authorize`; an
+//! older service refuses each of them as unknown (fail closed), so the
+//! service is upgraded first. The indicator `Heartbeat` is WP1-12 and is
+//! not accepted yet.
 
+use crate::core::standing::StandingScope;
 use crate::error::AuthorityError;
 use crate::lease::LeaseScope;
 use orcel_contracts::event::AnchorRef;
@@ -67,6 +71,20 @@ pub struct AuthorizeClaims {
     /// actions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paths: Option<Vec<String>>,
+}
+
+/// WP1-14: the standing approval orceld names in place of a per-action
+/// approval (session-asserted, checked by the service against the approval
+/// it holds). `program` is the program a process run starts (absent for
+/// the Git operations) as orceld pinned it just now (path, SHA-256 of its
+/// contents, file identity), checked against the approval's pinned
+/// programs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StandingClaim {
+    pub standing_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program: Option<crate::core::standing::PinnedProgram>,
 }
 
 /// WP1-10: how a dispatch the service authorized ended, as orceld reports
@@ -126,6 +144,36 @@ pub enum Request {
     },
     /// Drop the caller's pending intent.
     CancelIntent { intent_id: String },
+    /// WP1-14, spec 4.15: record a grant intent for a Full User lease
+    /// together with a standing approval bound to it. Grants are refused
+    /// while a lease is active (spec 4.13; SG-000132 acceptance "Grant,
+    /// renewal and standing approval fail without a valid Hello signature,
+    /// and while a lease is active"), so the standing approval is issued
+    /// with its lease, through the same intent, service-observed unlock,
+    /// service-rendered confirmation and Windows Hello. `principal_id` must
+    /// be a client reference and is the approval's client; `task` is the
+    /// lease's and the approval's declared task. Refused with
+    /// `INDICATOR_UNAVAILABLE` while no indicator heartbeat is live (spec
+    /// 4.15 "shown on the indicator"; WP1-12).
+    StandingBegin {
+        origin: ClaimedOrigin,
+        scope: LeaseScope,
+        minutes: Option<u64>,
+        principal_id: String,
+        task: String,
+        standing: StandingScope,
+    },
+    /// WP1-14: completes a `StandingBegin` intent with the one-time code
+    /// and the Windows Hello signature (as `PresenceComplete` completes a
+    /// grant) and issues the lease and the standing approval together.
+    StandingComplete {
+        intent_id: String,
+        code: String,
+        signature_hex: String,
+    },
+    /// WP1-14: end one of the caller's standing approvals (its lease
+    /// stays). Like `Revoke`, it only removes authority.
+    StandingRevoke { standing_id: String },
     /// The caller's leases (bound to its SID and logon session).
     List,
     /// The signed lease and its state now.
@@ -135,8 +183,9 @@ pub enum Request {
     /// filesystem and shell/process executors the service creates an
     /// unnamed Job Object for this dispatch, duplicates an assign-only
     /// handle to it into the calling orceld process and returns `job_id`
-    /// and `job_handle` (the handle's value in orceld); no standing approval
-    /// or heartbeat yet.
+    /// and `job_handle` (the handle's value in orceld). WP1-14: a standing
+    /// approval may stand in for the action's own approval (`standing`); the
+    /// indicator heartbeat check of every `Authorize` is WP1-12.
     Authorize {
         lease_id: String,
         executor: ExecutorClass,
@@ -151,6 +200,12 @@ pub enum Request {
         /// (it could be a reused handle).
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         job_ack: bool,
+        /// WP1-14: the standing approval that covers this dispatch in place
+        /// of the action's own approval. Absent otherwise, so every other
+        /// `Authorize` stays as an older service accepts it; an older
+        /// service refuses one that carries it (unknown field).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        standing: Option<StandingClaim>,
     },
     /// WP1-10: orceld asks, after assigning its suspended worker to the
     /// dispatch's job and before resuming it, whether the authorization
@@ -235,6 +290,9 @@ impl Request {
             Self::IntentStatus { .. } => "intent_status",
             Self::PresenceComplete { .. } => "presence_complete",
             Self::CancelIntent { .. } => "cancel_intent",
+            Self::StandingBegin { .. } => "standing_begin",
+            Self::StandingComplete { .. } => "standing_complete",
+            Self::StandingRevoke { .. } => "standing_revoke",
             Self::List => "list",
             Self::Verify { .. } => "verify",
             Self::Authorize { .. } => "authorize",

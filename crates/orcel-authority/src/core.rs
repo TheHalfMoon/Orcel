@@ -59,6 +59,10 @@ pub mod chain_anchor;
 // runs in, created and held by the service, and the dispatch outcomes.
 #[path = "dispatch_jobs.rs"]
 pub mod dispatch_jobs;
+// WP1-14: standing approvals (spec 4.15), issued with their lease and
+// checked by Authorize.
+#[path = "standing.rs"]
+pub mod standing;
 
 use crate::attestation::AttestationReport;
 use crate::audit::{AuditChain, AuditRecord, Observed};
@@ -69,7 +73,7 @@ use crate::lease::{
     ObservedRequester, SignedLease, DEFAULT_LEASE_MINUTES, LEASE_CONTRACT, LEASE_ID_PREFIX,
     MAX_FIELD_BYTES, MAX_LEASE_MINUTES, MIN_LEASE_MINUTES,
 };
-use crate::protocol::{AuthorizeClaims, ClaimedOrigin, Request, PROTOCOL};
+use crate::protocol::{AuthorizeClaims, ClaimedOrigin, Request, StandingClaim, PROTOCOL};
 use crate::{hex, sha256_hex, unhex, RunMode};
 use orcel_contracts::ExecutorClass;
 use serde::{Deserialize, Serialize};
@@ -109,7 +113,7 @@ const ENROLL_DOMAIN: &[u8] = b"orcel-authority-enrollment-challenge/1\n";
 /// What this slice does not do yet; returned by `Status` and `Authorize`.
 pub const DEFERRED: [&str; 7] = [
     "TPM attestation freshness and AIK revocation checks (see SG132_SLICE2.md)",
-    "standing approvals (spec 4.15)",
+    "standing approvals in effect: they need a live indicator heartbeat (spec 4.15, WP1-14 after WP1-12), so StandingBegin answers INDICATOR_UNAVAILABLE",
     "indicator heartbeat",
     "TPM-backed signing key (the key is a CNG software key wrapped by DPAPI)",
     "Authenticode signature requirement on the orceld image",
@@ -274,6 +278,10 @@ pub struct PersistedState {
     pub revocations: u64,
     pub leases: Vec<LeaseRecord>,
     pub enrolled: Vec<EnrolledKey>,
+    /// WP1-14: standing approvals. Left out while empty, so a state without
+    /// any stays readable by an older service.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub standing: Vec<standing::StandingRecord>,
 }
 
 impl PersistedState {
@@ -284,6 +292,7 @@ impl PersistedState {
             revocations: 0,
             leases: Vec::new(),
             enrolled: Vec::new(),
+            standing: Vec::new(),
         }
     }
 }
@@ -318,6 +327,9 @@ enum Purpose {
         minutes: u64,
         principal_id: String,
         task: String,
+        /// WP1-14: a standing approval issued with the lease
+        /// (`StandingBegin`).
+        standing: Option<standing::StandingScope>,
     },
     Enroll {
         spki: Vec<u8>,
@@ -338,6 +350,9 @@ enum Purpose {
 impl Purpose {
     fn as_str(&self) -> &'static str {
         match self {
+            Self::Grant {
+                standing: Some(_), ..
+            } => "standing",
             Self::Grant { .. } => "grant",
             Self::Enroll { .. } => "enroll",
             Self::Reset { .. } => "reset",
@@ -395,6 +410,9 @@ pub struct AuthorityCore {
     jobs: Vec<dispatch_jobs::HeldJob>,
     /// WP1-10: authorizations whose outcome orceld has not reported yet.
     open_dispatches: std::collections::VecDeque<dispatch_jobs::OpenDispatch>,
+    /// WP1-14: the indicator heartbeats observed (WP1-12 records them; none
+    /// until then, so standing approvals fail closed).
+    indicator_beats: Vec<standing::IndicatorBeat>,
 }
 
 fn observed(caller: &CallerFacts, role: CallerRole) -> Observed {
@@ -521,6 +539,7 @@ impl AuthorityCore {
             pending_confirmations: Vec::new(),
             jobs: Vec::new(),
             open_dispatches: std::collections::VecDeque::new(),
+            indicator_beats: Vec::new(),
         };
         core.persist()?;
         let detail = json!({
@@ -717,6 +736,9 @@ impl AuthorityCore {
         // WP1-10: a lease this request ended (revoke, stop, enrollment)
         // takes its Job Objects with it before the answer leaves.
         self.sweep_jobs();
+        // WP1-14: and its standing approvals.
+        let now = self.now();
+        self.sweep_standing(now);
         if let Err(error) = &result {
             if !matches!(op, "status" | "intent_status" | "anchor_status") {
                 let detail = json!({
@@ -747,7 +769,41 @@ impl AuthorityCore {
                 minutes,
                 principal_id,
                 task,
-            } => self.grant_begin(caller, role, origin, scope, minutes, principal_id, task),
+            } => self.grant_begin(
+                caller,
+                role,
+                origin,
+                scope,
+                minutes,
+                principal_id,
+                task,
+                None,
+            ),
+            Request::StandingBegin {
+                origin,
+                scope,
+                minutes,
+                principal_id,
+                task,
+                standing,
+            } => self.grant_begin(
+                caller,
+                role,
+                origin,
+                Some(scope),
+                minutes,
+                principal_id,
+                task,
+                Some(standing),
+            ),
+            Request::StandingComplete {
+                intent_id,
+                code,
+                signature_hex,
+            } => self.presence_complete(caller, role, &intent_id, &code, &signature_hex, true),
+            Request::StandingRevoke { standing_id } => {
+                self.standing_revoke(caller, role, &standing_id)
+            }
             Request::EnrollBegin {
                 origin,
                 public_key_spki_hex,
@@ -769,7 +825,7 @@ impl AuthorityCore {
                 intent_id,
                 code,
                 signature_hex,
-            } => self.presence_complete(caller, role, &intent_id, &code, &signature_hex),
+            } => self.presence_complete(caller, role, &intent_id, &code, &signature_hex, false),
             Request::CancelIntent { intent_id } => self.cancel_intent(caller, role, &intent_id),
             Request::List => self.list(caller, role),
             Request::Verify { lease_id } => self.verify(caller, role, &lease_id),
@@ -778,7 +834,16 @@ impl AuthorityCore {
                 executor,
                 claims,
                 job_ack,
-            } => self.authorize(caller, role, &lease_id, executor, claims, job_ack),
+                standing,
+            } => self.authorize(
+                caller,
+                role,
+                &lease_id,
+                executor,
+                claims,
+                job_ack,
+                standing.as_ref(),
+            ),
             Request::Outcome {
                 authorization_id,
                 outcome,
@@ -834,6 +899,13 @@ impl AuthorityCore {
             "caller_is_owner_cli": self.policy.is_owner_cli(caller),
             "caller_is_builtin_administrator": is_builtin_administrator(&caller.user_sid),
             "can_issue": self.can_issue(),
+            // WP1-14: standing approvals are issued and used only while an
+            // indicator heartbeat of the caller's logon session is live.
+            "standing_approvals": {
+                "indicator_alive": self.indicator_alive(&caller.user_sid, caller.logon_session_id, self.now()),
+                "indicator_heartbeat_ms": standing::INDICATOR_HEARTBEAT_MS,
+                "operations": standing::STANDING_OPERATIONS,
+            },
             "job_objects": self.job_status(),
             "deferred": DEFERRED,
         })
@@ -913,10 +985,20 @@ impl AuthorityCore {
         minutes: Option<u64>,
         principal_id: String,
         task: String,
+        standing: Option<standing::StandingScope>,
     ) -> Result<Value, AuthorityError> {
         self.require_owner_path(caller, role, origin)?;
         let scope = scope.unwrap_or_else(LeaseScope::narrow_default);
         scope.validate()?;
+        let minutes = minutes.unwrap_or(DEFAULT_LEASE_MINUTES);
+        // WP1-14: the standing approval fits its lease and client, is shown
+        // in the same confirmation, and needs a live indicator.
+        let mut shown = scope.describe().chars().count();
+        if let Some(standing) = &standing {
+            standing.validate(&scope, &principal_id, minutes)?;
+            shown += standing.describe().chars().count();
+            self.require_indicator(caller)?;
+        }
         if let LeaseScope::BrowserFullAccess { client_ref, .. } = &scope {
             // Authorize checks the principal: a browser lease's client is
             // its principal.
@@ -926,12 +1008,11 @@ impl AuthorityCore {
                 ));
             }
         }
-        if scope.describe().chars().count() > MAX_SCOPE_DISPLAY_CHARS {
+        if shown > MAX_SCOPE_DISPLAY_CHARS {
             return Err(AuthorityError::invalid(
                 "the scope is too long to show in the confirmation; ask for fewer roots or origins",
             ));
         }
-        let minutes = minutes.unwrap_or(DEFAULT_LEASE_MINUTES);
         if !(MIN_LEASE_MINUTES..=MAX_LEASE_MINUTES).contains(&minutes) {
             return Err(AuthorityError::invalid("a lease lasts 1 to 720 minutes"));
         }
@@ -972,13 +1053,18 @@ impl AuthorityCore {
         }
         let id = format!("in-{}", hex(&self.random(16)?));
         let code = self.one_time_code()?;
-        let asserted = json!({
+        let mut asserted = json!({
             "origin": origin,
             "scope": scope,
             "minutes": minutes,
             "principal_id": principal_id,
             "task": task,
         });
+        let mut standing_text = String::new();
+        if let Some(standing) = &standing {
+            asserted["standing"] = json!(standing);
+            standing_text = format!("|standing {}", standing.describe());
+        }
         let digest = sha256_hex(
             format!(
                 "{id}|{}|{}|{}|{}|{}",
@@ -1001,7 +1087,7 @@ impl AuthorityCore {
             crate::EVENT_INTENT,
             false,
             &format!(
-                "orcel-intent/1|recorded|{id}|session {}|requester pid {} {}|grant|{}|client {principal_id}|task {task}|{minutes} min|expires {expires_at_ms}",
+                "orcel-intent/1|recorded|{id}|session {}|requester pid {} {}|grant|{}|client {principal_id}|task {task}|{minutes} min|expires {expires_at_ms}{standing_text}",
                 caller.ts_session_id,
                 caller.pid,
                 display_image(&caller.image),
@@ -1025,6 +1111,7 @@ impl AuthorityCore {
                 minutes,
                 principal_id,
                 task,
+                standing,
             },
             expires_at_ms,
             window_ends_ms: None,
@@ -1658,6 +1745,7 @@ impl AuthorityCore {
         intent_id: &str,
         code: &str,
         signature_hex: &str,
+        standing_op: bool,
     ) -> Result<Value, AuthorityError> {
         if role == CallerRole::Orceld || role == CallerRole::Other {
             return Err(AuthorityError::denied(
@@ -1667,6 +1755,22 @@ impl AuthorityCore {
         let now = self.now();
         self.drop_expired_intents(now);
         let index = self.find_intent(caller, intent_id)?;
+        // WP1-14: a standing intent is completed by `StandingComplete` and
+        // nothing else completes it (the intent is kept on a mismatch).
+        let is_standing = matches!(
+            self.intents[index].purpose,
+            Purpose::Grant {
+                standing: Some(_),
+                ..
+            }
+        );
+        if is_standing != standing_op {
+            return Err(AuthorityError::invalid(if standing_op {
+                "StandingComplete completes only a StandingBegin intent"
+            } else {
+                "a StandingBegin intent is completed with StandingComplete"
+            }));
+        }
         let Awaiting::Presence { challenge } = self.intents[index].state.clone() else {
             return Err(AuthorityError::denied(
                 "this intent has no open grant window with a confirmed Yes; a grant needs a recorded intent, a service-observed unlock and the confirmation first",
@@ -1706,8 +1810,16 @@ impl AuthorityCore {
                 "a Full Control lease became active in this session; the grant is refused",
             ));
         }
-        let lease = self.issue(&intent, &key, now)?;
-        Ok(json!({ "lease": lease }))
+        if is_standing {
+            // The indicator must still be there to show what is issued.
+            self.require_indicator(caller)?;
+        }
+        let (lease, standing) = self.issue(&intent, &key, now)?;
+        let mut answer = json!({ "lease": lease });
+        if let Some(standing) = standing {
+            answer["standing"] = json!(standing);
+        }
+        Ok(answer)
     }
 
     fn issue(
@@ -1715,12 +1827,13 @@ impl AuthorityCore {
         intent: &Intent,
         key: &EnrolledKey,
         now: u64,
-    ) -> Result<SignedLease, AuthorityError> {
+    ) -> Result<(SignedLease, Option<standing::StandingApproval>), AuthorityError> {
         let Purpose::Grant {
             scope,
             minutes,
             principal_id,
             task,
+            standing,
         } = &intent.purpose
         else {
             return Err(AuthorityError::internal(
@@ -1760,11 +1873,20 @@ impl AuthorityCore {
             body,
             signature: hex(&signature),
         };
+        // WP1-14: the standing approval is stored with its lease, in the
+        // same write, or neither is.
+        let standing = match standing {
+            Some(scope) => Some(self.make_standing(&lease, scope, *minutes, now)?),
+            None => None,
+        };
         self.state.leases.push(LeaseRecord {
             lease: lease.clone(),
             state: LeaseState::Active,
             ended_at_ms: None,
         });
+        if let Some(record) = &standing {
+            self.state.standing.push(record.clone());
+        }
         self.prune();
         self.persist()?;
         let caller_like = Observed {
@@ -1806,7 +1928,11 @@ impl AuthorityCore {
                 lease.body.authority_epoch
             ),
         )?;
-        Ok(lease)
+        let standing = standing.map(|record| record.approval);
+        if let Some(approval) = &standing {
+            self.record_standing_issued(approval, &intent.id)?;
+        }
+        Ok((lease, standing))
     }
 
     fn prune(&mut self) {
@@ -1872,6 +1998,7 @@ impl AuthorityCore {
             "epoch": self.state.epoch,
             "revocations": self.state.revocations,
             "leases": leases,
+            "standing": self.standing_list(caller, now),
         }))
     }
 
@@ -1942,6 +2069,7 @@ impl AuthorityCore {
         }))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn authorize(
         &mut self,
         caller: &CallerFacts,
@@ -1950,6 +2078,7 @@ impl AuthorityCore {
         executor: ExecutorClass,
         claims: AuthorizeClaims,
         job_ack: bool,
+        standing: Option<&StandingClaim>,
     ) -> Result<Value, AuthorityError> {
         if role != CallerRole::Orceld {
             return Err(AuthorityError::denied(
@@ -2034,34 +2163,44 @@ impl AuthorityCore {
         // WP1-10: paths lie inside the lease's roots; a filesystem
         // dispatch names at least one.
         Self::check_dispatch_paths(&body.scope, executor, claims.paths.as_deref())?;
+        // WP1-14: a standing approval named in place of the action's own
+        // approval must be the caller's, in force, shown by a live
+        // indicator, and cover exactly this dispatch.
+        let standing_id = match standing {
+            Some(claim) => Some(
+                self.check_standing_authorize(caller, lease_id, executor, &claims, claim, now)?,
+            ),
+            None => None,
+        };
         let authorization_id = format!("az-{}", hex(&self.random(16)?));
         // WP1-10: the dispatch's Job Object exists before the allow record
         // names it; if the record cannot be written the job is terminated.
         let job = self.create_dispatch_job(caller, executor, lease_id, &authorization_id)?;
         let job_id = job.as_ref().map(|job| job.id.clone());
+        let mut asserted = json!({
+            "request_id": claims.request_id,
+            "capability": claims.capability,
+            "operation": claims.operation,
+            "principal_id": claims.principal_id,
+            "task": claims.task,
+            "action_digest": claims.action_digest,
+            "origin": claims.origin,
+            "paths": claims.paths,
+            "executor": executor,
+        });
+        let mut detail = json!({
+            "decision": "allow",
+            "authorization_id": authorization_id,
+            "lease_id": lease_id,
+            "epoch": self.state.epoch,
+            "job_id": job_id,
+        });
+        if let (Some(claim), Some(id)) = (standing, &standing_id) {
+            asserted["standing"] = json!(claim);
+            detail["standing_id"] = json!(id);
+        }
         // Write before dispatch: the record is on disk before the answer.
-        let recorded = self.audit(
-            "authorize",
-            json!({
-                "request_id": claims.request_id,
-                "capability": claims.capability,
-                "operation": claims.operation,
-                "principal_id": claims.principal_id,
-                "task": claims.task,
-                "action_digest": claims.action_digest,
-                "origin": claims.origin,
-                "paths": claims.paths,
-                "executor": executor,
-            }),
-            observed(caller, role),
-            json!({
-                "decision": "allow",
-                "authorization_id": authorization_id,
-                "lease_id": lease_id,
-                "epoch": self.state.epoch,
-                "job_id": job_id,
-            }),
-        );
+        let recorded = self.audit("authorize", asserted, observed(caller, role), detail);
         if let Err(error) = recorded {
             if let Some(id) = &job_id {
                 self.withdraw_job(id);
@@ -2077,6 +2216,7 @@ impl AuthorityCore {
             "job_id": job_id,
             // The value of the assign-only handle duplicated into orceld.
             "job_handle": job.as_ref().map(|job| job.handle),
+            "standing_id": standing_id,
             "deferred": DEFERRED,
         }))
     }
@@ -2184,6 +2324,7 @@ impl AuthorityCore {
         });
         self.sweep_jobs();
         if ended.is_empty() {
+            self.sweep_standing(now);
             return Ok(());
         }
         self.advance_epoch()?;
@@ -2200,6 +2341,8 @@ impl AuthorityCore {
                 "revocations": self.state.revocations,
             }),
         )?;
+        // WP1-14: and every standing approval of an ended or older lease.
+        self.sweep_standing(now);
         Ok(())
     }
 
@@ -2221,6 +2364,8 @@ impl AuthorityCore {
         self.reap_idle_jobs(now);
         self.sweep_jobs();
         if ended.is_empty() {
+            // WP1-14: a standing approval's own expiry.
+            self.sweep_standing(now);
             return Ok(());
         }
         self.advance_epoch()?;
@@ -2236,6 +2381,7 @@ impl AuthorityCore {
                 "revocations": self.state.revocations,
             }),
         )?;
+        self.sweep_standing(now);
         Ok(())
     }
 
@@ -2264,20 +2410,35 @@ fn confirmation_text(intent: &Intent) -> String {
             minutes,
             principal_id,
             task,
+            standing,
         } => {
-            let warning = "Full Control acts with your Windows rights. Effects made through Windows outside Orcel's process trees (scheduled tasks, other programs) can persist after Stop, and Orcel cannot undo them. A program running as you can record a request like this and lock your PC, and can draw windows that imitate this one: if you did not just ask for exactly this, or the code or process differs from what your orcel command printed, choose No. This box, after an unlock the service observed, is the approval; Windows Hello only confirms you are present. A PIN or fingerprint is recommended over face recognition.";
+            let warning ="Full Control acts with your Windows rights. Effects made through Windows outside Orcel's process trees (scheduled tasks, other programs) can persist after Stop, and Orcel cannot undo them. A program running as you can record a request like this and lock your PC, and can draw windows that imitate this one: if you did not just ask for exactly this, or the code or process differs from what your orcel command printed, choose No. This box, after an unlock the service observed, is the approval; Windows Hello only confirms you are present. A PIN or fingerprint is recommended over face recognition.";
             // Review F7: a browser lease is named as one.
-            let (what, question) = match scope {
-                LeaseScope::BrowserFullAccess { .. } => (
+            let (what, question) = match (scope, standing) {
+                (LeaseScope::BrowserFullAccess { .. }, _) => (
                     "Orcel Browser Full Access (routine actions in one Orcel browser session)",
                     "Approve this browser grant?",
                 ),
-                LeaseScope::DesktopFullUser { .. } => {
+                (LeaseScope::DesktopFullUser { .. }, Some(_)) => (
+                    "Orcel Full Control with a STANDING APPROVAL",
+                    "Approve this grant and its standing approval?",
+                ),
+                (LeaseScope::DesktopFullUser { .. }, None) => {
                     ("Orcel Full Control", "Approve this grant?")
                 }
             };
+            // WP1-14: the standing approval's own paragraph.
+            let standing = standing
+                .as_ref()
+                .map(|standing| {
+                    format!(
+                        "\n\n{}",
+                        standing::confirmation_paragraph(standing, *minutes)
+                    )
+                })
+                .unwrap_or_default();
             format!(
-                "A program asked for {what}. Approve only if you asked for exactly this:\n\nCode: {}\nScope: {}\nClient: {principal_id}\nTask: {task}\nExpires: {minutes} minutes after approval\nRequested by: {requested_by}\n\n{warning}\n\n{question}",
+                "A program asked for {what}. Approve only if you asked for exactly this:\n\nCode: {}\nScope: {}\nClient: {principal_id}\nTask: {task}\nExpires: {minutes} minutes after approval\nRequested by: {requested_by}{standing}\n\n{warning}\n\n{question}",
                 intent.code,
                 scope.describe(),
             )
