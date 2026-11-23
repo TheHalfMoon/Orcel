@@ -57,9 +57,9 @@ const matrixPath = join(repoRoot, matrixRelative);
 const registryPath = join(repoRoot, registryRelative);
 const vendorRoot = "apps/orcel-native-host/third_party/cua-driver";
 const SHA = /^[0-9a-f]{40}$/;
-// Jev's exact-diff review packs each slice into 10,000 characters, including
-// the file and hunk headers (.github/scripts/jev-exact-diff.mjs); leave room
-// for those.
+// The bound came from Jev's exact-diff review (10,000 characters a slice with
+// its headers; retired 2026-11-23, docs/governance/2026-11-23-jev-retirement.md).
+// It stays: a reviewer must be able to read every line of a vendored text file.
 export const MAX_REVIEWABLE_LINE = 9000;
 
 /** The bytes of a `&[0x.., ...]` Rust byte-array literal, or null. */

@@ -91,7 +91,8 @@
     "Audit records carry asserted_by_session, caller PID and image."
   ],
   "review": {
-    "jev_semantic_review": true,
+    "independent_code_review": "required on each exact head, by a reviewer who did not write the change; recorded on the pull request (docs/governance/DIFFCIPLINE.md section 10); a process rule, not a GitHub check",
+    "adversarial_tests": "negative and adversarial regression tests for every changed boundary",
     "alibaba_open_code_review": "delegation mode per standing founder decision (2026-10-10) with manual review of excluded files",
     "security_review": "fresh-context security judge on each packet and on closeout; d1-local advisory only",
     "exact_head_ci": true,
@@ -129,6 +130,17 @@
         "Exception to the invariant 'A lease alone never replaces an approval': under a Full User lease that names the filesystem executor, the fc-worker operations write_text (tool fc_fs_write) and mkdir (tool fc_fs_mkdir) inside the lease's roots are covered by the lease and ask no per-action approval. Each still has a service Authorize and audit record first, stays inside the roots, refuses .git paths, keeps spec 4.14's refusal of the authority state and of writes to the user-session Orcel state root, and is ended by stop, revoke and expiry. No other operation is covered by this exception.",
         "Unchanged: a process run (fc_process_run) and the git mutations (fc_git_stage, fc_git_unstage, fc_git_commit, fc_git_branch_create) keep a fresh SOFT approval on every call (SG-000096 A3), unless a standing approval (spec 4.15) covers them; deletion keeps its own approval (SG-000097); remote callers stay excluded (SG-000105).",
         "Tool surface: one local-only fc_* MCP tool per fc-worker operation plus fc_status (read-only; the active lease's executors, roots and expiry and the calling client's reference; no approval), listed in desktop_structured, with no OAuth scope and never served remotely."
+      ]
+    },
+    {
+      "title": "SG-000132: Jev retired as a mandatory review",
+      "created": "2026-11-23",
+      "base": "15cc524732aa3e84375f86bb9e55eaf8aefdea7d",
+      "decision": "DECIDED (founder, effective 2026-11-23): \"Jev is retired. D1 is optional. Real tests, independent review, and security enforcement remain mandatory.\"",
+      "note": "Relayed to the engineering session by the coordinating session and recorded in docs/governance/2026-11-23-jev-retirement.md. It changes this grain's future review requirements only: results already recorded under this grain, Jev passes and failures included, stay as they were. The amendment keeps this spec in state GRAIN and adds no code, dependency, tool, listener or authority by itself.",
+      "changes": [
+        "review.jev_semantic_review is removed; review.independent_code_review and review.adversarial_tests are added. Exact-head CI, the Rust and platform tests, Alibaba Open Code Review, the targeted security review, zero unresolved blocking findings and post-merge verification stay required.",
+        "D1 is optional and advisory only: it can never authorize a merge or a privileged operation."
       ]
     }
   ],

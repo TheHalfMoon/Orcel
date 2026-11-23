@@ -99,7 +99,7 @@
     },
     {
       "id": "A9",
-      "claim": "Exact-head genuine Jev, Alibaba OCR qualified review/delegation plus human review of exclusions, security review, zero unresolved threads, signed+DCO normal merge, and post-merge CI evidence recorded before canonical closeout."
+      "claim": "Exact-head independent code review, Alibaba OCR qualified review/delegation plus human review of exclusions, security review, zero unresolved threads, signed+DCO normal merge, and post-merge CI evidence recorded before canonical closeout."
     },
     {
       "id": "A10",
@@ -120,7 +120,8 @@
   ],
   "review": {
     "diffcipline": true,
-    "jev_semantic_review": true,
+    "independent_code_review": "required on each exact head, by a reviewer who did not write the change; recorded on the pull request (docs/governance/DIFFCIPLINE.md section 10); a process rule, not a GitHub check",
+    "adversarial_tests": "negative and adversarial regression tests for every changed boundary",
     "alibaba_open_code_review": "required exact-range review/delegation and manual exclusions",
     "security_review": true,
     "exact_head_ci": true,
@@ -145,6 +146,18 @@
         "Dependencies SG-000131 and SG-000132 with their notes; shells on the authority service (scope include, scope_note); acceptance A10 to A12.",
         "Standing approvals (spec 4.15) are named as the only exception to fresh per-action SOFT approval in the scope gate, authority_delta.full_user and A3; A13 requires out-of-scope, expired and other-client standing approvals to be refused.",
         "WSL bash stop narrowed: the Job Object covers the tracked wsl.exe tree only; the session's Linux process group is killed and verified, otherwise outcome_unknown (scope include and A10)."
+      ]
+    },
+    {
+      "title": "SG-000096: Jev retired as a mandatory review",
+      "created": "2026-11-23",
+      "base": "15cc524732aa3e84375f86bb9e55eaf8aefdea7d",
+      "decision": "DECIDED (founder, effective 2026-11-23): \"Jev is retired. D1 is optional. Real tests, independent review, and security enforcement remain mandatory.\"",
+      "note": "Relayed to the engineering session by the coordinating session and recorded in docs/governance/2026-11-23-jev-retirement.md. It changes this grain's future review requirements only: results already recorded under this grain, Jev passes and failures included, stay as they were. The amendment keeps this spec in state GRAIN and adds no code, dependency, tool, listener or authority by itself.",
+      "changes": [
+        "review.jev_semantic_review is removed; review.independent_code_review and review.adversarial_tests are added. Exact-head CI, the Rust and platform tests, Alibaba Open Code Review, the targeted security review, zero unresolved blocking findings and post-merge verification stay required.",
+        "D1 is optional and advisory only: it can never authorize a merge or a privileged operation.",
+        "A9's review clause names independent code review instead of Jev."
       ]
     }
   ],

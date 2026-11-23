@@ -112,22 +112,44 @@ Before merge:
 - verify no new commit appeared after qualification;
 - inspect changed-file list and diff stat;
 - inspect unresolved review threads;
-- run semantic review.
+- obtain the independent code review of that exact head (section 10).
 
 If head moves, qualification resets.
 
 ## 10. Review stack
 
-Required as applicable:
-1. automated format/lint/type/test;
+Required (founder decision effective 2026-11-23, `docs/governance/2026-11-23-jev-retirement.md`):
+1. exact-head CI: automated format/lint/type/test, the Rust and platform tests, Governance;
 2. SpecGrain acceptance check;
 3. Diffcipline exact-diff check;
-4. Jev-style semantic architecture/security review;
-5. Alibaba Open Code Review;
-6. targeted human/founder approval for governance-sensitive merge;
-7. post-merge verification.
+4. Alibaba Open Code Review, with a manual review of the files it excludes;
+5. independent code review of the exact head;
+6. targeted security review for a change to authority, permissions, filesystem boundaries, network or privilege;
+7. negative and adversarial regression tests for every changed boundary;
+8. zero unresolved blocking findings;
+9. targeted human/founder approval for a governance-sensitive merge;
+10. post-merge verification.
 
 Automated reviewers do not replace security reasoning.
+
+**Independent code review is a process rule. No GitHub check enforces it**: the ruleset requires no approving review,
+authors and reviewers act through one GitHub account, and a merge without the review would not be blocked.
+
+- Who reviews: a person, or a fresh-context session, that did not write the change. An author's own review and D1's
+  output do not count. The security review of item 6 may be the same review when it covers the changed boundary
+  explicitly.
+- Who records it: whoever merges the pull request, before merging (today the coordinating engineering session).
+- Where: on the pull request, in its description or a comment, with the reviewer, the statement that they did not write
+  the change, the exact head SHA, the files covered (the files Open Code Review excluded among them), every finding and
+  how each was resolved. At grain closeout the closing pull request carries it into `review_basis` in
+  `.specgrain/canonical-evidence.json`.
+- When the head moves, the delta is reviewed and recorded too. Without the record the change is not qualified.
+
+**D1 is optional and advisory.** A local D1 run may help to sort work. It can never authorize a merge, clear a gate,
+stand in for a review above, or authorize a privileged operation.
+
+**Jev is retired** as a mandatory review. Its past results, passes and failures, stay in the record as they were; a grain
+closed under it keeps its evidence, and a new grain needs none.
 
 ## 11. Merge discipline
 

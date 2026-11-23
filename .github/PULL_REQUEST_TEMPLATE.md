@@ -18,6 +18,7 @@ List **commands actually run** and their results. Do not claim checks passed unl
 - [ ] I confirmed no secrets, personal data, or private machine paths are included.
 - [ ] I checked third-party licenses, notices, and permissions for new dependencies/assets.
 - [ ] I did not rewrite historical evidence, release checksums, or provenance.
+- [ ] Independent code review of the exact head, by someone who did not write the change, is recorded here before the merge (reviewer, head SHA, findings, resolutions), with a targeted security review if authority, permissions, filesystem boundaries, network or privilege change. Process rule, not a GitHub check.
 - [ ] I documented unsupported checks and remaining limitations rather than claiming completion.
 
 ## Interface or documentation changes

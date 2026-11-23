@@ -2258,7 +2258,18 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Diff check
-        run: git diff --check
+        # Until 2026-11-23 the Jev job also checked the pull request's whole
+        # range; that deterministic check stays required here.
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git diff --check
+          if [ -n "$BASE_SHA" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA"
+            git diff --check "$BASE_SHA" "$HEAD_SHA"
+          fi
       - name: macOS native capability preflight contract (hello only, no permission prompts)
         run: python3 -m unittest discover -s tests -p test_macos_native_capability_preflight.py -v
       - name: Validate current Orcel identity

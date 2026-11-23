@@ -149,6 +149,7 @@ The per-component view (state, commits, tests, limitations, blockers) is in
 | The Full Control tool surface for filesystem, process and Git | Decided 2026-11-19: option B of `prep/FC_TOOL_SURFACE_OPTIONS.md` (section 8), recorded as the SG-000132 amendment "SG-000132 amendment: Full Control file writes covered by the lease, and the fc_* tool surface" (#829 → `5cfdd9d8`). Built as slice 8 (#831 → `bd32ce9d`) and slice 9 (#832 → `3c8481ee`) |
 | Design System v1 and the People First identity (v5) | #814's package is at status `review`, not approved; #811 is open (2026-11-19). Integration waits for both, and for the open questions in the package's `IMPLEMENTATION.md` section 5 |
 | Paid infrastructure, deployment | Excluded by the zero-cost rule |
+| Jev as a mandatory review | Decided, effective 2026-11-23: retired; D1 optional and advisory. `docs/governance/2026-11-23-jev-retirement.md`. The ruleset check "Jev Semantic Review" is removed by the coordinating session after the retirement PR merges |
 
 ## 5. External hardware or credentials
 
@@ -223,7 +224,7 @@ Merged 2026-11-07 to 2026-11-10, after the list below:
 - CI: #687 (Tier C GUI download cache), #698 (rehearsal flake retry, #696). Flakes under watch
   also include #700 (X11 latency scroll) and #508 (UIA bind, seen again 2026-11-10).
 
-Working rules learned this stretch: a PR must contain current main before Jev reviews it;
+Working rules learned this stretch: a PR must contain current main before its review gate runs;
 inline shell heredocs on this PC collapse doubled backslashes, so edit scripts go through
 files; CI runners are the bottleneck, so cancel runs for superseded heads and merge one PR
 at a time.

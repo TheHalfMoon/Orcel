@@ -219,7 +219,7 @@ No donor code merge proceeds unless all boxes are proven for the exact diff:
 - [ ] no independent donor authority surface is exposed;
 - [ ] no runtime dynamic donor fetch exists;
 - [ ] targeted unit/integration/native tests pass;
-- [ ] TypeSafe Jev exact-diff review passes;
+- [ ] independent code review of the exact head is recorded on the PR (before 2026-11-23: TypeSafe Jev exact-diff review passes);
 - [ ] Alibaba Open Code Review exact-range review passes;
 - [ ] excluded files receive manual review;
 - [ ] exact-head CI passes with zero unresolved blockers;
