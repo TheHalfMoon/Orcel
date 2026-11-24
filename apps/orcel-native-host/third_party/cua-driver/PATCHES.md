@@ -241,8 +241,10 @@ construction. Nothing does. XP-06 settles it from the host side:
 
 ## P-05: no file the exact-diff review cannot read
 
-The required Jev check reviews every changed line, in slices of at most
-10,000 characters including the diff headers. It refuses binary files. Six
+The range check of the required Alibaba OCR Delegation job
+(`.github/scripts/check-review-range.mjs`; the Jev check until 2026-11-23)
+refuses a changed line that does not fit in 10,000 characters including the
+diff headers. It refuses binary files. Six
 upstream files fail one of those limits, so they are not vendored. The
 provenance file records each one (`removed_files`, with its upstream blob id
 and the reason), and `check-vendored-cua.mjs` puts that blob back when it

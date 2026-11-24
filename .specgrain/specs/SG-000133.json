@@ -87,7 +87,11 @@
     "A fresh-context security judge passes WP1-06, WP1-07, WP1-13 and WP1-16."
   ],
   "review": {
-    "jev_semantic_review": true,
+    "independent_code_review": "required on each exact head, by a reviewer who did not write the change; recorded on the pull request (docs/governance/DIFFCIPLINE.md section 10); a process rule, not a GitHub check",
+    "adversarial_tests": "negative and adversarial regression tests for every changed boundary",
+    "rust_and_platform_tests": true,
+    "zero_unresolved_blocking_findings": true,
+    "post_merge_verification": true,
     "alibaba_open_code_review": "delegation mode per standing founder decision (2026-10-10) with manual review of excluded files",
     "security_review": "fresh-context security judge on every authority-touching slice and on closeout; d1-local advisory only",
     "exact_head_ci": true,
@@ -99,5 +103,18 @@
     "llmstxt_and_deep_research": "Wave 3."
   },
   "activation_note": "Activated by the founder's go-ahead of 2026-11-17, given in the Claude Code session and quoted in docs/canonical/CURRENT.md; no tracking issue was opened, so planning_issue stays null as drafted. No code, dependency, tool, route, listener, network, service or authority change in this activation packet. Separate implementation PRs must qualify their exact heads; activation CI alone proves nothing about web intelligence.",
+  "amendments": [
+    {
+      "title": "SG-000133: Jev retired as a mandatory review",
+      "created": "2026-11-23",
+      "base": "15cc524732aa3e84375f86bb9e55eaf8aefdea7d",
+      "decision": "DECIDED (founder, effective 2026-11-23): \"Jev is retired. D1 is optional. Real tests, independent review, and security enforcement remain mandatory.\"",
+      "note": "Relayed to the engineering session by the coordinating session and recorded in docs/governance/2026-11-23-jev-retirement.md. It changes this grain's future review requirements only: results already recorded under this grain, Jev passes and failures included, stay as they were. The amendment keeps this spec in state GRAIN and adds no code, dependency, tool, listener or authority by itself.",
+      "changes": [
+        "review.jev_semantic_review is removed; review.independent_code_review, adversarial_tests, rust_and_platform_tests, zero_unresolved_blocking_findings and post_merge_verification are written down. Exact-head CI, Alibaba Open Code Review and the security review stay; independent code review and the targeted security review are separate reviews.",
+        "D1 is optional and advisory only: it can never authorize a merge or a privileged operation."
+      ]
+    }
+  ],
   "done_when": "The listed Wave 1 packets merge with exact-head qualification and the W1 rows pass the harness on Windows (closeout may record macOS and Linux as track X follow-ups); Wave 2 rows close in the same grain or a named successor."
 }

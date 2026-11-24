@@ -9,7 +9,7 @@ Estimates: ESTIMATE in engineer-days of focused implementation for one agent, ex
 Gates every task inherits:
 
 - exact-head CI green on every OS the task touches (ubuntu-latest, windows-latest, macos-latest once XP-02 lands)
-- Jev exact-diff review and Alibaba OCR delegation with manual review of excluded files
+- independent code review (from 2026-11-23; Jev is retired, docs/governance/2026-11-23-jev-retirement.md) and Alibaba OCR delegation with manual review of excluded files
 - PStack or fresh-context judge verdict posted on the PR
 - Graft when donor code is copied or adapted
 - provenance JSON with donor commit and blob/tree SHAs plus notice file for every imported unit

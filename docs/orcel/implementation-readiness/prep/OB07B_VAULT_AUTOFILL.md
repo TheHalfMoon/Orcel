@@ -1,6 +1,6 @@
 # OB-07b: saved-login autofill through the browser vault
 
-**Status: decided and implemented on `browser/ob07b-vault-autofill` (SG-000135 work packet OB-07, second half; acceptance FA-I in part). Not merged. The independent security review of 80e6ffe9 confirmed the decision and failed the head on seven findings; section 8 lists each and its fix. The re-review of 67307e87 confirmed them and failed one more item (page URLs in replies); section 9 has its fix. Unit and source-scan tests only. No live sign-in, no founder-present run.**
+**Status: decided and merged as #820 (7ad1ac77), with follow-ups #821 (9cb83e07) and #822 (6004e52e) (SG-000135 work packet OB-07, second half; acceptance FA-I in part). The independent security review of 80e6ffe9 confirmed the decision and failed the head on seven findings; section 8 lists each and its fix. The re-review of 67307e87 confirmed them and failed one more item (page URLs in replies); section 9 has its fix. Unit and source-scan tests only. No live sign-in, no founder-present run.**
 
 The first half of OB-07 (PR #810, merge 27b86f0d) hands every sign-in page to the person ([`OB07_CHALLENGE_HANDOFF.md`](OB07_CHALLENGE_HANDOFF.md), section 6: "a sign-in page is handed to the person"). This packet had to decide whether Orcel can instead let the browser's own password manager fill a saved login for a persistent Orcel-managed profile, without Orcel ever handling the secret.
 

@@ -6,7 +6,8 @@ contract, the checker and the wiring into the applications.
 
 Amended 2026-11-18 (PR #814): packages are text only. Raster icons and reference screens are `generated` entries
 rendered at build (sections 2.7 and 2.8), and fonts are obtained at build (section 2.9), because the required review
-gate cannot review binary files.
+gate cannot review binary files. That gate was Jev; since 2026-11-23 the range check of the required Alibaba OCR
+Delegation job (`.github/scripts/check-review-range.mjs`) refuses them.
 
 Machine-readable parts:
 
@@ -73,7 +74,8 @@ Rules for the folder:
 - **Text only.** Every file is UTF-8 text with the extension `.json`, `.svg`, `.md` or `.txt`. No binary file is
   ever committed in a package, listed or not: no PNG, ICO, ICNS, JPG, WebP, GIF, PDF, WOFF, WOFF2, TTF, OTF or
   archive (`FILE_BINARY`). Raster outputs are `generated` entries (section 2.8); fonts are obtained at build
-  (section 2.9). This keeps every byte of a package reviewable as text, which the required review gate needs.
+  (section 2.9). This keeps every byte of a package reviewable as text, which the range check of the
+  required Alibaba OCR Delegation job needs.
 - Every committed file is listed in the manifest with its SHA-256, and nothing unlisted may be present.
 - Paths are relative, forward-slash, inside the folder; no links, URLs, parent segments or absolute paths.
 - Packages are immutable once merged. A fix is a new version that `supersedes` the old one.

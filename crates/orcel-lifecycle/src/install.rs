@@ -247,7 +247,7 @@ impl<'a> Installer<'a> {
     /// first and any link or reparse point fails closed, so the recursive ACL
     /// reset can never be redirected outside the install root.
     pub(crate) fn protect_root(&self) -> Result<(), LifecycleError> {
-        reject_links(&self.layout.root)?;
+        reject_links(&self.layout.root, true)?;
         self.platform.protect_tree(&self.layout.root)
     }
 
@@ -514,8 +514,17 @@ impl<'a> Installer<'a> {
         // Last, and only if the rest went: while part of an interrupted migration's copies remain,
         // the marker is what keeps orceld from starting on them.
         let marker = orcel_platform::stores::MIGRATION_IN_PROGRESS.path(&self.layout.root);
+        // The command holds the lock on this file, so it is never removed (`unix_lock`).
+        #[cfg(unix)]
+        let kept_lock = Some(self.layout.lifecycle_lock());
+        #[cfg(not(unix))]
+        let kept_lock: Option<PathBuf> = None;
         for path in self.layout.retained_data() {
             if !path.exists() {
+                continue;
+            }
+            if kept_lock.as_ref() == Some(&path) {
+                report.retained.push(path);
                 continue;
             }
             if options.purge_data && path == marker {
@@ -546,13 +555,21 @@ impl<'a> Installer<'a> {
             match fs::remove_dir(&self.layout.root) {
                 Ok(()) => report.purged.push(self.layout.root.clone()),
                 Err(_) => {
-                    // Name what's in the way: it isn't Orcel's, so a purge left it.
-                    if let Ok(entries) = fs::read_dir(&self.layout.root) {
-                        report.residual.extend(
-                            entries.filter_map(|entry| entry.ok().map(|entry| entry.path())),
-                        );
+                    // Name what's in the way: it isn't Orcel's, so a purge left it. The kept
+                    // lock alone is as it should be.
+                    let in_the_way: Option<Vec<PathBuf>> =
+                        fs::read_dir(&self.layout.root).ok().map(|entries| {
+                            entries
+                                .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+                                .filter(|path| !report.retained.contains(path))
+                                .collect()
+                        });
+                    let only_the_lock = !report.retained.is_empty()
+                        && in_the_way.as_ref().is_some_and(Vec::is_empty);
+                    if !only_the_lock {
+                        report.residual.extend(in_the_way.unwrap_or_default());
+                        report.residual.push(self.layout.root.clone());
                     }
-                    report.residual.push(self.layout.root.clone());
                 }
             }
         }
@@ -560,15 +577,37 @@ impl<'a> Installer<'a> {
     }
 }
 
-fn reject_links(dir: &Path) -> Result<(), LifecycleError> {
-    let entries = fs::read_dir(dir)
-        .map_err(|error| LifecycleError::io(format!("read {}", dir.display()), error))?;
+/// Unix: whether an entry that could not be found is really gone (a dangling
+/// link is there). The tree is in use while it is walked, and what an entry
+/// was renamed to is checked by `unix_install::protect_tree`, which walks until
+/// nothing changes and refuses links too. On Windows nothing is tolerated here.
+fn gone_on_unix(path: &Path, error: &std::io::Error) -> bool {
+    cfg!(unix)
+        && error.kind() == std::io::ErrorKind::NotFound
+        && fs::symlink_metadata(path)
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+}
+
+fn reject_links(dir: &Path, is_root: bool) -> Result<(), LifecycleError> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if !is_root && gone_on_unix(dir, &error) => return Ok(()),
+        Err(error) => return Err(LifecycleError::io(format!("read {}", dir.display()), error)),
+    };
     for entry in entries {
         let entry =
             entry.map_err(|error| LifecycleError::io(format!("read {}", dir.display()), error))?;
         let path = entry.path();
-        let metadata = fs::symlink_metadata(&path)
-            .map_err(|error| LifecycleError::io(format!("inspect {}", path.display()), error))?;
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if gone_on_unix(&path, &error) => continue,
+            Err(error) => {
+                return Err(LifecycleError::io(
+                    format!("inspect {}", path.display()),
+                    error,
+                ))
+            }
+        };
         if metadata.file_type().is_symlink() || manifest::is_reparse_point(&metadata) {
             return Err(LifecycleError::state(format!(
                 "the Orcel install tree contains a link or reparse point and will not be modified: {}",
@@ -576,7 +615,7 @@ fn reject_links(dir: &Path) -> Result<(), LifecycleError> {
             )));
         }
         if metadata.is_dir() {
-            reject_links(&path)?;
+            reject_links(&path, false)?;
         }
     }
     Ok(())
@@ -611,6 +650,19 @@ mod tests {
         InstallOptions {
             node: Some(PathBuf::from("/fake/node")),
             add_to_path: true,
+        }
+    }
+
+    #[test]
+    fn a_folder_that_is_gone_is_skipped_on_unix_and_the_root_never_is() {
+        let missing = temp_dir("reject-links").join("missing");
+        assert!(reject_links(&missing, true).is_err());
+        assert_eq!(reject_links(&missing, false).is_ok(), cfg!(unix));
+        #[cfg(unix)]
+        {
+            // A dangling link cannot be found when followed, but it is there.
+            std::os::unix::fs::symlink(missing.with_file_name("nowhere"), &missing).unwrap();
+            assert!(reject_links(&missing, false).is_err());
         }
     }
 
@@ -835,6 +887,14 @@ mod tests {
             .uninstall(&UninstallOptions { purge_data: true })
             .unwrap();
         assert!(report.residual.is_empty(), "{:?}", report.residual);
+        // All but the lifecycle lock, which is never removed where it is a file.
+        #[cfg(unix)]
+        {
+            assert_eq!(report.retained, [layout.lifecycle_lock()]);
+            assert!(layout.lifecycle_lock().exists());
+            assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+        }
+        #[cfg(not(unix))]
         assert!(!root.exists());
     }
 

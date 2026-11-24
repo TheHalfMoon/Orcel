@@ -1,6 +1,7 @@
 # ORCEL Design System v1: engineering intake assessment
 
-> **Update 2026-11-18 (text-only packages):** the required review gate cannot review binary files, so the contract now
+> **Update 2026-11-18 (text-only packages):** the required review gate (then Jev; since 2026-11-23 the
+> range check of Alibaba OCR Delegation refuses them) cannot review binary files, so the contract now
 > forbids them in a package (`CONTRACT.md` sections 2.7 to 2.9). The 20 committed PNG, ICO and ICNS icon exports and
 > the 12 screen PNGs were removed from `design/handoff/1.0.0/`; the manifest declares the icons as `generated`
 > entries that `scripts/render-design-handoff.mjs` renders at build (every icon PNG pixel-identical to the Design

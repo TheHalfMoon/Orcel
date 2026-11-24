@@ -55,7 +55,7 @@ Workspace Cargo.toml declares Rust MSRV 1.82; the actual reproduction host used 
 
 Existing tests plus all three regressions must pass after repair. Add out-of-order A/B consumption and repeated restart; revoke/restart/old token; expired/digest/workspace/revision mismatch; duplicate brokers/processes; path aliases and replaced ledger; empty/unreadable/malformed/truncated/valid-prefix-restored ledgers; mid-write and sync failure on issued/consumed/revoke events; crash after sync before response/dispatch; migration interruption; size limits; randomized interleavings. Verify no dispatch on persistence failure and no resume after poisoned state. Fault injection, disk durability, production reachability and repair tests have NOT been run here.
 
-No issue closure until signed+DCO repair, genuine Jev/Alibaba reviews with manual exclusions, exact-head required CI, independent non-admin Windows tests, resolved review threads, approved normal merge and post-merge evidence. Historical 9/9 text cannot substitute for live required contexts.
+No issue closure until signed+DCO repair, independent code review (from 2026-11-23, replacing Jev) and Alibaba review with manual exclusions, exact-head required CI, independent non-admin Windows tests, resolved review threads, approved normal merge and post-merge evidence. Historical 9/9 text cannot substitute for live required contexts.
 
 ## Other material attack surfaces
 

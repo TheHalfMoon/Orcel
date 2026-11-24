@@ -1,7 +1,7 @@
 // SG-000135 OB-03: the secret-field mask, checked on the installed Edge.
 //
 // The page is the test's own (set with setContent, no network); the capture
-// is the worker's own `capturePng`. The PNG is decoded here and the pixels
+// is the worker's own `takeScreenshot`. The PNG is decoded here and the pixels
 // read: every secret field is the mask colour, the ordinary field next to
 // it is still its own colour (the positive control: the decoding and the
 // layout are what the test thinks). On Windows a missing engine fails the
@@ -9,10 +9,12 @@
 
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
+import { createServer, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { inflateSync } from "node:zlib";
-import { chromium } from "playwright-core";
-import { capturePng, pngSize } from "./screenshot.js";
+import { chromium, type Page } from "playwright-core";
+import { pngSize, SCREENSHOT_BUDGET_MS, ScreenshotBudget, ScreenshotError, tabSubject, takeScreenshot } from "./screenshot.js";
 
 const EDGE_CANDIDATES = [
   "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
@@ -21,6 +23,14 @@ const EDGE_CANDIDATES = [
 const isWindows = process.platform === "win32";
 const engine = EDGE_CANDIDATES.find((path) => existsSync(path));
 const skip = isWindows ? false : "native probes are Windows-only evidence";
+
+/// One screenshot as the worker takes it.
+const shoot = (page: Page, fullPage = false, ms = SCREENSHOT_BUDGET_MS) =>
+  takeScreenshot(
+    tabSubject(page, 1, { active: 1 }, () => undefined, () => page.context().newCDPSession(page)),
+    fullPage,
+    new ScreenshotBudget(ms)
+  );
 
 /// Decode an 8-bit, non-interlaced RGB or RGBA PNG into RGBA rows.
 export function decodePng(png: Buffer): { width: number; height: number; pixel: (x: number, y: number) => [number, number, number] } {
@@ -94,15 +104,16 @@ test("OB-03: secret fields are masked in the PNG, ordinary ones are not", { skip
     const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
     const page = await context.newPage();
     await page.setContent(PAGE);
-    const shot = await capturePng(page);
+    const shot = await shoot(page);
     assert.deepEqual([shot.width, shot.height], [1280, 720]);
     const decoded = decodePng(shot.png);
     const at = (top: number) => decoded.pixel(200, top + 24);
     assert.deepEqual(at(20), [0, 255, 0], "the ordinary field keeps its colour (positive control)");
     for (const top of [100, 180, 260, 340]) assert.deepEqual(at(top), [0, 0, 0], `the secret field at ${top} is masked`);
-    // A full-page clip reaches below the viewport.
-    const tall = await capturePng(page, { x: 0, y: 0, width: 1280, height: 2640 });
-    assert.equal(tall.height, 2640);
+    // A full page reaches below the viewport, to the page's own height.
+    const tall = await shoot(page, true);
+    assert.equal(tall.height, 2648);
+    assert.equal(tall.truncated, false);
     const full = decodePng(tall.png);
     assert.deepEqual(full.pixel(200, 2624), [0, 0, 255]);
     assert.deepEqual(full.pixel(200, 124), [0, 0, 0]);
@@ -137,7 +148,7 @@ test("OB-03: fields in an open shadow root, in an iframe and added before the ca
       added.setAttribute("style", "position:absolute;left:40px;top:340px;width:320px;height:48px;border:0;margin:0;padding:0;outline:0;background:#00ff00;color:#00ff00");
       document.body.append(added);
     });
-    const shot = await capturePng(page);
+    const shot = await shoot(page);
     const decoded = decodePng(shot.png);
     assert.deepEqual(decoded.pixel(200, 264), [0, 255, 0], "the ordinary field keeps its colour (positive control)");
     assert.deepEqual(decoded.pixel(200, 44), [0, 0, 0], "the open shadow root's field is masked");
@@ -145,5 +156,65 @@ test("OB-03: fields in an open shadow root, in an iframe and added before the ca
     assert.deepEqual(decoded.pixel(200, 364), [0, 0, 0], "the field added before the capture is masked");
   } finally {
     await browser.close();
+  }
+});
+
+test("#438: a screenshot of a page whose renderer answers nothing fails on time, and the page can be captured after", { skip, timeout: 120_000 }, async () => {
+  assert.ok(engine, "Edge is installed");
+  // The page asks for /hold synchronously, so its renderer's main thread runs
+  // nothing, the census included, until the server answers it.
+  let release: ServerResponse | undefined;
+  const server = createServer((request, response) => {
+    if (request.url === "/hold") release = response;
+    else response.setHeader("content-type", "text/html").end(PAGE);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const browser = await chromium.launch({ executablePath: engine, headless: true });
+  try {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+    const page = await context.newPage();
+    await page.goto(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+    await shoot(page);
+    let hanging = true;
+    const hang = page
+      .evaluate(() => {
+        const request = new XMLHttpRequest();
+        request.open("GET", "/hold", false);
+        request.send();
+        return request.status;
+      })
+      .finally(() => (hanging = false));
+    for (const until = Date.now() + 60_000; release === undefined && Date.now() < until; ) await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.ok(release, "the control: the renderer is waiting for the server");
+    const failedAs = (error: unknown) => error instanceof ScreenshotError && error.reason === "failed";
+    const began = performance.now();
+    await assert.rejects(shoot(page, false, 2_000), failedAs);
+    const elapsed = performance.now() - began;
+    assert.ok(elapsed >= 1_500 && elapsed < 10_000, `${elapsed} ms`);
+    // Another waits for the page's turn behind it, within its own budget.
+    await assert.rejects(shoot(page, true, 1_000), failedAs);
+    assert.equal(hanging, true, "the control: the renderer answered nothing meanwhile");
+    // The renderer goes on, so the stuck census ends and lets the page go.
+    release.end();
+    assert.equal(await hang, 200);
+    // Counts Playwright's mask overlays as they come.
+    await page.evaluate(() => {
+      const seen = window as unknown as { overlays: number };
+      seen.overlays = 0;
+      new MutationObserver((changes) => {
+        for (const change of changes) for (const node of change.addedNodes) if (node.nodeName.toLowerCase() === "x-pw-glass") seen.overlays += 1;
+      }).observe(document, { childList: true, subtree: true });
+    });
+    const decoded = decodePng((await shoot(page)).png);
+    assert.deepEqual(decoded.pixel(200, 44), [0, 255, 0], "the ordinary field keeps its colour");
+    for (const top of [100, 180, 260, 340]) assert.deepEqual(decoded.pixel(200, top + 24), [0, 0, 0], `the secret field at ${top} is masked`);
+    // That capture put its masks in the page and took them out again.
+    const overlays = await page.evaluate(() => [(window as unknown as { overlays: number }).overlays, document.querySelectorAll("x-pw-glass").length]);
+    assert.ok((overlays[0] as number) >= 1, "the control: the masks were in the page");
+    assert.equal(overlays[1], 0, "no mask is left in the page");
+  } finally {
+    await browser.close();
+    server.closeAllConnections();
+    server.close();
   }
 });

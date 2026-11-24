@@ -91,7 +91,11 @@
     "Audit records carry asserted_by_session, caller PID and image."
   ],
   "review": {
-    "jev_semantic_review": true,
+    "independent_code_review": "required on each exact head, by a reviewer who did not write the change; recorded on the pull request (docs/governance/DIFFCIPLINE.md section 10); a process rule, not a GitHub check",
+    "adversarial_tests": "negative and adversarial regression tests for every changed boundary",
+    "rust_and_platform_tests": true,
+    "zero_unresolved_blocking_findings": true,
+    "post_merge_verification": true,
     "alibaba_open_code_review": "delegation mode per standing founder decision (2026-10-10) with manual review of excluded files",
     "security_review": "fresh-context security judge on each packet and on closeout; d1-local advisory only",
     "exact_head_ci": true,
@@ -116,7 +120,7 @@
         "The Browser executor class is enabled under a Full User lease through this grain's dispatcher, for Orcel-managed browser profiles only; the exclusion of browser automation of the user's own profiles (SG-000100) stays.",
         "A browser lease scope: profile ids, browser session ids, origins, action families (SG-000135's mapping of the founder's lists, not a founder quote; routine: click on a control not classified as high-impact, type, navigate, scroll, fill, select, check, session reuse; optional: download), expiry and optional budget. Routine in-lease actions are covered by the lease as a standing approval for that client, task and scope; high-impact families (form submit including Enter in a form, a click on a submit, send, buy, publish or delete control, upload, payment, purchase, publish, new-party communication, sending secrets, irreversible deletion, and other destructive or high-risk actions) need an explicit narrow standing approval, and any unclassified action is outside the lease and asks.",
         "Interim issuance (an SG-000135 grain decision, not a founder decision, pending the OB-08 independent security judge): until WP1-10 lands, browser leases are issued on the existing Hello-gated full-control store (orcel-policy full_control_store.rs, the SG-000093/SG-000095 STRONG grant) and migrate into the authority service with the same scope schema; an interim lease is ended at migration, never converted or widened. This is the only exception to the invariant that only the service issues leases, and it covers the Browser executor only.",
-        "Spec 4.15 is amended for the remote browser_full profile only: a browser lease or browser standing approval may cover the remote caller that is the identified client named in it. Pending founder confirmation, such coverage requires a lease issued by the authority service with the grant window, narrow default scope and Event Log scope record qualified, and the interim store never covers a remote caller; the alternative is remote coverage by an interim-store browser lease gated by the existing SG-000055 STRONG remote-session lease (SG-000135 decisions)."
+        "VOID by FOUNDER DECISION 2026-11-23 (no remote lease coverage; spec 4.15 stands unamended for remote callers). As first recorded: spec 4.15 is amended for the remote browser_full profile only: a browser lease or browser standing approval may cover the remote caller that is the identified client named in it. Pending founder confirmation, such coverage requires a lease issued by the authority service with the grant window, narrow default scope and Event Log scope record qualified, and the interim store never covers a remote caller; the alternative is remote coverage by an interim-store browser lease gated by the existing SG-000055 STRONG remote-session lease (SG-000135 decisions)."
       ]
     },
     {
@@ -129,6 +133,17 @@
         "Exception to the invariant 'A lease alone never replaces an approval': under a Full User lease that names the filesystem executor, the fc-worker operations write_text (tool fc_fs_write) and mkdir (tool fc_fs_mkdir) inside the lease's roots are covered by the lease and ask no per-action approval. Each still has a service Authorize and audit record first, stays inside the roots, refuses .git paths, keeps spec 4.14's refusal of the authority state and of writes to the user-session Orcel state root, and is ended by stop, revoke and expiry. No other operation is covered by this exception.",
         "Unchanged: a process run (fc_process_run) and the git mutations (fc_git_stage, fc_git_unstage, fc_git_commit, fc_git_branch_create) keep a fresh SOFT approval on every call (SG-000096 A3), unless a standing approval (spec 4.15) covers them; deletion keeps its own approval (SG-000097); remote callers stay excluded (SG-000105).",
         "Tool surface: one local-only fc_* MCP tool per fc-worker operation plus fc_status (read-only; the active lease's executors, roots and expiry and the calling client's reference; no approval), listed in desktop_structured, with no OAuth scope and never served remotely."
+      ]
+    },
+    {
+      "title": "SG-000132: Jev retired as a mandatory review",
+      "created": "2026-11-23",
+      "base": "15cc524732aa3e84375f86bb9e55eaf8aefdea7d",
+      "decision": "DECIDED (founder, effective 2026-11-23): \"Jev is retired. D1 is optional. Real tests, independent review, and security enforcement remain mandatory.\"",
+      "note": "Relayed to the engineering session by the coordinating session and recorded in docs/governance/2026-11-23-jev-retirement.md. It changes this grain's future review requirements only: results already recorded under this grain, Jev passes and failures included, stay as they were. The amendment keeps this spec in state GRAIN and adds no code, dependency, tool, listener or authority by itself.",
+      "changes": [
+        "review.jev_semantic_review is removed; review.independent_code_review, adversarial_tests, rust_and_platform_tests, zero_unresolved_blocking_findings and post_merge_verification are written down. Exact-head CI, Alibaba Open Code Review and the security review stay; independent code review and the targeted security review are separate reviews.",
+        "D1 is optional and advisory only: it can never authorize a merge or a privileged operation."
       ]
     }
   ],

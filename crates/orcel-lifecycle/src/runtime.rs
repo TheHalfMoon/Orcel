@@ -338,9 +338,7 @@ impl LifecycleLock {
         // SAFETY: valid mutex handle.
         match unsafe { WaitForSingleObject(mutex.raw(), millis) } {
             WAIT_OBJECT_0 | WAIT_ABANDONED => Ok(Self(mutex)),
-            WAIT_TIMEOUT => Err(LifecycleError::conflict(
-                "another Orcel lifecycle command is running for this install; try again when it finishes",
-            )),
+            WAIT_TIMEOUT => Err(LifecycleError::conflict(crate::lifecycle::LOCK_BUSY)),
             _ => Err(last_error("WaitForSingleObject")),
         }
     }

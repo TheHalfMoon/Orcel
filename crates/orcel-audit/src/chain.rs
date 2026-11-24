@@ -21,11 +21,24 @@
 //! one whole line and `sync_data`s it before returning. A file that shrank,
 //! was replaced by an unlinked file, or whose added records do not chain,
 //! is refused: nothing is appended and the caller gets
-//! [`ChainError::Broken`]. A torn last line (a crash in the middle of a
-//! write) is moved to `<chain>.quarantine-<ms>-<pid>`, cut from the file and
-//! recorded as a `rotation` event before anything else is appended, so the
-//! cut is itself in the chain. A last line that is a whole valid event
-//! without its line end is not what a crash leaves, and is refused.
+//! [`ChainError::Broken`]. A file read from its start is checked against what
+//! the anchor holder holds before a record is appended, also when syncs that
+//! failed read part of it. (No answer counts as no holder, unless the holder
+//! refused this file before, or, since the check is owed, answered, or did not
+//! when it was asked again and given [`HELD_WAIT`]: then every append is
+//! refused until it answers, or orceld restarts.)
+//!
+//! A torn last line (a crash in the middle of a write) is moved to
+//! `<chain>.quarantine-<ms>-<pid>-<token>`, cut from the file and recorded as
+//! a `rotation` event before anything else is appended, so the cut is itself
+//! in the chain. A last line that is a whole valid event without its line end
+//! is not what a crash leaves, and is refused.
+//!
+//! Kept evidence is never replaced: a file or tail moved aside only takes a
+//! name nothing has, and after [`ASIDE_ATTEMPTS`] taken names the operation
+//! fails with the chain as it was. An opening record carries a `nonce`, so
+//! two files opened in one millisecond still have different ids (a file
+//! opened before there was a nonce has none, and verifies the same).
 //!
 //! Every [`ANCHOR_INTERVAL_EVENTS`] events the writer asks its
 //! [`Anchorer`] to hold `(log, file id, seq, digest)` and records the answer
@@ -35,7 +48,7 @@
 //! it whole once per process); a writer follows one linked replacement, and
 //! refuses a file two replacements on until it restarts.
 
-use crate::anchor::{AnchorOutcome, Anchorer, LocalMarker};
+use crate::anchor::{AnchorOutcome, Anchorer, HeldState, LocalMarker};
 use crate::redact::{bounded, field_text, sha256_hex};
 use crate::{MAX_FIELD_CHARS, MAX_TARGET_CHARS};
 use orcel_contracts::event::{
@@ -44,12 +57,13 @@ use orcel_contracts::event::{
 use orcel_contracts::job::ExecutionState;
 use orcel_contracts::lease::DispatchAuthority;
 use orcel_contracts::Contract;
+use orcel_platform::files::{rename_no_replace, unique_token};
 use serde_json::{json, Value};
 use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, RwLock};
+use std::sync::{mpsc, Arc, Mutex, MutexGuard, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// The longest line the writer writes. A larger event keeps a digest of its
@@ -61,34 +75,68 @@ pub const MAX_LINE_BYTES: usize = 64 * 1024;
 const LOCK_WAIT: Duration = Duration::from_secs(10);
 /// How long a writer waits for the holder to hold a reset file's opening.
 pub const OPENING_ANCHOR_WAIT: Duration = Duration::from_secs(3);
+/// How long a writer that asked already waits for what the holder holds: the
+/// file lock is held meanwhile, so well under [`LOCK_WAIT`].
+pub(crate) const HELD_WAIT: Duration = Duration::from_secs(3);
+/// How long it does not ask again after a holder took longer than that.
+pub(crate) const HELD_BACK_OFF: Duration = Duration::from_secs(15);
 
-/// Asks `anchorer` on a thread of its own and waits at most `wait`; no
-/// answer in time is an unanchored outcome (the thread is left to finish).
+/// How many names an operation that keeps evidence aside tries.
+pub(crate) const ASIDE_ATTEMPTS: usize = 16;
+
+/// Why [`within`] has no answer.
+enum Unanswered<T> {
+    NotAsked(io::Error),
+    /// Not in time; the thread goes on, and its answer comes here.
+    Late(mpsc::Receiver<T>),
+    /// Asking panicked.
+    Failed,
+}
+
+/// Runs `ask` on a thread of its own and waits at most `wait` for its answer.
+fn within<T: Send + 'static>(
+    wait: Duration,
+    ask: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, Unanswered<T>> {
+    let (sender, receiver) = mpsc::channel();
+    std::thread::Builder::new()
+        .name("orcel-audit-ask-holder".to_owned())
+        .spawn(move || {
+            let _ = sender.send(ask());
+        })
+        .map_err(Unanswered::NotAsked)?;
+    receiver.recv_timeout(wait).map_err(|error| match error {
+        mpsc::RecvTimeoutError::Timeout => Unanswered::Late(receiver),
+        mpsc::RecvTimeoutError::Disconnected => Unanswered::Failed,
+    })
+}
+
+impl<T> Unanswered<T> {
+    fn reason(&self, wait: Duration) -> String {
+        match self {
+            Self::NotAsked(error) => format!("could not ask the anchor holder: {error}"),
+            Self::Late(_) => format!(
+                "the anchor holder did not answer within {} s",
+                wait.as_secs()
+            ),
+            Self::Failed => "asking the anchor holder failed (it panicked)".to_owned(),
+        }
+    }
+}
+
+/// Asks `anchorer` within `wait`; no answer in time is an unanchored outcome
+/// (the thread is left to finish).
 fn ask_within(
     anchorer: Arc<dyn Anchorer>,
     at: AnchorRef,
     reset: Option<String>,
     wait: Duration,
 ) -> AnchorOutcome {
-    let (sender, receiver) = std::sync::mpsc::channel();
-    let spawned = std::thread::Builder::new()
-        .name("orcel-audit-opening-anchor".to_owned())
-        .spawn(move || {
-            let _ = sender.send(anchorer.anchor(&at, None, reset.as_deref()));
-        });
-    if let Err(error) = spawned {
-        return AnchorOutcome::Unanchored {
-            reason: format!("could not ask the anchor holder: {error}"),
-        };
-    }
-    receiver
-        .recv_timeout(wait)
-        .unwrap_or_else(|_| AnchorOutcome::Unanchored {
-            reason: format!(
-                "the anchor holder did not answer within {} s",
-                wait.as_secs()
-            ),
-        })
+    within(wait, move || anchorer.anchor(&at, None, reset.as_deref())).unwrap_or_else(
+        |unanswered| AnchorOutcome::Unanchored {
+            reason: unanswered.reason(wait),
+        },
+    )
 }
 
 /// `previous_file_id` of a log's first file.
@@ -229,10 +277,37 @@ pub struct Appended {
 }
 
 pub(crate) fn now_ms() -> u64 {
+    #[cfg(test)]
+    if let Some(forced) = forced::now_ms() {
+        return forced;
+    }
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
         .unwrap_or(0)
+}
+
+/// The clock a slow holder is timed by.
+fn clock() -> Instant {
+    #[cfg(test)]
+    return Instant::now() + forced::clock_ahead();
+    #[cfg(not(test))]
+    Instant::now()
+}
+
+fn held_wait() -> Duration {
+    #[cfg(test)]
+    return forced::held_wait();
+    #[cfg(not(test))]
+    HELD_WAIT
+}
+
+fn opening_wait() -> Duration {
+    #[cfg(test)]
+    if forced::patient_opening() {
+        return forced::PATIENT;
+    }
+    OPENING_ANCHOR_WAIT
 }
 
 /// The chain file kept beside the plain log `plain`: `audit.jsonl` keeps
@@ -400,6 +475,32 @@ struct Cursor {
     /// file conflicts with the head the holder holds. Fail closed until the
     /// operator restores the file the holder knows.
     refused: Option<String>,
+    /// The file was read from its start and not yet checked against what the
+    /// holder holds. A sync that fails leaves the check owed.
+    check_owed: bool,
+    /// The holder was asked since the check is owed: asking again is bounded.
+    holder_asked: bool,
+    /// There is a holder: since the check is owed it answered, or was not
+    /// given the time to. No answer is then no reason to go without the check.
+    holder_answered: bool,
+    /// The holder took too long: it is not asked before this.
+    ask_after: Option<Instant>,
+    /// The file that was being read when this cursor last started over with
+    /// one, and why it was refused: still so while it is that file, until the
+    /// holder answers (and so is `opening_unanchored`). One file is
+    /// remembered: reading part of another and starting over again forgets
+    /// it.
+    carried: Option<Carried>,
+}
+
+/// What a cursor that started over remembers of the file it read.
+#[derive(Clone)]
+struct Carried {
+    file_id: String,
+    refused: Option<String>,
+    /// How far it was read, and the digest of the last record.
+    next_seq: u64,
+    head: String,
 }
 
 impl Cursor {
@@ -414,8 +515,138 @@ impl Cursor {
             reset: None,
             opening_unanchored: false,
             refused: None,
+            check_owed: true,
+            holder_asked: false,
+            holder_answered: false,
+            ask_after: None,
+            carried: None,
         }
     }
+
+    /// Reads the file from its start next, whichever it then is.
+    fn start_over(&mut self) {
+        let mut opening_unanchored = self.opening_unanchored;
+        let mut carried = self.carried.take();
+        if let Some(file_id) = self.file_id.take() {
+            let mut now = Carried {
+                file_id,
+                refused: self.refused.take(),
+                next_seq: self.next_seq,
+                head: self.head.clone(),
+            };
+            match carried {
+                Some(before) if before.file_id == now.file_id => {
+                    now.refused = now.refused.or(before.refused);
+                    if before.next_seq > now.next_seq {
+                        (now.next_seq, now.head) = (before.next_seq, before.head);
+                    }
+                }
+                Some(_) => opening_unanchored = false,
+                None => {}
+            }
+            carried = Some(now);
+        }
+        *self = Self {
+            opening_unanchored,
+            carried,
+            ..self.another_file()
+        };
+    }
+
+    /// Refuses the file `file_id`, also when this cursor has to read it again,
+    /// but not another one that it reads by now.
+    fn refuse(&mut self, file_id: &str, reason: String) {
+        match (self.file_id.as_deref(), &mut self.carried) {
+            (Some(read), _) if read == file_id => self.refused = Some(reason),
+            (Some(_), _) => {}
+            (None, Some(carried)) if carried.file_id == file_id => carried.refused = Some(reason),
+            (None, carried) => {
+                *carried = Some(Carried {
+                    file_id: file_id.to_owned(),
+                    refused: Some(reason),
+                    next_seq: 0,
+                    head: GENESIS_PREV_DIGEST.to_owned(),
+                });
+            }
+        }
+    }
+
+    /// The last records (seq and digest) that were read of the file `file_id`.
+    fn heads_of(&self, file_id: &str) -> Vec<(u64, String)> {
+        let here = self.file_id.as_deref() == Some(file_id);
+        let here = here.then(|| (self.next_seq, self.head.clone()));
+        let carried = self.carried.as_ref().filter(|it| it.file_id == file_id);
+        let carried = carried.map(|it| (it.next_seq, it.head.clone()));
+        let heads = here.into_iter().chain(carried);
+        heads
+            .filter_map(|(next_seq, head)| Some((next_seq.checked_sub(1)?, head)))
+            .collect()
+    }
+
+    /// Reads another file from its start. What the holder did since the check
+    /// is owed holds for it too.
+    fn another_file(&self) -> Self {
+        Self {
+            holder_asked: self.holder_asked,
+            holder_answered: self.holder_answered,
+            ask_after: self.ask_after,
+            ..Self::empty()
+        }
+    }
+}
+
+/// What the check against the holder needs of the records read.
+#[derive(Default)]
+struct Seen {
+    digest_at_held: Option<String>,
+    opening_anchored: bool,
+}
+
+impl Seen {
+    fn note(&mut self, event: &AuditEvent, held: Option<&HeldState>) {
+        if held
+            .and_then(|held| held.anchor.as_ref())
+            .is_some_and(|held| held.seq == event.seq)
+        {
+            self.digest_at_held = Some(event.digest.clone());
+        }
+        self.opening_anchored |= anchors_opening(event);
+    }
+
+    /// Notes the records of `file` that earlier, failed syncs read up to
+    /// `cursor`. They are read again each time: nothing else shows that they
+    /// are still the ones that were read.
+    fn note_read(
+        &mut self,
+        mut file: &File,
+        cursor: &Cursor,
+        held: Option<&HeldState>,
+    ) -> Result<(), ChainError> {
+        let failed = |error| io_error("read the chain", error);
+        file.rewind().map_err(failed)?;
+        let mut scanner = Scanner::new(BufReader::new(file.take(cursor.len)));
+        while let Step::Event(event, _) = scanner.step().map_err(failed)? {
+            self.note(&event, held);
+        }
+        if (scanner.next_seq, &scanner.head) != (cursor.next_seq, &cursor.head) {
+            return Err(ChainError::Broken {
+                seq: scanner.next_seq,
+                reason: "the records are not the ones this writer read".to_owned(),
+            });
+        }
+        Ok(())
+    }
+}
+
+fn refused_by_holder(reason: &str) -> String {
+    format!("the anchor holder refused this file: {reason}")
+}
+
+/// Whether `event` records that the holder holds the file's opening.
+fn anchors_opening(event: &AuditEvent) -> bool {
+    event.kind == AuditEventKind::Anchor
+        && event.detail["anchor"]["seq"] == 0
+        && event.detail["status"] == "anchored"
 }
 
 /// Why the current file conflicts with `held`, the anchor the holder holds
@@ -487,6 +718,8 @@ pub struct ChainWriter {
     log: String,
     cursor: Mutex<Cursor>,
     anchorer: RwLock<Arc<dyn Anchorer>>,
+    /// Where the answer of an ask that took too long comes.
+    late: Mutex<Option<mpsc::Receiver<Option<HeldState>>>>,
 }
 
 impl fmt::Debug for ChainWriter {
@@ -556,17 +789,150 @@ fn os_lock(lock_path: &Path) -> Result<File, ChainError> {
     }
 }
 
-/// A name beside `path` for a file moved aside, owned by the chain's
+/// What a test makes collide on purpose, in its own thread.
+#[cfg(test)]
+pub(crate) mod forced {
+    use std::cell::{Cell, RefCell};
+    use std::collections::VecDeque;
+    use std::time::Duration;
+
+    thread_local! {
+        static NOW_MS: Cell<Option<u64>> = const { Cell::new(None) };
+        static ASIDE_TOKENS: RefCell<VecDeque<String>> = const { RefCell::new(VecDeque::new()) };
+    }
+
+    thread_local! {
+        static CLOCK_AHEAD: Cell<Duration> = const { Cell::new(Duration::ZERO) };
+        static HELD_WAIT: Cell<Duration> = const { Cell::new(PATIENT) };
+        static PATIENT_OPENING: Cell<bool> = const { Cell::new(false) };
+    }
+
+    pub(super) fn now_ms() -> Option<u64> {
+        NOW_MS.get()
+    }
+
+    pub(super) fn clock_ahead() -> Duration {
+        CLOCK_AHEAD.get()
+    }
+
+    /// Lets `time` pass for this thread's writers.
+    pub(crate) fn pass(time: Duration) {
+        CLOCK_AHEAD.set(CLOCK_AHEAD.get() + time);
+    }
+
+    /// Long enough for any holder that answers, however busy the machine.
+    pub(crate) const PATIENT: Duration = Duration::from_secs(120);
+
+    pub(super) fn held_wait() -> Duration {
+        HELD_WAIT.get()
+    }
+
+    pub(super) fn patient_opening() -> bool {
+        PATIENT_OPENING.get()
+    }
+
+    /// Whether this thread's writers wait long for an opening's anchor.
+    pub(crate) fn be_patient_with_openings(on: bool) {
+        PATIENT_OPENING.set(on);
+    }
+
+    /// This thread's writers wait a moment for a holder asked again, until
+    /// dropped.
+    pub(crate) struct Impatient(());
+
+    impl Impatient {
+        pub(crate) fn new() -> Self {
+            HELD_WAIT.set(Duration::from_millis(20));
+            Self(())
+        }
+    }
+
+    impl Drop for Impatient {
+        fn drop(&mut self) {
+            HELD_WAIT.set(PATIENT);
+        }
+    }
+
+    pub(super) fn aside_token() -> Option<String> {
+        ASIDE_TOKENS.with_borrow_mut(VecDeque::pop_front)
+    }
+
+    /// Stops this thread's clock at `ms` until dropped.
+    pub(crate) struct Collisions(());
+
+    impl Collisions {
+        pub(crate) fn at(ms: u64) -> Self {
+            NOW_MS.set(Some(ms));
+            Self(())
+        }
+
+        /// The tokens of the next aside names; random again after them.
+        pub(crate) fn tokens(&self, tokens: &[&str]) {
+            ASIDE_TOKENS.set(tokens.iter().map(|&token| token.to_owned()).collect());
+        }
+
+        /// How many of them no aside name has used yet.
+        pub(crate) fn tokens_left(&self) -> usize {
+            ASIDE_TOKENS.with_borrow(VecDeque::len)
+        }
+    }
+
+    impl Drop for Collisions {
+        fn drop(&mut self) {
+            NOW_MS.set(None);
+            ASIDE_TOKENS.take();
+        }
+    }
+}
+
+fn aside_token() -> String {
+    #[cfg(test)]
+    if let Some(token) = forced::aside_token() {
+        return token;
+    }
+    unique_token()
+}
+
+/// A fresh name beside `path` for a file moved aside, owned by the chain's
 /// registered store (`.quarantine-` siblings).
 fn aside_name(path: &Path, what: &str) -> String {
     format!(
-        "{}.quarantine-{what}{}-{}",
+        "{}.quarantine-{what}{}-{}-{}",
         path.file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default(),
         now_ms(),
-        std::process::id()
+        std::process::id(),
+        aside_token()
     )
+}
+
+/// Runs `keep` on one fresh aside path after another until one is not taken,
+/// and returns its name. `keep` must create the path exclusively, so that
+/// whatever already has the name is left as it is.
+fn keep_aside<T>(
+    path: &Path,
+    what: &str,
+    action: &str,
+    keep: impl Fn(&Path) -> io::Result<T>,
+) -> Result<(String, T), ChainError> {
+    for _ in 0..ASIDE_ATTEMPTS {
+        let name = aside_name(path, what);
+        match keep(&path.with_file_name(&name)) {
+            Ok(kept) => return Ok((name, kept)),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(io_error(action, error)),
+        }
+    }
+    Err(ChainError::Io(format!(
+        "{action}: all {ASIDE_ATTEMPTS} names tried are taken; nothing was moved or replaced"
+    )))
+}
+
+/// Moves the chain at `path` to a fresh name beside it, never onto an
+/// existing file, and returns the name.
+fn move_to_aside(path: &Path, what: &str, action: &str) -> Result<String, ChainError> {
+    keep_aside(path, what, action, |to| rename_no_replace(path, to)).map(|(name, ())| name)
 }
 
 impl ChainWriter {
@@ -585,6 +951,7 @@ impl ChainWriter {
             log: log.to_owned(),
             cursor: Mutex::new(Cursor::empty()),
             anchorer: RwLock::new(Arc::new(LocalMarker)),
+            late: Mutex::new(None),
         })
     }
 
@@ -617,12 +984,40 @@ impl ChainWriter {
         })
     }
 
+    /// Starts over, as after a failed write or a panic.
+    #[cfg(test)]
+    pub(crate) fn lose_view(&self) {
+        self.cursor().verified = false;
+    }
+
+    /// Whether an ask that took too long goes on.
+    fn still_asking(&self) -> bool {
+        let mut late = self
+            .late
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // A late answer is dropped: the file may have changed since. That
+        // there is a holder is known already.
+        let asking = late
+            .as_ref()
+            .is_some_and(|late| matches!(late.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        if !asking {
+            *late = None;
+        }
+        asking
+    }
+
+    #[cfg(test)]
+    pub(crate) fn asking(&self) -> bool {
+        self.still_asking()
+    }
+
     /// Appends `draft`, flushed to disk before this returns. When the event
     /// is due an anchor, asks the anchorer (outside the file lock) and
     /// records its answer as an `anchor` event.
     pub fn append(&self, draft: EventDraft) -> Result<Appended, ChainError> {
         self.anchor_opening_if_due()?;
-        let (mut appended, link, reset) = self.append_one(draft, false)?;
+        let (mut appended, link, reset) = self.append_one(draft, None)?;
         if anchor_due(&appended.event) {
             let outcome = self
                 .anchorer()
@@ -631,10 +1026,16 @@ impl ChainWriter {
                 asserted_by_session: false,
                 ..EventDraft::new(AuditEventKind::Anchor, outcome.detail(&appended.at))
             };
-            // A refusal is recorded even though it stops the chain.
+            // A refusal is recorded even though it stops the chain, and stops
+            // it even when it cannot be recorded.
             let refused = matches!(outcome, AnchorOutcome::Refused { .. });
+            if let AnchorOutcome::Refused { reason } = &outcome {
+                self.cursor()
+                    .refuse(&appended.at.file_id, refused_by_holder(reason));
+            }
+            let refused = refused.then(|| appended.at.clone());
             appended.anchor = Some(
-                self.append_one(marker, refused)
+                self.append_one(marker, refused.as_ref())
                     .map(|_| outcome)
                     .map_err(|error| error.to_string()),
             );
@@ -642,14 +1043,20 @@ impl ChainWriter {
         Ok(appended)
     }
 
+    /// Appends `draft`, also to a refused file when it records the holder's
+    /// refusal of the anchor `refused`.
     fn append_one(
         &self,
         draft: EventDraft,
-        record_refusal: bool,
+        refused: Option<&AnchorRef>,
     ) -> Result<(Appended, Option<ChainLink>, Option<String>), ChainError> {
+        let record_refusal = refused.is_some();
         let mut cursor = self.cursor();
         let _lock = lock(&self.lock_path)?;
-        self.sync(&mut cursor)?;
+        match refused {
+            Some(refused) => self.sync_to_record(&mut cursor, refused)?,
+            None => self.sync(&mut cursor)?,
+        }
         if let (Some(reason), false) = (&cursor.refused, record_refusal) {
             return Err(ChainError::Broken {
                 seq: cursor.next_seq,
@@ -662,16 +1069,11 @@ impl ChainWriter {
                     .to_owned(),
             ));
         }
-        let refusal = (draft.kind == AuditEventKind::Anchor && record_refusal).then(|| {
-            draft.detail["reason"]
-                .as_str()
-                .unwrap_or_default()
-                .to_owned()
-        });
-        let appended = self.write_event(&mut cursor, draft)?;
-        if let Some(reason) = refusal {
-            cursor.refused = Some(format!("the anchor holder refused this file: {reason}"));
+        if draft.kind == AuditEventKind::Anchor && record_refusal {
+            let reason = draft.detail["reason"].as_str().unwrap_or_default();
+            cursor.refused = Some(refused_by_holder(reason));
         }
+        let appended = self.write_event(&mut cursor, draft)?;
         Ok((appended, cursor.link.clone(), cursor.reset.clone()))
     }
 
@@ -701,7 +1103,7 @@ impl ChainWriter {
             file_id,
             seq: 0,
         };
-        let outcome = ask_within(self.anchorer(), at.clone(), reset, OPENING_ANCHOR_WAIT);
+        let outcome = ask_within(self.anchorer(), at.clone(), reset, opening_wait());
         if let AnchorOutcome::Unanchored { reason } = &outcome {
             return Err(ChainError::Io(format!(
                 "the opening record after an owner reset must be anchored first, and the anchor \
@@ -710,7 +1112,10 @@ impl ChainWriter {
         }
         let mut cursor = self.cursor();
         let _lock = lock(&self.lock_path)?;
-        self.sync(&mut cursor)?;
+        match &outcome {
+            AnchorOutcome::Refused { .. } => self.sync_to_record(&mut cursor, &at)?,
+            _ => self.sync(&mut cursor)?,
+        }
         if cursor.file_id.as_deref() != Some(at.file_id.as_str()) || !cursor.opening_unanchored {
             // Another writer recorded it, or the file changed meanwhile.
             return Ok(());
@@ -724,7 +1129,7 @@ impl ChainWriter {
         )?;
         cursor.opening_unanchored = false;
         if let AnchorOutcome::Refused { reason } = outcome {
-            let reason = format!("the anchor holder refused this file: {reason}");
+            let reason = refused_by_holder(&reason);
             cursor.refused = Some(reason.clone());
             return Err(ChainError::Broken {
                 seq: cursor.next_seq,
@@ -736,10 +1141,57 @@ impl ChainWriter {
 
     /// Brings `cursor` to the file's end under the lock: follows a linked
     /// replacement, verifies what was added since, quarantines a torn last
-    /// line, opens an empty file.
+    /// line, opens an empty file, and checks a file that was read from its
+    /// start, in this sync or in ones that failed, against what the holder
+    /// holds. An error leaves `cursor` where it got to and the check owed, so
+    /// nothing of the caller's is appended before a check was made.
+    ///
+    /// A holder that gives no answer has nothing to check against (there may
+    /// be none) and is not asked again; but once it answered while the check
+    /// was owed, the check waits for its next answer.
+    ///
+    /// The holder is asked with the file lock held, as an older answer could
+    /// miss an anchor or a reset that came after it. The first time it is
+    /// waited for as long as it takes (it bounds itself), as a new process
+    /// always did. While the check stays owed it is asked again for at most
+    /// [`HELD_WAIT`], and after it took longer than that not at all for
+    /// [`HELD_BACK_OFF`], nor while an earlier ask goes on: the append is then
+    /// refused, never made unchecked, and other writers get the lock. What it
+    /// would have answered is not known, so from then on no answer is not
+    /// taken for no holder: the refusals end when it answers, or when orceld
+    /// restarts.
     fn sync(&self, cursor: &mut Cursor) -> Result<(), ChainError> {
+        self.sync_to_end(cursor)?.map_or(Ok(()), Err)
+    }
+
+    /// [`Self::sync`] to record that the holder refused the anchor `refused`:
+    /// also where only the check stands in the way, because the holder gives
+    /// no answer, so that the refusal outlives this process. Then only if the
+    /// file, read from its start, holds the record the anchor names (which no
+    /// other file does) and the last one this writer had read of it.
+    fn sync_to_record(&self, cursor: &mut Cursor, refused: &AnchorRef) -> Result<(), ChainError> {
+        let mut wanted = cursor.heads_of(&refused.file_id);
+        wanted.push((refused.seq, refused.digest.clone()));
+        let Some(unchecked) = self.sync_to_end(cursor)? else {
+            return Ok(());
+        };
+        let failed = |error| io_error("read the chain", error);
+        let file = File::open(&self.path).map_err(failed)?;
+        let mut scanner = Scanner::new(BufReader::new(file));
+        while let Step::Event(event, _) = scanner.step().map_err(failed)? {
+            wanted.retain(|(seq, digest)| (*seq, digest) != (event.seq, &event.digest));
+        }
+        if wanted.is_empty() {
+            Ok(())
+        } else {
+            Err(unchecked)
+        }
+    }
+
+    /// [`Self::sync`], and as a value why the check it owes could not be made.
+    fn sync_to_end(&self, cursor: &mut Cursor) -> Result<Option<ChainError>, ChainError> {
         if !cursor.verified {
-            *cursor = Cursor::empty();
+            cursor.start_over();
         }
         if let Some(known) = cursor.file_id.clone() {
             match opening_of(&self.path).map_err(|error| io_error("read the chain", error))? {
@@ -761,7 +1213,7 @@ impl ChainWriter {
                             ),
                         });
                     }
-                    *cursor = Cursor::empty();
+                    *cursor = cursor.another_file();
                 }
                 Some(_) => {
                     return Err(ChainError::Broken {
@@ -799,17 +1251,18 @@ impl ChainWriter {
                 ),
             });
         }
-        // A writer reading the file from its start (a new process, or a
+        // A writer that read the file from its start (a new process, or a
         // linked replacement) checks it against the anchor the holder holds.
-        let from_start = cursor.len == 0;
-        let held = if from_start {
-            self.anchorer().held(&self.log)
+        let held = if cursor.check_owed {
+            self.ask_held(cursor)
         } else {
-            None
+            Ok(None)
         };
-        let mut digest_at_held = None;
-        let mut opening_anchored = false;
-        if let Some(mut file) = file.filter(|_| end > cursor.len) {
+        let answer = held.as_ref().ok().and_then(Option::as_ref);
+        let read_before = cursor.clone();
+        let mut seen = Seen::default();
+        let mut torn = None;
+        if let Some(mut file) = file.as_ref().filter(|_| end > cursor.len) {
             file.seek(SeekFrom::Start(cursor.len))
                 .map_err(|error| io_error("read the chain", error))?;
             let mut scanner = Scanner::resume(BufReader::new(file), cursor);
@@ -819,27 +1272,15 @@ impl ChainWriter {
                     .map_err(|error| io_error("read the chain", error))?
                 {
                     Step::Event(event, length) => {
-                        if held
-                            .as_ref()
-                            .and_then(|held| held.anchor.as_ref())
-                            .is_some_and(|held| held.seq == event.seq)
-                        {
-                            digest_at_held = Some(event.digest.clone());
-                        }
-                        if event.kind == AuditEventKind::Anchor
-                            && event.detail["anchor"]["seq"] == 0
-                            && event.detail["status"] == "anchored"
-                        {
+                        seen.note(&event, answer);
+                        if anchors_opening(&event) {
                             cursor.opening_unanchored = false;
-                            opening_anchored = true;
                         }
                         if event.kind == AuditEventKind::Anchor
                             && event.detail["status"] == LINK_REFUSED
                         {
-                            cursor.refused = Some(format!(
-                                "the anchor holder refused this file: {}",
-                                event.detail["reason"].as_str().unwrap_or_default()
-                            ));
+                            let reason = event.detail["reason"].as_str().unwrap_or_default();
+                            cursor.refused = Some(refused_by_holder(reason));
                         }
                         cursor.len += length;
                         cursor.next_seq = scanner.next_seq;
@@ -867,19 +1308,32 @@ impl ChainWriter {
                                     .to_owned(),
                             });
                         }
-                        cursor.verified = true;
-                        self.quarantine_tail(cursor, &bytes)?;
+                        torn = Some(bytes);
                         break;
                     }
                 }
             }
         }
+        if let (Some(file), Some(_), true) = (&file, answer, read_before.len > 0) {
+            seen.note_read(file, &read_before, answer)?;
+        }
         cursor.verified = true;
+        if let Some(bytes) = torn {
+            self.quarantine_tail(cursor, &bytes)?;
+        }
         self.open_file_if_empty(cursor, None, None, None)?;
-        if let (Some(held), Some(file_id)) = (&held, cursor.file_id.clone()) {
+        let (true, Some(file_id)) = (cursor.check_owed, cursor.file_id.clone()) else {
+            return Ok(None);
+        };
+        let carried = cursor
+            .carried
+            .as_ref()
+            .filter(|carried| carried.file_id == file_id);
+        if let Some(held) = answer {
+            cursor.opening_unanchored = false;
             let conflict = match (&held.reset, &held.anchor) {
                 (Some(reset), _) if cursor.reset.as_deref() == Some(reset.as_str()) => {
-                    cursor.opening_unanchored = !opening_anchored;
+                    cursor.opening_unanchored = !seen.opening_anchored;
                     None
                 }
                 (Some(reset), _) => (cursor.reset.as_deref() != Some(reset.as_str())).then(|| {
@@ -893,29 +1347,93 @@ impl ChainWriter {
                     &file_id,
                     cursor.link.as_ref(),
                     cursor.next_seq,
-                    digest_at_held.as_deref(),
+                    seen.digest_at_held.as_deref(),
                 ),
                 (None, None) => None,
             };
             if let Some(conflict) = conflict {
                 cursor.refused = Some(conflict);
             }
+        } else if held.is_err() || cursor.holder_answered {
+            let why = held.err().unwrap_or_else(|| {
+                "the anchor holder answered before, or took too long to, and does not now"
+                    .to_owned()
+            });
+            return Ok(Some(ChainError::Io(format!(
+                "{why}, and this file must be checked against what it holds; nothing was \
+                 appended (start the authority service, or, if it was removed, restart orceld)"
+            ))));
+        } else if let Some(refused) = carried.and_then(|carried| carried.refused.as_ref()) {
+            return Ok(Some(ChainError::Broken {
+                seq: cursor.next_seq,
+                reason: format!("refused: {refused}"),
+            }));
+        } else {
+            cursor.opening_unanchored &= carried.is_some();
         }
-        Ok(())
+        cursor.check_owed = false;
+        cursor.holder_asked = false;
+        cursor.holder_answered = false;
+        cursor.ask_after = None;
+        cursor.carried = None;
+        Ok(None)
+    }
+
+    /// What the holder holds, for the check `cursor` owes; an error when a
+    /// holder that was asked before did not answer in time, or is not asked
+    /// again yet. At most one ask that took too long goes on at a time.
+    fn ask_held(&self, cursor: &mut Cursor) -> Result<Option<HeldState>, String> {
+        let started = clock();
+        let waits = cursor.ask_after.is_some_and(|after| started < after);
+        if waits || (cursor.holder_asked && self.still_asking()) {
+            cursor.holder_answered = true;
+            return Err("the anchor holder did not answer in time and is asked again soon".into());
+        }
+        cursor.ask_after = None;
+        let anchorer = self.anchorer();
+        let held = if cursor.holder_asked {
+            let (asked, log) = (Arc::clone(&anchorer), self.log.clone());
+            match within(held_wait(), move || asked.held(&log)) {
+                Ok(held) => held,
+                // Without a thread it is asked as the first time.
+                Err(Unanswered::NotAsked(_)) => anchorer.held(&self.log),
+                Err(unanswered) => {
+                    let reason = unanswered.reason(held_wait());
+                    if let Unanswered::Late(answer) = unanswered {
+                        cursor.holder_answered = true;
+                        cursor.ask_after = Some(clock() + HELD_BACK_OFF);
+                        *self
+                            .late
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(answer);
+                    }
+                    return Err(reason);
+                }
+            }
+        } else {
+            cursor.holder_asked = true;
+            anchorer.held(&self.log)
+        };
+        if held.is_some() {
+            cursor.holder_answered = true;
+        } else if clock() >= started + held_wait() {
+            cursor.ask_after = Some(clock() + HELD_BACK_OFF);
+        }
+        Ok(held)
     }
 
     /// Moves a torn last line aside, cuts it from the chain and records
     /// both in the chain.
     fn quarantine_tail(&self, cursor: &mut Cursor, bytes: &[u8]) -> Result<(), ChainError> {
-        let name = aside_name(&self.path, "");
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
         std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        options
-            .open(self.path.with_file_name(&name))
-            .and_then(|mut file| file.write_all(bytes).and_then(|()| file.sync_all()))
-            .map_err(|error| io_error("quarantine the torn tail", error))?;
+        let action = "quarantine the torn tail";
+        let (name, mut kept) = keep_aside(&self.path, "", action, |to| options.open(to))?;
+        kept.write_all(bytes)
+            .and_then(|()| kept.sync_all())
+            .map_err(|error| io_error(action, error))?;
         OpenOptions::new()
             .write(true)
             .open(&self.path)
@@ -939,7 +1457,8 @@ impl ChainWriter {
     }
 
     /// Event 0 of a new file: a `rotation` event opening it, linked to the
-    /// file it follows.
+    /// file it follows, with a nonce so that its digest (the file's id) is no
+    /// other file's.
     fn open_file_if_empty(
         &self,
         cursor: &mut Cursor,
@@ -960,6 +1479,7 @@ impl ChainWriter {
             "previous_head_digest": link.map(|link| link.previous_head_digest.as_str()),
             "moved_aside": moved,
             "anchor_reset": reset,
+            "nonce": unique_token(),
         });
         cursor.head = link.map_or_else(
             || GENESIS_PREV_DIGEST.to_owned(),
@@ -1060,9 +1580,9 @@ pub struct MovedAside {
 }
 
 /// Operator recovery for a chain that does not verify: under the chain's
-/// lock, keeps the file as `<chain>.quarantine-moved-<ms>-<pid>` and opens a
-/// new file whose opening event links to the old file's last verifiable
-/// record and names where the old file went. Running writers follow the
+/// lock, keeps the file as `<chain>.quarantine-moved-<ms>-<pid>-<token>` and
+/// opens a new file whose opening event links to the old file's last
+/// verifiable record and names where the old file went. Running writers follow the
 /// linked file. A continuation, never a clean slate: everything the old
 /// file held stays, and the gap is recorded.
 pub fn move_aside(path: &Path, log: &str) -> Result<MovedAside, ChainError> {
@@ -1092,9 +1612,7 @@ pub fn move_aside(path: &Path, log: &str) -> Result<MovedAside, ChainError> {
         previous_head_seq: scanner.next_seq.saturating_sub(1),
         previous_head_digest: scanner.head.clone(),
     });
-    let moved_to = aside_name(path, "moved-");
-    std::fs::rename(path, path.with_file_name(&moved_to))
-        .map_err(|error| io_error("move the chain aside", error))?;
+    let moved_to = move_to_aside(path, "moved-", "move the chain aside")?;
     let writer = ChainWriter::open(path, log).map_err(|error| io_error("open the chain", error))?;
     let mut cursor = Cursor::empty();
     cursor.verified = true;
@@ -1122,17 +1640,18 @@ pub struct ResetOpened {
 
 /// After the owner reset the anchor holder's anchor of this log (an
 /// elevated, confirmed `orcel audit reset-anchor`): keeps the current file,
-/// if any, as `<chain>.quarantine-reset-<ms>-<pid>` and opens a new first
-/// file whose opening record names the reset (`anchor_reset`: the holder's
+/// if any, as `<chain>.quarantine-reset-<ms>-<pid>-<token>` and opens a new
+/// first file whose opening record names the reset (`anchor_reset`: the holder's
 /// reset record digest and seq). The verifier reports such a file as
 /// `reset_by_owner`, never silently intact.
 pub fn open_after_reset(path: &Path, log: &str, reset: Value) -> Result<ResetOpened, ChainError> {
     let _lock = lock(&lock_path_of(path))?;
     let moved_to = if path.exists() {
-        let name = aside_name(path, "reset-");
-        std::fs::rename(path, path.with_file_name(&name))
-            .map_err(|error| io_error("move the abandoned chain aside", error))?;
-        Some(name)
+        Some(move_to_aside(
+            path,
+            "reset-",
+            "move the abandoned chain aside",
+        )?)
     } else {
         None
     };

@@ -143,7 +143,8 @@ crate unmodified.
 
 ## P-03: no line the review gate's diff check refuses
 
-The review gate runs `git diff --check` over the whole PR, and it refuses a
+The review gate (the range check of Alibaba OCR Delegation; Jev until
+2026-11-23) runs `git diff --check` over the whole PR, and it refuses a
 line that ends in whitespace. Upstream has such lines in two files: `src/reader.rs` (23) and `README.md`
 (30). Each vendored file is upstream's with the spaces and tabs at the end of
 each line removed, and no other change. `check-vendored-lopdf.mjs --upstream`
