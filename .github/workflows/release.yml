@@ -117,7 +117,7 @@ jobs:
       - name: Build the XP-10 approval helper (release, locked, its own workspace)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgtk-4-dev rpm2cpio cpio
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev libarchive-tools rpm
           cargo build --release --locked --manifest-path apps/orcel-approval-helper-linux/Cargo.toml
       - name: Install the pinned nfpm (checksum-verified)
         run: |

@@ -24,7 +24,10 @@ repo=$(cd "$(dirname "$0")/../.." && pwd)
 # 2026-11-24 (amd64 image of 2026-11-10).
 image=docker.io/library/ubuntu@sha256:562111b88caa79c71391c0c4d3c2114a7d5c35915c20561fd893cb1e07929e6b
 
-docker run --rm --platform linux/amd64 -v "$dist:/dist:ro" -v "$repo:/repo:ro" \
+# Only these two directories of the checkout are mounted: its .git/config can
+# hold the CI job's token.
+docker run --rm --platform linux/amd64 -v "$dist:/dist:ro" \
+  -v "$repo/distribution/linux:/smoke:ro" -v "$repo/scripts:/probe:ro" \
   -e "ORCEL_VERSION=$version" -e DEBIAN_FRONTEND=noninteractive "$image" \
   bash -euxo pipefail -c '
     . /etc/os-release
@@ -35,15 +38,15 @@ docker run --rm --platform linux/amd64 -v "$dist:/dist:ro" -v "$repo:/repo:ro" \
     apt-get install -y --no-install-recommends "/dist/orcel_${ORCEL_VERSION}-1_amd64.deb" python3
     verify=$(dpkg --verify orcel)
     test -z "$verify"
-    bash /repo/distribution/linux/smoke-installed.sh daemon
+    bash /smoke/smoke-installed.sh daemon
     useradd --create-home orcelci
     runuser -u orcelci -- mkdir /home/orcelci/ws
     runuser -u orcelci -- env -i HOME=/home/orcelci PATH=/usr/bin:/bin \
       ORCEL_WORKSPACES_JSON="[{\"id\":\"ci\",\"root\":\"/home/orcelci/ws\"}]" \
-      python3 /repo/scripts/linux-orceld-probe.py exec /usr/lib/orcel/orceld ci
+      python3 /probe/linux-orceld-probe.py exec /usr/lib/orcel/orceld ci
     test "$(stat -c "%a %U" /home/orcelci/.local/state/orcel)" = "700 orcelci"
     apt-get install -y --no-install-recommends libgtk-4-1
-    bash /repo/distribution/linux/smoke-installed.sh helper
+    bash /smoke/smoke-installed.sh helper
     apt-get remove -y orcel
     test ! -e /usr/lib/orcel
     test ! -e /usr/share/doc/orcel

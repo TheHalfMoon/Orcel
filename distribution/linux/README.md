@@ -169,10 +169,14 @@ rebuilds the Linux packages to compare them, as one does for Windows.
 
 | Where | What it shows |
 | --- | --- |
-| `ubuntu-24.04` runner, CI and release | No ELF file in the deb, the rpm or the tarball requires a glibc newer than 2.39. Anything the check can't read fails it (`scripts/check-linux-glibc-floor.mjs`). |
+| `ubuntu-24.04` runner, CI and release | No ELF file in the deb, the rpm or the tarball requires a glibc newer than 2.39, the three hold the same binaries, and the rpm unpacks to exactly the files and digests its header records. Anything the check can't read fails it (`scripts/check-linux-glibc-floor.mjs`). |
 | `ubuntu:24.04` container pinned by digest, CI and release | The deb installs without its recommended packages. Every library and symbol `orceld` and `orcel-contain` need is there, `orceld` answers `system.status` for an unprivileged user, and `orcel-contain` starts and refuses an empty request. With GTK 4 from Ubuntu's archive, the approval helper starts and, with no display, exits without an answer (`smoke-ubuntu.sh`, `smoke-installed.sh`). |
 | `fedora:41` container pinned by digest, CI only | The same for the rpm with Fedora 41's glibc 2.40 and GTK 4, except that `orceld` runs as root there. |
 | `ubuntu-24.04` runner, CI only | The deb and the tarball under a real systemd user manager: units, hardening, socket, tamper report and uninstall. |
+
+Fedora 41 is the oldest Fedora the rpm is meant for, and has been past its
+end of life since 2025-12-15: it gets no security updates. The test stays
+on it because it is the floor.
 
 The release workflow builds its own packages and doesn't run the last two
 rows on them. No check runs a newer Ubuntu or Fedora, another distribution

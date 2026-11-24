@@ -1685,7 +1685,8 @@ jobs:
   # contents and modes, installs the deb and the tarball for the runner user
   # and talks to orceld through the systemd user socket, and installs the
   # deb in a clean Ubuntu 24.04 and the rpm in Fedora 41. Not a release gate:
-  # release.yml is unchanged for Windows.
+  # release.yml builds its own Linux packages, and runs the floor check and the
+  # Ubuntu 24.04 container on them, not the rest of this job.
   #
   # ubuntu-24.04, not ubuntu-latest: a binary can need whatever glibc it was
   # built against, and the packages promise Ubuntu 24.04 (glibc 2.39).
@@ -1714,7 +1715,7 @@ jobs:
       - name: Build the XP-10 approval helper (release, locked, its own workspace)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgtk-4-dev rpm2cpio cpio
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev libarchive-tools rpm
           cargo build --release --locked --manifest-path apps/orcel-approval-helper-linux/Cargo.toml
       - name: Install the pinned nfpm (checksum-verified)
         run: |
@@ -1732,6 +1733,8 @@ jobs:
           ldd --version
           pkg-config --modversion gtk4
           node scripts/check-linux-glibc-floor.mjs "$DIST"
+      - name: The glibc floor check on the real packages
+        run: ORCEL_LINUX_DIST="$DIST" node --test scripts/check-linux-glibc-floor.linux.test.mjs
       - name: Build the unsigned development tarball, and a local client through its MCP server
         run: |
           npm ci --ignore-scripts
@@ -2307,9 +2310,8 @@ jobs:
           node scripts/check-lopdf-advisories.mjs
       - name: Provenance requires the .NET SDK version
         run: node --test scripts/provenance.test.mjs
+      # Text and logic only: the linux-packages job runs the real programs.
       - name: The Linux package builds keep their runner and their glibc floor check
-        env:
-          ORCEL_REQUIRE_READELF: "1"
         run: node --test scripts/check-linux-glibc-floor.test.mjs
       - name: Validate SpecGrain JSON and canonical evidence
         shell: python

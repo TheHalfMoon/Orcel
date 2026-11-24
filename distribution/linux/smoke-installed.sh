@@ -20,7 +20,7 @@ resolves() {
   local out
   out=$(LC_ALL=C ldd -r "$1" 2>&1) || fail "ldd refuses $1: $out"
   echo "$out"
-  case $out in *"not found"*) fail "$1 needs something this system lacks" ;; esac
+  case $out in *"not found"* | *"not defined in file"*) fail "$1 needs something this system lacks" ;; esac
   if grep -F "undefined symbol" <<< "$out" | grep -F "($1)"; then
     fail "$1 needs a symbol this system lacks"
   fi
