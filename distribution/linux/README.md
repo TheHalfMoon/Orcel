@@ -34,6 +34,12 @@ user enables it.
 sudo apt install ./orcel_<version>-1_amd64.deb      # or: sudo dnf install ./orcel-<version>-1.x86_64.rpm
 ```
 
+The binaries in the deb, the rpm and the tarball may need glibc 2.39 at
+most. The packages declare no dependency on glibc, so an older system
+installs them anyway, and the binaries may then fail to start. See [Where
+the packages are built and
+tested](#where-the-packages-are-built-and-tested).
+
 ### Tarball (no root)
 
 ```sh
@@ -149,6 +155,34 @@ STRONG approvals fail closed until an administrator runs
 Linux approvals are implemented but not release-qualified: the GNOME and KDE
 live check in SECURITY_INTEGRATION.md (including the socket-activated
 user-service case) has NOT RUN on a real desktop.
+
+## Where the packages are built and tested
+
+The CI job `Linux packages` and the release workflow's Linux build both
+compile the binaries and build the x86_64 packages on GitHub's
+`ubuntu-24.04` runner image (glibc 2.39, GTK 4.14), not on `ubuntu-latest`,
+which moves. The label is pinned, but GitHub updates what is in the image,
+and the build installs `libgtk-4-dev` from Ubuntu's archive. A
+build-provenance attestation names the workflow run that published an
+asset. It doesn't show that a rebuild gives the same bytes, and no check
+rebuilds the Linux packages to compare them, as one does for Windows.
+
+| Where | What it shows |
+| --- | --- |
+| `ubuntu-24.04` runner, CI and release | No ELF file in the deb, the rpm or the tarball requires a glibc newer than 2.39, the three hold the same binaries, and the rpm unpacks to exactly the files and digests its header records. Anything the check can't read fails it (`scripts/check-linux-glibc-floor.mjs`). |
+| `ubuntu:24.04` container pinned by digest, CI and release | The deb installs without its recommended packages. Every library and symbol `orceld` and `orcel-contain` need is there, `orceld` answers `system.status` for an unprivileged user, and `orcel-contain` starts and refuses an empty request. With GTK 4 from Ubuntu's archive, the approval helper starts and, with no display, exits without an answer (`smoke-ubuntu.sh`, `smoke-installed.sh`). |
+| `fedora:41` container pinned by digest, CI only | The same for the rpm with Fedora 41's glibc 2.40 and GTK 4, except that `orceld` runs as root there. |
+| `ubuntu-24.04` runner, CI only | The deb and the tarball under a real systemd user manager: units, hardening, socket, tamper report and uninstall. |
+
+Fedora 41 is the oldest Fedora the rpm is meant for, and has been past its
+end of life since 2025-12-15: it gets no security updates. The test stays
+on it because it is the floor.
+
+The release workflow builds its own packages and doesn't run the last two
+rows on them. No check runs a newer Ubuntu or Fedora, another distribution
+or aarch64. None shows a dialog from an installed package: the job
+`Approval helper` tests the dialog under Xvfb on `ubuntu-latest`, from a
+build of its own. The packages hold no browser and no browser worker.
 
 ## Connect a local MCP client from a development tarball
 
