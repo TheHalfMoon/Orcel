@@ -1209,15 +1209,18 @@ jobs:
       # navigation timeout since 2026-11-07 that were read (130363381074, 132123559852, 133550823480,
       # 134012982232), the first timeout was logged 41 to 59 s after the sampler first saw VSSVC,
       # itself 10:44 to 11:32 after Defender started. Two later ones in 132123559852 came about 2.5
-      # and 3.5 minutes after it, and VSSVC also came in jobs with no navigation timeout (131216628299,
-      # 134367767651). The sampler then measured CPU, never disk. In #652's loop no navigation timed
+      # and 3.5 minutes after it. VSSVC also came in 134367767651, with no navigation timeout, and in
+      # 131216628299, where a navigation failed otherwise (ActionFailed) 59 s after it: weak evidence
+      # either way. The sampler then measured CPU, never disk. In #652's loop no navigation timed
       # out; its slow round was missing in 2 runs with StorSvc stopped, and a third said nothing.
       # StorSvc and VSS are not told apart, and a link to #438 is not shown.
       #
-      # Runs with an odd run number are the control and leave the service alone; so does every run
-      # from the end date on. A re-run stays in its arm. Compare only runs whose two STORSVC lines,
-      # here and after the tests, agree: mitigated=true control=false, or mitigated=false control=true
-      # with the service not stopped. On the end date, write the result on #438 and remove this step
+      # Runs with an odd run number are the control and leave the service alone. From the end date on
+      # every run does, and says control=ended: in neither arm. A re-run before then stays in its arm.
+      # Compare only runs whose two STORSVC lines, here and after the tests, agree and can be read:
+      # mitigated=true control=false, or mitigated=false control=true with the service not stopped.
+      # A failed navigation that is no timeout counts as no outcome, but is named in the result.
+      # On the end date, write the result on #438 and remove this step
       # (remove it sooner if a mitigated run times out). Timeouts are rare: too few may come to tell
       # the arms apart, and then the result is that.
       #
@@ -1235,7 +1238,8 @@ jobs:
           }
           $before = Get-State
           $why = "none"
-          $control = $env:GITHUB_RUN_NUMBER -match "[13579]$" -or [DateTime]::UtcNow -ge [DateTime]"2026-12-22"
+          $ended = [DateTime]::UtcNow -ge [DateTime]"2026-12-22"
+          $control = $ended -or $env:GITHUB_RUN_NUMBER -notmatch "[02468]$"
           if ($control) {
             $why = "a control run, nothing was changed"
           } elseif ($env:RUNNER_ENVIRONMENT -ne "github-hosted" -or $env:GITHUB_ACTIONS -ne "true") {
@@ -1252,7 +1256,7 @@ jobs:
           }
           $after = Get-State
           $mitigated = (-not $control -and $after -eq "Stopped/Disabled").ToString().ToLower()
-          $arm = $control.ToString().ToLower()
+          $arm = if ($ended) { "ended" } else { $control.ToString().ToLower() }
           "STORSVC $((Get-Date).ToUniversalTime().ToString('HH:mm:ss')) before=$before after=$after mitigated=$mitigated control=$arm"
           if (-not $control -and $mitigated -ne "true") { "::warning title=StorSvc not stopped::STORSVC before=$before after=$after mitigated=false control=false error: $why" }
           try { "control=$arm" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8 -ErrorAction Stop } catch {}
