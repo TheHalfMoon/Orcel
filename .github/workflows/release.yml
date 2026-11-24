@@ -81,10 +81,11 @@ jobs:
           retention-days: 30
 
   # XP-17: Linux deb, rpm and per-user tarball. Its assets carry their own SHA256SUMS-linux.txt;
-  # the Windows SHA256SUMS.txt is left untouched.
+  # the Windows SHA256SUMS.txt is left untouched. ubuntu-24.04, not ubuntu-latest: the packages
+  # promise Ubuntu 24.04 (glibc 2.39), and the checks after packaging enforce it.
   build-linux:
-    name: Release build / ubuntu-latest (Linux packages)
-    runs-on: ubuntu-latest
+    name: Release build / ubuntu-24.04 (Linux packages)
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
@@ -116,7 +117,7 @@ jobs:
       - name: Build the XP-10 approval helper (release, locked, its own workspace)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgtk-4-dev
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev rpm2cpio cpio
           cargo build --release --locked --manifest-path apps/orcel-approval-helper-linux/Cargo.toml
       - name: Install the pinned nfpm (checksum-verified)
         run: |
@@ -126,6 +127,10 @@ jobs:
         run: |
           bash distribution/linux/package.sh "$VERSION" target/release/orceld apps/orcel-contain/target/release/orcel-contain \
             apps/orcel-approval-helper-linux/target/release/orcel-approval-helper-linux "$RUNNER_TEMP/linux-dist"
+      - name: No packaged ELF file needs a glibc newer than the documented floor
+        run: node scripts/check-linux-glibc-floor.mjs "$RUNNER_TEMP/linux-dist"
+      - name: Install and start the deb in Ubuntu 24.04
+        run: bash distribution/linux/smoke-ubuntu.sh "$VERSION" "$RUNNER_TEMP/linux-dist"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-linux
