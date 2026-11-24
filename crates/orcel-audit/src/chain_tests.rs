@@ -1950,8 +1950,8 @@ fn chain_the_holders_answer_ends_what_was_kept() -> TestResult {
 }
 
 /// Answers as told, and counts how often it is asked. While it hangs, an
-/// answer comes only once the hang ends; while it is slow, 15 s pass on the
-/// asking thread's clock first.
+/// answer comes only once the hang ends; while it is slow, a long time passes
+/// on the asking thread's clock first.
 #[derive(Default)]
 struct Hanging {
     held: std::sync::Mutex<Option<crate::HeldState>>,
@@ -1971,6 +1971,28 @@ impl Hanging {
 
     fn asked(&self) -> u64 {
         self.asked.load(Ordering::SeqCst)
+    }
+
+    /// Waits until it was asked `times` times: an ask may still be on its way
+    /// when its time is up.
+    fn is_asked(&self, times: u64) -> bool {
+        wait_until(|| self.asked() >= times) && self.asked() == times
+    }
+
+    /// Ends the hang, so that the late answer is `held` and `then` what it
+    /// answers when it is asked again.
+    fn late(
+        &self,
+        writer: &ChainWriter,
+        held: Option<crate::HeldState>,
+        then: Option<crate::HeldState>,
+    ) -> TestResult {
+        self.set(held, false);
+        if !wait_until(|| !writer.asking()) {
+            return Err("the late answer did not come".to_owned());
+        }
+        self.set(then, false);
+        Ok(())
     }
 
     /// Whether the writer itself asked last: it waits without a bound.
@@ -1995,7 +2017,7 @@ impl Anchorer for Hanging {
         self.asked.fetch_add(1, Ordering::SeqCst);
         *self.asked_by.lock().expect("asked by") = Some(std::thread::current().id());
         if self.slow.load(Ordering::SeqCst) {
-            forced::pass(std::time::Duration::from_secs(15));
+            forced::pass(2 * forced::PATIENT);
         }
         let mut hangs = self.hangs.lock().expect("hangs");
         while *hangs {
@@ -2003,6 +2025,18 @@ impl Anchorer for Hanging {
         }
         self.held.lock().expect("held").clone()
     }
+}
+
+/// Whether `done` is in a minute; without a fixed wait.
+fn wait_until(done: impl Fn() -> bool) -> bool {
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !done() {
+        if std::time::Instant::now() > end {
+            return false;
+        }
+        std::thread::yield_now();
+    }
+    true
 }
 
 fn hanging(path: &Path) -> Result<(ChainWriter, Arc<Hanging>), String> {
@@ -2048,19 +2082,25 @@ fn chain_a_hung_holder_is_waited_for_shortly_and_not_asked_again_at_once() -> Te
         let impatient = forced::Impatient::new();
         let started = std::time::Instant::now();
         refuses(&writer, &path, "start the authority service")?;
-        assert!(started.elapsed() < 3 * second, "{:?}", started.elapsed());
-        assert_eq!(holder.asked(), 4, "{how}: once, and then not again");
+        assert!(started.elapsed() < forced::PATIENT / 2, "it waits shortly");
+        assert!(holder.is_asked(4), "{how}: once, and then not again");
         // Also starting over does not ask sooner.
         writer.lose_view();
         refuses(&writer, &path, "restart orceld")?;
         assert_eq!(holder.asked(), 4, "{how}");
-        drop(impatient);
-        // Not even an answer that is there is taken before it is asked for.
-        holder.set(conflicting(&file_id), false);
-        forced::pass(crate::chain::HELD_BACK_OFF - second);
+        // Nor does it ask again while the earlier ask goes on.
+        forced::pass(crate::chain::HELD_BACK_OFF);
         refuses(&writer, &path, "asked again soon")?;
         assert_eq!(holder.asked(), 4, "{how}");
-        forced::pass(2 * second);
+        drop(impatient);
+        // An answer that came late is not taken for one of now.
+        holder.late(
+            &writer,
+            Some(crate::HeldState::default()),
+            conflicting(&file_id),
+        )?;
+        writer.lose_view();
+        forced::pass(second);
         if how == "followed" {
             writer.append(draft(9)).map_err(|e| e.to_string())?;
         } else {
@@ -2072,9 +2112,10 @@ fn chain_a_hung_holder_is_waited_for_shortly_and_not_asked_again_at_once() -> Te
     Ok(())
 }
 
-/// One that never answered and then hangs is not gone without either, and
-/// each back-off begins anew. The first time it is asked, however long it
-/// takes, no answer is no holder, as it always was.
+/// One that never answered and then hangs is not gone without either, not
+/// even when it gives no answer after that; each back-off begins anew. The
+/// first time it is asked, however long it takes, no answer is no holder, as
+/// it always was.
 #[test]
 fn chain_a_holder_that_hangs_when_asked_again_is_no_missing_holder() -> TestResult {
     let dir = sandbox("held-never")?;
@@ -2086,35 +2127,265 @@ fn chain_a_holder_that_hangs_when_asked_again_is_no_missing_holder() -> TestResu
     refuses(&writer, &path, "not an audit event")?;
     assert_eq!(holder.asked(), 3, "a quick no answer costs nothing");
     rewrite(&path, &whole)?;
-    holder.set(None, true);
     for asked in [4, 5] {
-        let _impatient = forced::Impatient::new();
+        holder.set(None, true);
+        let impatient = forced::Impatient::new();
         refuses(&writer, &path, "start the authority service")?;
-        assert_eq!(holder.asked(), asked);
+        assert!(holder.is_asked(asked));
+        drop(impatient);
+        holder.late(&writer, None, None)?;
+        refuses(&writer, &path, "asked again soon")?;
         forced::pass(crate::chain::HELD_BACK_OFF);
     }
-    holder.set(None, false);
+    refuses(&writer, &path, "took too long to, and does not now")?;
+    assert_eq!(holder.asked(), 8, "a quick no answer has no back-off");
+    holder.set(Some(crate::HeldState::default()), false);
     writer.append(draft(9)).map_err(|e| e.to_string())?;
-    assert_eq!(holder.asked(), 6);
+    assert_eq!(holder.asked(), 9);
     assert!(!holder.asked_by_this_thread());
-    // The check is made: the next one is asked for without a bound again.
-    writer.lose_view();
+    // The check is made: the next one is asked for without a bound again,
+    // and at once also after a slow one.
+    holder.set(None, false);
     holder.slow.store(true, Ordering::SeqCst);
-    writer.append(draft(10)).map_err(|e| e.to_string())?;
-    assert_eq!(holder.asked(), 7);
-    assert!(holder.asked_by_this_thread());
+    for asked in [10, 11] {
+        writer.lose_view();
+        writer.append(draft(asked)).map_err(|e| e.to_string())?;
+        assert_eq!(holder.asked(), asked);
+        assert!(holder.asked_by_this_thread());
+    }
     // A slow one is not asked again at once by syncs that fail.
     let whole = lines(&path)?;
     let (writer, holder) = hanging(&path)?;
     holder.slow.store(true, Ordering::SeqCst);
     add_garbage(&path)?;
-    refuses(&writer, &path, "not an audit event")?;
-    assert_eq!(holder.asked(), 1);
+    let attempt = writer.append(draft(1));
+    assert!(attempt.is_err());
     rewrite(&path, &whole)?;
-    refuses(&writer, &path, "asked again soon")?;
-    assert_eq!(holder.asked(), 1);
     forced::pass(crate::chain::HELD_BACK_OFF);
+    holder.slow.store(false, Ordering::SeqCst);
     writer.append(draft(11)).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// What a holder that was not given the time to answer, or not asked, would
+/// have answered is not known: that it gives no answer later does not let an
+/// append go unchecked. Nothing was read before in any of these.
+#[test]
+fn chain_an_answer_that_was_not_waited_for_is_not_gone_without() -> TestResult {
+    for reset in [false, true] {
+        for late in [false, true] {
+            let dir = sandbox("held-missed")?;
+            let path = dir.join("audit-chain.jsonl");
+            write(&path, 3)?;
+            let whole = lines(&path)?;
+            let held = || match reset {
+                true => resetting(&"e".repeat(64)),
+                false => conflicting(&"f".repeat(64)),
+            };
+            let why = match reset {
+                true => "does not start from that reset",
+                false => "does not continue the file",
+            };
+            let (writer, holder) = hanging(&path)?;
+            // Asked once, without an answer: promptly, or after a long time.
+            holder.slow.store(!late, Ordering::SeqCst);
+            rewrite(&path, &["garbage".to_owned()])?;
+            assert!(writer.append(draft(1)).is_err());
+            assert_eq!(holder.asked(), 1);
+            holder.slow.store(false, Ordering::SeqCst);
+            rewrite(&path, &whole)?;
+            if late {
+                holder.set(None, true);
+                let _impatient = forced::Impatient::new();
+                let error = writer.append(draft(1)).err().ok_or("no answer")?;
+                assert!(error.to_string().contains("did not answer"), "{error}");
+                assert!(holder.is_asked(2));
+                holder.late(&writer, held(), None)?;
+            } else {
+                // It would answer now, and is not asked.
+                holder.set(held(), false);
+                refuses(&writer, &path, "asked again soon")?;
+                assert_eq!(holder.asked(), 1);
+                holder.set(None, false);
+            }
+            forced::pass(crate::chain::HELD_BACK_OFF);
+            refuses(&writer, &path, "start the authority service")?;
+            writer.lose_view();
+            refuses(&writer, &path, "start the authority service")?;
+            holder.set(held(), false);
+            refuses(&writer, &path, why)?;
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+    Ok(())
+}
+
+/// A holder that panics is not one that took too long.
+#[test]
+fn chain_a_panicking_holder_is_reported_as_what_it_is() -> TestResult {
+    struct Panics(AtomicU64);
+    impl Anchorer for Panics {
+        fn anchor(
+            &self,
+            _anchor: &AnchorRef,
+            _link: Option<&ChainLink>,
+            _reset: Option<&str>,
+        ) -> AnchorOutcome {
+            std::panic::panic_any("holder")
+        }
+
+        fn held(&self, _log: &str) -> Option<crate::HeldState> {
+            match self.0.fetch_add(1, Ordering::SeqCst) {
+                0 => None,
+                1 => std::panic::panic_any("holder"),
+                _ => resetting(&"e".repeat(64)),
+            }
+        }
+    }
+    let dir = sandbox("held-panics")?;
+    let path = dir.join("audit-chain.jsonl");
+    reset_file(&path, &"e".repeat(64))?;
+    let whole = lines(&path)?;
+    let writer = ChainWriter::open(&path, ORCELD_LOG).map_err(|e| e.to_string())?;
+    writer.set_anchorer(Arc::new(Panics(AtomicU64::new(0))));
+    add_garbage(&path)?;
+    assert!(writer.append(draft(1)).is_err());
+    rewrite(&path, &whole)?;
+    let error = writer.append(draft(1)).err().ok_or("no answer")?;
+    assert!(error.to_string().contains("panicked"), "{error}");
+    // So it is when it panics asked to hold an opening.
+    let error = writer.append(draft(1)).err().ok_or("not anchored")?;
+    assert!(error.to_string().contains("panicked"), "{error}");
+    assert_eq!(lines(&path)?, whole);
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// The holder's refusal of a due anchor stops the chain also when it could
+/// not be recorded: the file cannot be read to its end, or not written.
+#[test]
+fn chain_a_refusal_that_cannot_be_recorded_stops_the_chain() -> TestResult {
+    struct Spoils(PathBuf, bool);
+    impl Anchorer for Spoils {
+        fn anchor(
+            &self,
+            _anchor: &AnchorRef,
+            _link: Option<&ChainLink>,
+            _reset: Option<&str>,
+        ) -> AnchorOutcome {
+            if self.1 {
+                read_only(&self.0, true).expect("read-only");
+            } else {
+                add_garbage(&self.0).expect("garbage");
+            }
+            AnchorOutcome::Refused {
+                reason: "not this one".to_owned(),
+            }
+        }
+    }
+    fn read_only(path: &Path, on: bool) -> Result<(), String> {
+        let mut permissions = std::fs::metadata(path)
+            .map_err(|e| e.to_string())?
+            .permissions();
+        permissions.set_readonly(on);
+        std::fs::set_permissions(path, permissions).map_err(|e| e.to_string())
+    }
+    for unwritable in [false, true] {
+        let dir = sandbox("refusal-lost")?;
+        let path = dir.join("audit-chain.jsonl");
+        let writer = write(&path, ANCHOR_INTERVAL_EVENTS - 2)?;
+        writer.set_anchorer(Arc::new(Spoils(path.clone(), unwritable)));
+        let appended = writer.append(draft(90)).map_err(|e| e.to_string())?;
+        if unwritable {
+            read_only(&path, false)?;
+            // The superuser writes to it all the same.
+            if events(&path)?.len() as u64 > ANCHOR_INTERVAL_EVENTS {
+                continue;
+            }
+        } else {
+            let mut now = lines(&path)?;
+            now.pop();
+            rewrite(&path, &now)?;
+        }
+        assert!(matches!(appended.anchor, Some(Err(_))), "{appended:?}");
+        refuses(&writer, &path, "refused this file: not this one")?;
+        writer.lose_view();
+        refuses(&writer, &path, "refused this file: not this one")?;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    Ok(())
+}
+
+/// It does so too when the writer lost its view while the holder was asked:
+/// after a check that passed, or when nothing of the file can be read.
+#[test]
+fn chain_a_refusal_stops_a_writer_that_lost_its_view() -> TestResult {
+    struct Loses {
+        writer: std::sync::OnceLock<std::sync::Weak<ChainWriter>>,
+        garbage: bool,
+    }
+    impl Anchorer for Loses {
+        fn anchor(
+            &self,
+            _anchor: &AnchorRef,
+            _link: Option<&ChainLink>,
+            _reset: Option<&str>,
+        ) -> AnchorOutcome {
+            let writer = self.writer.get().and_then(std::sync::Weak::upgrade);
+            let writer = writer.expect("writer");
+            writer.lose_view();
+            if self.garbage {
+                std::fs::write(writer.path(), b"garbage\n").expect("garbage");
+                assert!(writer.append(draft(1)).is_err());
+            }
+            AnchorOutcome::Refused {
+                reason: "not this one".to_owned(),
+            }
+        }
+
+        fn held(&self, _log: &str) -> Option<crate::HeldState> {
+            (!self.garbage).then(crate::HeldState::default)
+        }
+    }
+    for garbage in [false, true] {
+        let dir = sandbox("refusal-view")?;
+        let path = dir.join("audit-chain.jsonl");
+        let writer = Arc::new(write(&path, ANCHOR_INTERVAL_EVENTS - 3)?);
+        let holder = Arc::new(Loses {
+            writer: std::sync::OnceLock::new(),
+            garbage,
+        });
+        let _ = holder.writer.set(Arc::downgrade(&writer));
+        writer.set_anchorer(holder);
+        writer.append(draft(89)).map_err(|e| e.to_string())?;
+        let mut whole = lines(&path)?;
+        let appended = writer.append(draft(90)).map_err(|e| e.to_string())?;
+        assert_eq!(appended.event.seq + 1, ANCHOR_INTERVAL_EVENTS);
+        assert_eq!(matches!(appended.anchor, Some(Ok(_))), !garbage);
+        if garbage {
+            let last = serde_json::to_string(&appended.event).map_err(|e| e.to_string())?;
+            whole.push(last);
+            rewrite(&path, &whole)?;
+        }
+        refuses(&writer, &path, "refused this file: not this one")?;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    Ok(())
+}
+
+/// A file that continues a refused one is judged by itself.
+#[test]
+fn chain_a_followed_file_is_not_refused_for_the_one_before() -> TestResult {
+    let dir = sandbox("followed-refused")?;
+    let path = dir.join("audit-chain.jsonl");
+    write(&path, 3)?;
+    let (writer, _) = held_by(&path, conflicting(&events(&path)?[0].digest))?;
+    refuses(&writer, &path, "not the one the anchor holder holds")?;
+    // It links past the held record, which is all the holder can say.
+    let moved = move_aside(&path, ORCELD_LOG).map_err(|e| e.to_string())?;
+    let appended = writer.append(draft(1)).map_err(|e| e.to_string())?;
+    assert_eq!(appended.at.file_id, moved.file_id);
     let _ = std::fs::remove_dir_all(dir);
     Ok(())
 }

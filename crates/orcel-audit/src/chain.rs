@@ -24,8 +24,9 @@
 //! [`ChainError::Broken`]. A file read from its start is checked against what
 //! the anchor holder holds before a record is appended, also when syncs that
 //! failed read part of it. (No answer counts as no holder, unless the holder
-//! answered since the check is owed, did not answer in time when asked again,
-//! or refused this file before: then the append is refused.)
+//! refused this file before, or, since the check is owed, answered, or did not
+//! when it was asked again and given [`HELD_WAIT`]: then every append is
+//! refused until it answers, or orceld restarts.)
 //!
 //! A torn last line (a crash in the middle of a write) is moved to
 //! `<chain>.quarantine-<ms>-<pid>-<token>`, cut from the file and recorded as
@@ -62,7 +63,7 @@ use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, RwLock};
+use std::sync::{mpsc, Arc, Mutex, MutexGuard, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// The longest line the writer writes. A larger event keeps a digest of its
@@ -83,36 +84,59 @@ pub(crate) const HELD_BACK_OFF: Duration = Duration::from_secs(15);
 /// How many names an operation that keeps evidence aside tries.
 pub(crate) const ASIDE_ATTEMPTS: usize = 16;
 
-/// Runs `ask` on a thread of its own and waits at most `wait` for its answer
-/// (the thread is left to finish, and its late answer dropped).
+/// Why [`within`] has no answer.
+enum Unanswered<T> {
+    NotAsked(io::Error),
+    /// Not in time; the thread goes on, and its answer comes here.
+    Late(mpsc::Receiver<T>),
+    /// Asking panicked.
+    Failed,
+}
+
+/// Runs `ask` on a thread of its own and waits at most `wait` for its answer.
 fn within<T: Send + 'static>(
     wait: Duration,
     ask: impl FnOnce() -> T + Send + 'static,
-) -> Result<T, String> {
-    let (sender, receiver) = std::sync::mpsc::channel();
+) -> Result<T, Unanswered<T>> {
+    let (sender, receiver) = mpsc::channel();
     std::thread::Builder::new()
         .name("orcel-audit-ask-holder".to_owned())
         .spawn(move || {
             let _ = sender.send(ask());
         })
-        .map_err(|error| format!("could not ask the anchor holder: {error}"))?;
-    receiver.recv_timeout(wait).map_err(|_| {
-        format!(
-            "the anchor holder did not answer within {} s",
-            wait.as_secs()
-        )
+        .map_err(Unanswered::NotAsked)?;
+    receiver.recv_timeout(wait).map_err(|error| match error {
+        mpsc::RecvTimeoutError::Timeout => Unanswered::Late(receiver),
+        mpsc::RecvTimeoutError::Disconnected => Unanswered::Failed,
     })
 }
 
-/// Asks `anchorer` within `wait`; no answer in time is an unanchored outcome.
+impl<T> Unanswered<T> {
+    fn reason(&self, wait: Duration) -> String {
+        match self {
+            Self::NotAsked(error) => format!("could not ask the anchor holder: {error}"),
+            Self::Late(_) => format!(
+                "the anchor holder did not answer within {} s",
+                wait.as_secs()
+            ),
+            Self::Failed => "asking the anchor holder failed (it panicked)".to_owned(),
+        }
+    }
+}
+
+/// Asks `anchorer` within `wait`; no answer in time is an unanchored outcome
+/// (the thread is left to finish).
 fn ask_within(
     anchorer: Arc<dyn Anchorer>,
     at: AnchorRef,
     reset: Option<String>,
     wait: Duration,
 ) -> AnchorOutcome {
-    within(wait, move || anchorer.anchor(&at, None, reset.as_deref()))
-        .unwrap_or_else(|reason| AnchorOutcome::Unanchored { reason })
+    within(wait, move || anchorer.anchor(&at, None, reset.as_deref())).unwrap_or_else(
+        |unanswered| AnchorOutcome::Unanchored {
+            reason: unanswered.reason(wait),
+        },
+    )
 }
 
 /// `previous_file_id` of a log's first file.
@@ -273,9 +297,8 @@ fn clock() -> Instant {
 
 fn held_wait() -> Duration {
     #[cfg(test)]
-    if let Some(forced) = forced::held_wait() {
-        return forced;
-    }
+    return forced::held_wait();
+    #[cfg(not(test))]
     HELD_WAIT
 }
 
@@ -449,8 +472,8 @@ struct Cursor {
     check_owed: bool,
     /// The holder was asked since the check is owed: asking again is bounded.
     holder_asked: bool,
-    /// The holder answered since the check is owed: no answer is then no
-    /// reason to go without the check.
+    /// There is a holder: since the check is owed it answered, or was not
+    /// given the time to. No answer is then no reason to go without the check.
     holder_answered: bool,
     /// The holder took too long: it is not asked before this.
     ask_after: Option<Instant>,
@@ -500,6 +523,16 @@ impl Cursor {
             carried,
             ..self.another_file()
         };
+    }
+
+    /// Refuses the file `file_id`, also when this cursor has to read it again,
+    /// but not another one that it reads by now.
+    fn refuse(&mut self, file_id: &str, reason: String) {
+        match self.file_id.as_deref() {
+            None => self.carried = Some((file_id.to_owned(), Some(reason))),
+            Some(read) if read == file_id => self.refused = Some(reason),
+            Some(_) => {}
+        }
     }
 
     /// Reads another file from its start. What the holder did since the check
@@ -555,6 +588,10 @@ impl Seen {
         }
         Ok(())
     }
+}
+
+fn refused_by_holder(reason: &str) -> String {
+    format!("the anchor holder refused this file: {reason}")
 }
 
 /// Whether `event` records that the holder holds the file's opening.
@@ -633,6 +670,8 @@ pub struct ChainWriter {
     log: String,
     cursor: Mutex<Cursor>,
     anchorer: RwLock<Arc<dyn Anchorer>>,
+    /// Where the answer of an ask that took too long comes.
+    late: Mutex<Option<mpsc::Receiver<Option<HeldState>>>>,
 }
 
 impl fmt::Debug for ChainWriter {
@@ -716,7 +755,7 @@ pub(crate) mod forced {
 
     thread_local! {
         static CLOCK_AHEAD: Cell<Duration> = const { Cell::new(Duration::ZERO) };
-        static HELD_WAIT: Cell<Option<Duration>> = const { Cell::new(None) };
+        static HELD_WAIT: Cell<Duration> = const { Cell::new(PATIENT) };
     }
 
     pub(super) fn now_ms() -> Option<u64> {
@@ -732,7 +771,10 @@ pub(crate) mod forced {
         CLOCK_AHEAD.set(CLOCK_AHEAD.get() + time);
     }
 
-    pub(super) fn held_wait() -> Option<Duration> {
+    /// Long enough for any holder that answers, however busy the machine.
+    pub(crate) const PATIENT: Duration = Duration::from_secs(120);
+
+    pub(super) fn held_wait() -> Duration {
         HELD_WAIT.get()
     }
 
@@ -742,14 +784,14 @@ pub(crate) mod forced {
 
     impl Impatient {
         pub(crate) fn new() -> Self {
-            HELD_WAIT.set(Some(Duration::from_millis(20)));
+            HELD_WAIT.set(Duration::from_millis(20));
             Self(())
         }
     }
 
     impl Drop for Impatient {
         fn drop(&mut self) {
-            HELD_WAIT.set(None);
+            HELD_WAIT.set(PATIENT);
         }
     }
 
@@ -851,6 +893,7 @@ impl ChainWriter {
             log: log.to_owned(),
             cursor: Mutex::new(Cursor::empty()),
             anchorer: RwLock::new(Arc::new(LocalMarker)),
+            late: Mutex::new(None),
         })
     }
 
@@ -889,6 +932,28 @@ impl ChainWriter {
         self.cursor().verified = false;
     }
 
+    /// Whether an ask that took too long goes on.
+    fn still_asking(&self) -> bool {
+        let mut late = self
+            .late
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // A late answer is dropped: the file may have changed since. That
+        // there is a holder is known already.
+        let asking = late
+            .as_ref()
+            .is_some_and(|late| matches!(late.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        if !asking {
+            *late = None;
+        }
+        asking
+    }
+
+    #[cfg(test)]
+    pub(crate) fn asking(&self) -> bool {
+        self.still_asking()
+    }
+
     /// Appends `draft`, flushed to disk before this returns. When the event
     /// is due an anchor, asks the anchorer (outside the file lock) and
     /// records its answer as an `anchor` event.
@@ -903,8 +968,13 @@ impl ChainWriter {
                 asserted_by_session: false,
                 ..EventDraft::new(AuditEventKind::Anchor, outcome.detail(&appended.at))
             };
-            // A refusal is recorded even though it stops the chain.
+            // A refusal is recorded even though it stops the chain, and stops
+            // it even when it cannot be recorded.
             let refused = matches!(outcome, AnchorOutcome::Refused { .. });
+            if let AnchorOutcome::Refused { reason } = &outcome {
+                self.cursor()
+                    .refuse(&appended.at.file_id, refused_by_holder(reason));
+            }
             appended.anchor = Some(
                 self.append_one(marker, refused)
                     .map(|_| outcome)
@@ -934,16 +1004,11 @@ impl ChainWriter {
                     .to_owned(),
             ));
         }
-        let refusal = (draft.kind == AuditEventKind::Anchor && record_refusal).then(|| {
-            draft.detail["reason"]
-                .as_str()
-                .unwrap_or_default()
-                .to_owned()
-        });
-        let appended = self.write_event(&mut cursor, draft)?;
-        if let Some(reason) = refusal {
-            cursor.refused = Some(format!("the anchor holder refused this file: {reason}"));
+        if draft.kind == AuditEventKind::Anchor && record_refusal {
+            let reason = draft.detail["reason"].as_str().unwrap_or_default();
+            cursor.refused = Some(refused_by_holder(reason));
         }
+        let appended = self.write_event(&mut cursor, draft)?;
         Ok((appended, cursor.link.clone(), cursor.reset.clone()))
     }
 
@@ -996,7 +1061,7 @@ impl ChainWriter {
         )?;
         cursor.opening_unanchored = false;
         if let AnchorOutcome::Refused { reason } = outcome {
-            let reason = format!("the anchor holder refused this file: {reason}");
+            let reason = refused_by_holder(&reason);
             cursor.refused = Some(reason.clone());
             return Err(ChainError::Broken {
                 seq: cursor.next_seq,
@@ -1022,8 +1087,11 @@ impl ChainWriter {
     /// waited for as long as it takes (it bounds itself), as a new process
     /// always did. While the check stays owed it is asked again for at most
     /// [`HELD_WAIT`], and after it took longer than that not at all for
-    /// [`HELD_BACK_OFF`]: the append is then refused, never made unchecked,
-    /// and other writers get the lock.
+    /// [`HELD_BACK_OFF`], nor while an earlier ask goes on: the append is then
+    /// refused, never made unchecked, and other writers get the lock. What it
+    /// would have answered is not known, so from then on no answer is not
+    /// taken for no holder: the refusals end when it answers, or when orceld
+    /// restarts.
     fn sync(&self, cursor: &mut Cursor) -> Result<(), ChainError> {
         if !cursor.verified {
             cursor.start_over();
@@ -1114,10 +1182,8 @@ impl ChainWriter {
                         if event.kind == AuditEventKind::Anchor
                             && event.detail["status"] == LINK_REFUSED
                         {
-                            cursor.refused = Some(format!(
-                                "the anchor holder refused this file: {}",
-                                event.detail["reason"].as_str().unwrap_or_default()
-                            ));
+                            let reason = event.detail["reason"].as_str().unwrap_or_default();
+                            cursor.refused = Some(refused_by_holder(reason));
                         }
                         cursor.len += length;
                         cursor.next_seq = scanner.next_seq;
@@ -1193,7 +1259,8 @@ impl ChainWriter {
             }
         } else if held.is_err() || cursor.holder_answered {
             let why = held.err().unwrap_or_else(|| {
-                "the anchor holder answered before, and does not now".to_owned()
+                "the anchor holder answered before, or took too long to, and does not now"
+                    .to_owned()
             });
             return Err(ChainError::Io(format!(
                 "{why}, and this file must be checked against what it holds; nothing was \
@@ -1216,28 +1283,46 @@ impl ChainWriter {
     }
 
     /// What the holder holds, for the check `cursor` owes; an error when a
-    /// holder that was asked before did not answer in time, or took so long
-    /// that it is not asked again yet.
+    /// holder that was asked before did not answer in time, or is not asked
+    /// again yet. At most one ask that took too long goes on at a time.
     fn ask_held(&self, cursor: &mut Cursor) -> Result<Option<HeldState>, String> {
         let started = clock();
-        if cursor.ask_after.is_some_and(|after| started < after) {
+        let waits = cursor.ask_after.is_some_and(|after| started < after);
+        if waits || (cursor.holder_asked && self.still_asking()) {
+            cursor.holder_answered = true;
             return Err("the anchor holder did not answer in time and is asked again soon".into());
         }
         cursor.ask_after = None;
         let anchorer = self.anchorer();
         let held = if cursor.holder_asked {
-            let log = self.log.clone();
-            within(held_wait(), move || anchorer.held(&log))
+            let (asked, log) = (Arc::clone(&anchorer), self.log.clone());
+            match within(held_wait(), move || asked.held(&log)) {
+                Ok(held) => held,
+                // Without a thread it is asked as the first time.
+                Err(Unanswered::NotAsked(_)) => anchorer.held(&self.log),
+                Err(unanswered) => {
+                    let reason = unanswered.reason(held_wait());
+                    if let Unanswered::Late(answer) = unanswered {
+                        cursor.holder_answered = true;
+                        cursor.ask_after = Some(clock() + HELD_BACK_OFF);
+                        *self
+                            .late
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(answer);
+                    }
+                    return Err(reason);
+                }
+            }
         } else {
             cursor.holder_asked = true;
-            Ok(anchorer.held(&self.log))
+            anchorer.held(&self.log)
         };
-        match &held {
-            Ok(Some(_)) => cursor.holder_answered = true,
-            Ok(None) if clock() < started + held_wait() => {}
-            Ok(None) | Err(_) => cursor.ask_after = Some(clock() + HELD_BACK_OFF),
+        if held.is_some() {
+            cursor.holder_answered = true;
+        } else if clock() >= started + held_wait() {
+            cursor.ask_after = Some(clock() + HELD_BACK_OFF);
         }
-        held
+        Ok(held)
     }
 
     /// Moves a torn last line aside, cuts it from the chain and records
