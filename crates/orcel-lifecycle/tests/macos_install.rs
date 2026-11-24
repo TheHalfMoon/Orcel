@@ -643,3 +643,74 @@ fn an_agent_log_that_cannot_be_moved_aside_does_not_fail_the_install() {
         std::env::var_os("ORCEL_MACOS_ORCELD").is_some()
     );
 }
+
+/// Every update loads the agent in place of one that is already loaded:
+/// `launchctl bootout`, then `bootstrap`, of the same label. Here with the
+/// real `launchctl`, through a repairing install, once idle and once while a
+/// connection is open (its `orceld` is running then).
+#[test]
+fn an_agent_that_is_already_loaded_is_loaded_again() {
+    let Some(node) = node() else { return };
+    if std::env::var_os("ORCEL_MACOS_ORCELD").is_none() {
+        assert!(!required(), "ORCEL_MACOS_ORCELD must name the built orceld");
+        eprintln!("MAC-M1-07 skipped: needs the real orceld");
+        return;
+    }
+    let (home, root) = home_and_root("reload");
+    let workspace = home.join("workspace");
+    fs::create_dir_all(&workspace).unwrap();
+    orcel_lifecycle::config::Config {
+        workspaces: vec![orcel_lifecycle::config::WorkspaceEntry {
+            id: "ci".into(),
+            root: workspace,
+        }],
+        ..orcel_lifecycle::config::Config::default()
+    }
+    .save(&Layout::new(&root))
+    .unwrap();
+    let label = format!("ai.orcel.orceld.reload{}", std::process::id());
+    let _guard = Bootout(label.clone());
+    let socket = unique("r").join("orcel").join("orceld.sock");
+    let platform = MacosPlatform {
+        agent: AgentTarget::Custom {
+            plist_dir: home.join("Library").join("LaunchAgents"),
+            label: label.clone(),
+            socket: socket.clone(),
+            extra_environment: std::collections::BTreeMap::from([(
+                "HOME".to_owned(),
+                home.to_str().unwrap().to_owned(),
+            )]),
+        },
+    };
+    let installer = Installer::new(Layout::new(&root), &platform);
+    let source = release("reload");
+    let mut reloads = 0;
+    for round in ["first", "idle", "open connection"] {
+        // Held open across the reload; what becomes of it is launchd's.
+        let open = (round == "open connection").then(|| {
+            let stream = std::os::unix::net::UnixStream::connect(&socket).expect("connect");
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            stream
+        });
+        let before = agent_loaded(&label);
+        assert_eq!(before, round != "first", "{round}");
+        let report = installer
+            .install(&source, &options(node.clone()))
+            .unwrap_or_else(|error| panic!("{round}: {}", error.message));
+        assert_eq!(report.repaired_existing, before, "{round}");
+        assert!(agent_loaded(&label), "{round}");
+        let response = system_status(&socket);
+        assert_eq!(response["ok"], true, "{round}: {response}");
+        installer.verify().expect("verify");
+        reloads += u32::from(before);
+        drop(open);
+    }
+    let report = installer
+        .uninstall(&UninstallOptions::default())
+        .expect("uninstall");
+    assert!(report.residual.is_empty(), "{:?}", report.residual);
+    assert!(!agent_loaded(&label));
+    println!(
+        "MAC-M1-07-EVIDENCE reload reloads={reloads} answered_after=true open_connection=true"
+    );
+}
