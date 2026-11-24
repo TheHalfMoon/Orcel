@@ -90,8 +90,9 @@ pub const DOCUMENT_PARSE: Store = store("document-parse", Dir, Transient, Migrat
 pub const QUALIFICATION: Store = store("sg-000012-qualification", Dir, Transient, Migrate::Leave);
 /// One record per running client session, for display; each is deleted when its session ends.
 pub const SESSIONS: Store = store("sessions", Dir, Transient, Migrate::Leave);
-/// Linux and macOS: the file the lifecycle lock is on. Always empty, and never removed, not even
-/// by a purge (`orcel_lifecycle::unix_lock`). Windows has none.
+/// Linux and macOS: the file the lifecycle lock is on. Orcel writes nothing to it and never
+/// removes it, not even by a purge (`orcel_lifecycle::unix_lock`). Windows has none.
+#[cfg(unix)]
 pub const LIFECYCLE_LOCK: Store = store("lifecycle.lock", File, Transient, Migrate::Leave);
 pub const MIGRATION_IN_PROGRESS: Store = store(
     "legacy-migration-in-progress",
@@ -154,6 +155,7 @@ pub const STORES: &[Store] = &[
     DOCUMENT_PARSE,
     QUALIFICATION,
     SESSIONS,
+    #[cfg(unix)]
     LIFECYCLE_LOCK,
     MIGRATION_IN_PROGRESS,
     MIGRATION_STAGING,
@@ -283,6 +285,8 @@ mod tests {
         ] {
             assert!(owner(name).is_none(), "{name}");
         }
+        // Windows has no such file, so one there is the person's.
+        assert_eq!(owner("lifecycle.lock").is_some(), cfg!(unix));
     }
 
     #[test]

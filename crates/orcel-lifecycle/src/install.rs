@@ -515,7 +515,10 @@ impl<'a> Installer<'a> {
         // the marker is what keeps orceld from starting on them.
         let marker = orcel_platform::stores::MIGRATION_IN_PROGRESS.path(&self.layout.root);
         // The command holds the lock on this file, so it is never removed (`unix_lock`).
-        let kept_lock = cfg!(unix).then(|| self.layout.lifecycle_lock());
+        #[cfg(unix)]
+        let kept_lock = Some(self.layout.lifecycle_lock());
+        #[cfg(not(unix))]
+        let kept_lock: Option<PathBuf> = None;
         for path in self.layout.retained_data() {
             if !path.exists() {
                 continue;
@@ -885,13 +888,14 @@ mod tests {
             .unwrap();
         assert!(report.residual.is_empty(), "{:?}", report.residual);
         // All but the lifecycle lock, which is never removed where it is a file.
-        let lock = layout.lifecycle_lock();
-        assert_eq!(report.retained.contains(&lock), cfg!(unix));
-        assert_eq!(lock.exists(), cfg!(unix));
-        assert_eq!(root.exists(), cfg!(unix));
-        if cfg!(unix) {
+        #[cfg(unix)]
+        {
+            assert_eq!(report.retained, [layout.lifecycle_lock()]);
+            assert!(layout.lifecycle_lock().exists());
             assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
         }
+        #[cfg(not(unix))]
+        assert!(!root.exists());
     }
 
     /// A purge removes what's known to be Orcel's. Anything else stays, and is reported.

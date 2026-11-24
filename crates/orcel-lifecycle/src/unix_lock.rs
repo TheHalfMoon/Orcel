@@ -14,10 +14,19 @@
 //!   not called `exec` yet does not keep it either.
 //! - **The file.** It is opened without following a link and without waiting
 //!   for a FIFO, and used only if it is this user's plain file with no other
-//!   hard link and no permission for anyone else; anything else is refused and
-//!   left as it is. It is never read or written. A state root that is a link
-//!   or not a folder is refused; the rest of the root's permissions are the
+//!   hard link; anything else is refused and left as it is. One that others
+//!   can open is made 0600 through the open descriptor. It is never read or
+//!   written.
+//! - **The state root.** A root that is a link or not a folder is refused, and
+//!   so is one of another user, before anything is created or opened. For a
+//!   root that is missing, the nearest folder above it that is there must be
+//!   this user's. So `sudo orcel`, with the person's `HOME`, leaves nothing
+//!   owned by root there (and a first run whose nearest folder is a shared one,
+//!   such as `/tmp`, is refused). The rest of the root's permissions are the
 //!   commands' own checks, because an install repairs a root that is too open.
+//!   A root this user cannot write (0500) and that has no lock file yet is not
+//!   repaired: the command fails with the error of opening the file, where an
+//!   install without this lock would have made it 0700 first.
 //! - **Never deleted.** Nothing of Orcel's removes or replaces the file, and
 //!   `uninstall --purge-data` leaves it: were it removed while held, a waiting
 //!   command and a new one could hold two different files at once. The name
@@ -36,13 +45,31 @@ use orcel_platform::paths::try_lock_exclusive;
 use std::cell::RefCell;
 use std::fs::{self, File, Metadata, OpenOptions};
 use std::io::ErrorKind;
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
 /// How long a waiting command sleeps between two tries.
 const POLL: Duration = Duration::from_millis(50);
+
+/// Where a try is; tests change the files there.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Step {
+    /// The root is there, the file is not opened yet.
+    BeforeOpen,
+    /// The file is locked, its name is not looked up again yet.
+    Locked,
+}
+
+/// What came of one try.
+enum Try {
+    Got(File),
+    /// Another command holds it.
+    Busy,
+    /// What went away or changed in between.
+    Changed(&'static str),
+}
 
 /// The held lock, released when the last guard of the thread is dropped. Not
 /// `Send`: it belongs to the thread that took it, as the Windows mutex does.
@@ -67,6 +94,17 @@ thread_local! {
 
 impl LifecycleLock {
     pub fn acquire(layout: &Layout, timeout: Duration) -> Result<Self, LifecycleError> {
+        let uid = orcel_platform::session::effective_uid()
+            .ok_or_else(|| LifecycleError::platform("the effective user id is unavailable"))?;
+        Self::acquire_as(layout, timeout, uid, &mut |_| {})
+    }
+
+    fn acquire_as(
+        layout: &Layout,
+        timeout: Duration,
+        uid: u32,
+        between: &mut dyn FnMut(Step),
+    ) -> Result<Self, LifecycleError> {
         let path = layout.lifecycle_lock();
         let mine = HELD.with_borrow(|held| {
             held.iter()
@@ -78,7 +116,8 @@ impl LifecycleLock {
         }
         let deadline = Instant::now() + timeout;
         loop {
-            if let Some(file) = try_acquire(&layout.root, &path)? {
+            let outcome = try_acquire(&layout.root, &path, uid, between)?;
+            if let Try::Got(file) = outcome {
                 let held = Rc::new(Held { file });
                 HELD.with_borrow_mut(|all| {
                     all.retain(|(_, other)| other.strong_count() > 0);
@@ -87,17 +126,27 @@ impl LifecycleLock {
                 return Ok(Self { _held: held });
             }
             if Instant::now() >= deadline {
-                return Err(LifecycleError::conflict(crate::lifecycle::LOCK_BUSY));
+                return Err(match outcome {
+                    Try::Changed(what) => LifecycleError::state(format!(
+                        "the lifecycle lock {} could not be taken, so nothing was changed: {what}",
+                        path.display()
+                    )),
+                    _ => LifecycleError::conflict(crate::lifecycle::LOCK_BUSY),
+                });
             }
             std::thread::sleep(POLL);
         }
     }
 }
 
-/// One try. `None`: another command holds it, or the file or the root went
-/// away in between.
-fn try_acquire(root: &Path, path: &Path) -> Result<Option<File>, LifecycleError> {
-    ensure_root(root)?;
+fn try_acquire(
+    root: &Path,
+    path: &Path,
+    uid: u32,
+    between: &mut dyn FnMut(Step),
+) -> Result<Try, LifecycleError> {
+    ensure_root(root, uid)?;
+    between(Step::BeforeOpen);
     let opened = OpenOptions::new()
         .read(true)
         .write(true)
@@ -108,7 +157,9 @@ fn try_acquire(root: &Path, path: &Path) -> Result<Option<File>, LifecycleError>
         .open(path);
     let file = match opened {
         Ok(file) => file,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return Ok(Try::Changed("its folder went away"))
+        }
         Err(error) if error.raw_os_error() == Some(libc::ELOOP) => {
             return Err(refuse(path, "is a link"))
         }
@@ -119,35 +170,43 @@ fn try_acquire(root: &Path, path: &Path) -> Result<Option<File>, LifecycleError>
             ))
         }
     };
-    let uid = orcel_platform::session::effective_uid()
-        .ok_or_else(|| LifecycleError::platform("the effective user id is unavailable"))?;
     let lock_error = |error: std::io::Error| {
         LifecycleError::io(format!("take the lifecycle lock {}", path.display()), error)
     };
     let metadata = file.metadata().map_err(lock_error)?;
     check(&metadata, uid).map_err(|why| refuse(path, why))?;
+    // Before the lock: while others can open it, they can also hold it.
+    if metadata.mode() & 0o077 != 0 {
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(lock_error)?;
+    }
     if !try_lock_exclusive(&file).map_err(lock_error)? {
-        return Ok(None);
+        return Ok(Try::Busy);
     }
+    between(Step::Locked);
     if !is_named(&metadata, path).map_err(lock_error)? {
-        return Ok(None);
+        return Ok(Try::Changed("the file was removed or replaced"));
     }
-    Ok(Some(file))
+    Ok(Try::Got(file))
 }
 
-/// The state root, made owner-only when it is missing; a link is not followed.
-fn ensure_root(root: &Path) -> Result<(), LifecycleError> {
+/// The state root, made owner-only when it is missing. A link is not followed,
+/// and nothing is created under a folder of another user.
+fn ensure_root(root: &Path, uid: u32) -> Result<(), LifecycleError> {
     match fs::symlink_metadata(root) {
-        Ok(metadata) if metadata.is_dir() => Ok(()),
+        Ok(metadata) if metadata.is_dir() => check_owner(root, metadata.uid(), uid),
         Ok(_) => Err(LifecycleError::state(format!(
             "the Orcel state folder {} is a link or not a folder, so nothing was changed",
             root.display()
         ))),
-        Err(error) if error.kind() == ErrorKind::NotFound => fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(root)
-            .map_err(|error| LifecycleError::io(format!("create {}", root.display()), error)),
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            check_owner_above(root, uid)?;
+            fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(root)
+                .map_err(|error| LifecycleError::io(format!("create {}", root.display()), error))
+        }
         Err(error) => Err(LifecycleError::io(
             format!("inspect {}", root.display()),
             error,
@@ -155,7 +214,41 @@ fn ensure_root(root: &Path) -> Result<(), LifecycleError> {
     }
 }
 
-/// Whether the open file can be the lock: this user's, plain, private.
+/// The nearest folder above a missing root that is there must be this user's.
+/// A link there is followed, as creating the root would.
+fn check_owner_above(root: &Path, uid: u32) -> Result<(), LifecycleError> {
+    for ancestor in root.ancestors().skip(1) {
+        match fs::metadata(ancestor) {
+            Ok(metadata) => return check_owner(ancestor, metadata.uid(), uid),
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(LifecycleError::io(
+                    format!("inspect {}", ancestor.display()),
+                    error,
+                ))
+            }
+        }
+    }
+    Err(LifecycleError::state(format!(
+        "no folder above the Orcel state folder {} exists, so nothing was changed",
+        root.display()
+    )))
+}
+
+/// Whether a command that runs as `uid` may work in a folder of `owner`. Root
+/// is no exception: what it made there would lock the owner out.
+fn check_owner(folder: &Path, owner: u32, uid: u32) -> Result<(), LifecycleError> {
+    if owner == uid {
+        return Ok(());
+    }
+    Err(LifecycleError::state(format!(
+        "{} belongs to another user (uid {owner}, and this command runs as uid {uid}), so nothing was changed{}",
+        folder.display(),
+        if uid == 0 { "; run it without sudo" } else { "" }
+    )))
+}
+
+/// Whether the open file can be the lock: this user's, plain, of one name.
 fn check(metadata: &Metadata, uid: u32) -> Result<(), &'static str> {
     if !metadata.is_file() {
         Err("is not a plain file")
@@ -163,8 +256,6 @@ fn check(metadata: &Metadata, uid: u32) -> Result<(), &'static str> {
         Err("is owned by another user")
     } else if metadata.nlink() > 1 {
         Err("has another hard link")
-    } else if metadata.mode() & 0o077 != 0 {
-        Err("can be opened by other users")
     } else {
         Ok(())
     }
@@ -191,7 +282,7 @@ mod tests {
     use super::*;
     use crate::test_support::{release_dir, temp_dir, FakePlatform};
     use crate::ErrorKind as Kind;
-    use std::os::unix::fs::{symlink, PermissionsExt};
+    use std::os::unix::fs::symlink;
     use std::process::{Child, Command, Stdio};
 
     const SHORT: Duration = Duration::from_millis(200);
@@ -380,27 +471,15 @@ mod tests {
     }
 
     #[test]
-    fn a_lock_file_that_is_not_this_users_private_file_is_refused_and_left_alone() {
-        for case in [
-            "link",
-            "dangling link",
-            "fifo",
-            "folder",
-            "hard link",
-            "group",
-            "others",
-        ] {
+    fn a_lock_file_that_is_not_one_plain_file_is_refused_and_left_alone() {
+        for case in ["link", "dangling link", "fifo", "folder", "hard link"] {
             let layout = layout("lock-refuse");
             let path = layout.lifecycle_lock();
             let outside = layout.root.with_file_name("outside");
             fs::create_dir_all(&layout.root).unwrap();
-            let write = |target: &Path, mode: u32| {
-                fs::write(target, b"kept").unwrap();
-                fs::set_permissions(target, fs::Permissions::from_mode(mode)).unwrap();
-            };
             match case {
                 "link" => {
-                    write(&outside, 0o600);
+                    fs::write(&outside, b"kept").unwrap();
                     symlink(&outside, &path).unwrap();
                 }
                 "dangling link" => symlink(&outside, &path).unwrap(),
@@ -409,12 +488,10 @@ mod tests {
                     assert!(made.success());
                 }
                 "folder" => fs::create_dir(&path).unwrap(),
-                "hard link" => {
-                    write(&outside, 0o600);
+                _ => {
+                    fs::write(&outside, b"kept").unwrap();
                     fs::hard_link(&outside, &path).unwrap();
                 }
-                "group" => write(&path, 0o620),
-                _ => write(&path, 0o604),
             }
             let before = fs::symlink_metadata(&path).unwrap();
             // Returns at once, for the FIFO too.
@@ -433,6 +510,91 @@ mod tests {
                 _ => {}
             }
         }
+    }
+
+    #[test]
+    fn a_lock_file_others_can_open_is_made_private() {
+        for mode in [0o620, 0o604, 0o666] {
+            let layout = layout("lock-wide");
+            let path = layout.lifecycle_lock();
+            fs::create_dir(&layout.root).unwrap();
+            fs::write(&path, b"kept").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+            let before = fs::symlink_metadata(&path).unwrap().ino();
+            let _lock = LifecycleLock::acquire(&layout, SHORT).unwrap();
+            let after = fs::symlink_metadata(&path).unwrap();
+            assert_eq!(after.mode() & 0o7777, 0o600, "{mode:o}");
+            assert_eq!(after.ino(), before);
+            assert_eq!(fs::read(&path).unwrap(), b"kept");
+        }
+    }
+
+    /// As `sudo orcel` with the person's `HOME`, with the users swapped: the
+    /// folders are this test's and the command claims to run as another user.
+    #[test]
+    fn another_users_root_is_refused_and_nothing_is_created() {
+        let uid = orcel_platform::session::effective_uid().unwrap();
+        let refused = |layout: &Layout| {
+            let error = LifecycleLock::acquire_as(layout, LONG, uid + 1, &mut |_| {})
+                .err()
+                .unwrap();
+            assert_eq!(error.kind, Kind::State, "{}", error.message);
+            assert!(error.message.contains("another user"), "{}", error.message);
+        };
+        // Missing, with more than one folder missing above it.
+        let here = layout("lock-sudo");
+        let missing = Layout::new(here.root.join("state").join("orcel"));
+        refused(&missing);
+        assert!(!here.root.exists(), "nothing was created");
+        // There, without and with a lock file.
+        fs::create_dir(&here.root).unwrap();
+        refused(&here);
+        assert_eq!(fs::read_dir(&here.root).unwrap().count(), 0);
+        drop(LifecycleLock::acquire(&here, SHORT).unwrap());
+        let before = fs::symlink_metadata(here.lifecycle_lock()).unwrap();
+        refused(&here);
+        let after = fs::symlink_metadata(here.lifecycle_lock()).unwrap();
+        assert_eq!((before.ino(), before.uid()), (after.ino(), after.uid()));
+    }
+
+    #[test]
+    fn only_the_owner_of_a_folder_works_in_it() {
+        let folder = Path::new("/somewhere");
+        for (owner, uid, allowed) in [
+            (501, 501, true),
+            (0, 0, true),
+            // sudo in a person's folder, a person in root's, and two people.
+            (501, 0, false),
+            (0, 501, false),
+            (501, 502, false),
+        ] {
+            let result = check_owner(folder, owner, uid);
+            assert_eq!(result.is_ok(), allowed, "{owner} {uid}");
+            if let Err(error) = result {
+                assert_eq!(error.message.contains("without sudo"), uid == 0);
+            }
+        }
+    }
+
+    /// A root that cannot be written, and has no lock file, is not repaired.
+    #[test]
+    fn a_root_that_cannot_be_written_fails_and_is_left_alone() {
+        // Root writes anywhere, so this says nothing for it.
+        if orcel_platform::session::effective_uid().unwrap() == 0 {
+            return;
+        }
+        let layout = layout("lock-0500");
+        fs::create_dir(&layout.root).unwrap();
+        let set = |mode| {
+            fs::set_permissions(&layout.root, fs::Permissions::from_mode(mode)).unwrap();
+        };
+        set(0o500);
+        let error = LifecycleLock::acquire(&layout, LONG).err().unwrap();
+        assert_eq!(error.kind, Kind::Io, "{}", error.message);
+        let mode = fs::symlink_metadata(&layout.root).unwrap().mode() & 0o777;
+        assert_eq!(mode, 0o500);
+        set(0o700);
+        LifecycleLock::acquire(&layout, SHORT).unwrap();
     }
 
     #[test]
@@ -455,20 +617,94 @@ mod tests {
         assert_eq!(fs::read_dir(&target).unwrap().count(), 0);
     }
 
-    /// What a command that opened the file before it went away is told.
+    fn uid() -> u32 {
+        orcel_platform::session::effective_uid().unwrap()
+    }
+
+    /// A command that locked a file which is no longer the one under the name
+    /// starts over, and holds the one that is.
     #[test]
-    fn a_file_that_is_no_longer_there_is_not_the_lock() {
-        let layout = layout("lock-named");
+    fn a_file_that_was_replaced_is_tried_again() {
+        for remove_only in [true, false] {
+            let layout = layout("lock-replaced");
+            let path = layout.lifecycle_lock();
+            let mut locked = 0;
+            let lock = LifecycleLock::acquire_as(&layout, LONG, uid(), &mut |step| {
+                if step != Step::Locked {
+                    return;
+                }
+                locked += 1;
+                if locked == 1 {
+                    // The try still has it open, so its number stays in use.
+                    fs::remove_file(&path).unwrap();
+                    if !remove_only {
+                        fs::write(&path, b"").unwrap();
+                        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+                    }
+                }
+            })
+            .unwrap();
+            assert_eq!(locked, 2);
+            let held = lock._held.file.metadata().unwrap().ino();
+            assert_eq!(held, fs::symlink_metadata(&path).unwrap().ino());
+            assert_busy(elsewhere(&layout, SHORT));
+            drop(lock);
+            elsewhere(&layout, SHORT).unwrap();
+        }
+    }
+
+    /// Something that keeps changing is not another command that runs.
+    #[test]
+    fn what_keeps_changing_is_named_and_is_not_called_busy() {
+        let layout = layout("lock-changing");
         let path = layout.lifecycle_lock();
-        let file = try_acquire(&layout.root, &path).unwrap().unwrap();
-        let opened = file.metadata().unwrap();
-        assert!(is_named(&opened, &path).unwrap());
-        fs::remove_file(&path).unwrap();
-        assert!(!is_named(&opened, &path).unwrap(), "gone");
-        // Another file: `file` keeps the first one's number in use.
-        fs::write(&path, b"").unwrap();
-        assert!(!is_named(&opened, &path).unwrap(), "replaced");
-        drop(file);
+        let result = LifecycleLock::acquire_as(&layout, SHORT, uid(), &mut |step| {
+            if step == Step::Locked {
+                fs::remove_file(&path).unwrap();
+            }
+        });
+        let error = result.err().unwrap();
+        assert_eq!(error.kind, Kind::State, "{}", error.message);
+        assert!(
+            error.message.contains("removed or replaced"),
+            "{}",
+            error.message
+        );
+
+        let result = LifecycleLock::acquire_as(&layout, SHORT, uid(), &mut |step| {
+            if step == Step::BeforeOpen {
+                fs::remove_dir_all(&layout.root).unwrap();
+            }
+        });
+        let error = result.err().unwrap();
+        assert_eq!(error.kind, Kind::State, "{}", error.message);
+        assert!(error.message.contains("went away"), "{}", error.message);
+
+        // The last reason counts: after a change, a command that holds it.
+        let mut other = None;
+        let result = LifecycleLock::acquire_as(&layout, SHORT, uid(), &mut |step| {
+            if step == Step::Locked && other.is_none() {
+                fs::remove_file(&path).unwrap();
+                let taken = try_acquire(&layout.root, &path, uid(), &mut |_| {}).unwrap();
+                assert!(matches!(taken, Try::Got(_)));
+                other = Some(taken);
+            }
+        });
+        assert_busy(result.map(|_| ()));
+        drop(other);
+    }
+
+    /// A process that forked and has not called `exec` yet has a copy of the
+    /// descriptor; a normal release does not wait for it.
+    #[test]
+    fn a_release_counts_while_a_copy_of_the_descriptor_is_open() {
+        let layout = layout("lock-copy");
+        let lock = LifecycleLock::acquire(&layout, SHORT).unwrap();
+        let copy = lock._held.file.try_clone().unwrap();
+        assert_busy(elsewhere(&layout, SHORT));
+        drop(lock);
+        elsewhere(&layout, SHORT).unwrap();
+        drop(copy);
     }
 
     /// Uninstall, with and without the data, while a command holds the lock
@@ -505,7 +741,7 @@ mod tests {
                     .unwrap()
                     .map(|entry| entry.unwrap().path())
                     .collect();
-                assert_eq!(left, [path.clone()], "only the lock is left");
+                assert_eq!(left, std::slice::from_ref(&path), "only the lock is left");
                 // What isn't Orcel's is still reported.
                 let other = layout.root.join("somebody-elses.txt");
                 fs::write(&other, b"keep").unwrap();

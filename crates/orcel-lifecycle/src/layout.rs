@@ -75,6 +75,7 @@ impl Layout {
         self.bin_dir().join(crate::per_os::cli_file_name())
     }
     /// The file the lifecycle lock is on (Linux and macOS).
+    #[cfg(unix)]
     pub fn lifecycle_lock(&self) -> PathBuf {
         stores::LIFECYCLE_LOCK.path(&self.root)
     }

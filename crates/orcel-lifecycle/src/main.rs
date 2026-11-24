@@ -580,7 +580,7 @@ fn uninstall(args: &mut Args) -> Result<Output, LifecycleError> {
         (
             if purge_data {
                 // Linux and macOS only; a purge keeps nothing else.
-                "Kept (the empty lock file; delete the folder when no Orcel command runs)"
+                "Kept (the lock file; delete the folder when no Orcel command runs)"
             } else {
                 "Kept (user data)"
             },
