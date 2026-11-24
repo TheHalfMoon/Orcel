@@ -1,4 +1,5 @@
-//! SG-000119 A5 helpers shared by `native_qualify` and `native_live`
+//! SG-000119 A5 helpers shared by `native_qualify`, `native_live`,
+//! `native_shell` and `process_ancestry`
 //! (included with `#[path]`; not a test target of its own).
 //!
 //! Read-only by construction: process and window queries, a token's

@@ -18,6 +18,9 @@
 //! Every count comes from the shell's own exit report (`SG119-*` lines),
 //! counted on the Rust side.
 
+#[path = "support/qualify.rs"]
+mod qualify;
+
 use orcel_control_room_shell::{run, shell, single_instance, Hooks};
 use std::io::Read;
 use std::process::{Child, Command, Stdio};
@@ -316,39 +319,9 @@ fn windows_of(pids: &[u32], title: Option<&str>) -> Vec<TopLevel> {
 
 /// `pid` and every process descended from it (the WebView2 browser and its
 /// renderers are children of the shell: a popup WebView2 opened itself would
-/// belong to one of them).
+/// belong to one of them), not one that only has a reused parent id.
 fn process_tree(pid: u32) -> Vec<u32> {
-    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
-    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
-        TH32CS_SNAPPROCESS,
-    };
-    let mut pairs = Vec::new();
-    // SAFETY: a process snapshot walked once and closed.
-    unsafe {
-        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        assert_ne!(snapshot, INVALID_HANDLE_VALUE);
-        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
-        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
-        let mut more = Process32FirstW(snapshot, &mut entry) != 0;
-        while more {
-            pairs.push((entry.th32ProcessID, entry.th32ParentProcessID));
-            more = Process32NextW(snapshot, &mut entry) != 0;
-        }
-        CloseHandle(snapshot);
-    }
-    let mut tree = vec![pid];
-    let mut grew = true;
-    while grew {
-        grew = false;
-        for (child, parent) in &pairs {
-            if tree.contains(parent) && !tree.contains(child) {
-                tree.push(*child);
-                grew = true;
-            }
-        }
-    }
-    tree
+    qualify::tree(pid).iter().map(|proc| proc.pid).collect()
 }
 
 /// Visible top-level windows of `pid` and its descendants, tao's helper
