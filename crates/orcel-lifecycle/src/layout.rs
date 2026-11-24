@@ -112,6 +112,14 @@ impl Layout {
     pub fn health_url_file(&self) -> PathBuf {
         self.run_dir().join("tunnel-health.url")
     }
+    /// Why `orcel-mcp-host` last refused to serve.
+    pub fn host_refusal(&self) -> PathBuf {
+        self.run_dir().join("mcp-host-refusal.json")
+    }
+    /// The id of the saved tunnel setup.
+    pub fn tunnel_setup_id(&self) -> PathBuf {
+        stores::TUNNEL_SETUP_ID.path(&self.root)
+    }
     pub fn config_file(&self) -> PathBuf {
         stores::CONFIG.path(&self.root)
     }

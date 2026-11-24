@@ -177,9 +177,20 @@ pub fn observe(recorded: &ProcessIdentity) -> Observed {
         return not_opened(unsafe { GetLastError() }, ERROR_INVALID_PARAMETER);
     };
     // SAFETY: the handle was opened with SYNCHRONIZE access.
-    match unsafe { WaitForSingleObject(handle.raw(), 0) } {
+    let waited = unsafe { WaitForSingleObject(handle.raw(), 0) };
+    opened(waited, recorded, || identity_of(&handle, recorded.pid))
+}
+
+/// What an opened process is: `waited` is the result of a wait of no time for
+/// its exit. One that runs and cannot be inspected is not taken as gone.
+fn opened(
+    waited: u32,
+    recorded: &ProcessIdentity,
+    identity: impl FnOnce() -> Option<ProcessIdentity>,
+) -> Observed {
+    match waited {
         WAIT_OBJECT_0 => Observed::Gone,
-        WAIT_TIMEOUT => match identity_of(&handle, recorded.pid) {
+        WAIT_TIMEOUT => match identity() {
             None => Observed::Unknown,
             Some(identity)
                 if identity.creation_time == recorded.creation_time
@@ -675,6 +686,14 @@ mod tests {
             assert_eq!(not_opened(5, absent), Observed::Unknown);
             assert_eq!(not_opened(0, absent), Observed::Unknown);
         }
+        // A process that runs and cannot be inspected, and a wait that
+        // failed, are not taken as gone either.
+        let same = || Some(identity.clone());
+        assert_eq!(opened(WAIT_TIMEOUT, &identity, || None), Observed::Unknown);
+        assert_eq!(opened(WAIT_TIMEOUT, &identity, same), Observed::Live);
+        assert_eq!(opened(WAIT_TIMEOUT, &forged, same), Observed::Gone);
+        assert_eq!(opened(WAIT_OBJECT_0, &identity, same), Observed::Gone);
+        assert_eq!(opened(u32::MAX, &identity, same), Observed::Unknown);
         let live = open_verified(&identity).unwrap();
         assert!(live.terminate());
         assert!(live.wait(Duration::from_secs(10)));

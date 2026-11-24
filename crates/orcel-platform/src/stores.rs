@@ -106,6 +106,8 @@ pub const MIGRATION_STAGING: Store =
 // Nested, under `state` and `secrets`.
 pub const CONFIG: Store = store("state/config.json", File, UserData, Migrate::Copy);
 pub const TUNNEL_SECRETS: Store = store("state/secrets", Dir, UserData, Migrate::Copy);
+/// SG-000135 OB-09: names the saved tunnel setup; made anew by the next start when absent.
+pub const TUNNEL_SETUP_ID: Store = store("state/tunnel-setup-id", File, UserData, Migrate::Leave);
 pub const AUTHORITY: Store = store("state/authority", Dir, UserData, Migrate::Leave);
 pub const SEARCH_USAGE: Store = store("state/search/usage.json", File, UserData, Migrate::Copy);
 pub const DEVICE_KEY_RECORD: Store = store(
@@ -161,6 +163,7 @@ pub const STORES: &[Store] = &[
     MIGRATION_STAGING,
     CONFIG,
     TUNNEL_SECRETS,
+    TUNNEL_SETUP_ID,
     AUTHORITY,
     SEARCH_USAGE,
     DEVICE_KEY_RECORD,

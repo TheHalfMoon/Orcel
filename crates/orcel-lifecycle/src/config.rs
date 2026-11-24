@@ -359,6 +359,64 @@ pub fn restore_runtime_key(layout: &Layout, previous: Option<&[u8]>) -> Result<(
     }
 }
 
+fn is_setup_id(id: &str) -> bool {
+    id.len() == 64
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// SG-000135 OB-09: the id of the saved tunnel setup, which a launch pin
+/// names. It is beside the configuration and not in it, so a build that does
+/// not know it reads the configuration as before. `None` when there is none
+/// yet; one that is malformed is an error.
+pub fn read_setup_id(layout: &Layout) -> Result<Option<String>, LifecycleError> {
+    let path = layout.tunnel_setup_id();
+    let text = match std::fs::read(&path) {
+        Ok(bytes) => String::from_utf8(bytes).unwrap_or_default(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(LifecycleError::io(
+                format!("read the tunnel setup id {}", path.display()),
+                error,
+            ))
+        }
+    };
+    if is_setup_id(&text) {
+        Ok(Some(text))
+    } else {
+        Err(LifecycleError::state(format!(
+            "the tunnel setup id {} is malformed; run `orcel stop`, then `orcel start`, which makes a new one",
+            path.display()
+        )))
+    }
+}
+
+/// Saves a new random setup id: what was launched under an earlier one is not
+/// served any more.
+pub fn renew_setup_id(layout: &Layout) -> Result<String, LifecycleError> {
+    let mut random = [0u8; 32];
+    getrandom::fill(&mut random)
+        .map_err(|error| LifecycleError::platform(format!("read the OS random source: {error}")))?;
+    let id: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+    layout.ensure_private_root()?;
+    std::fs::create_dir_all(layout.state_dir())
+        .map_err(|error| LifecycleError::io("create state directory", error))?;
+    write_bytes_atomic(&layout.tunnel_setup_id(), id.as_bytes())?;
+    Ok(id)
+}
+
+/// The saved setup id, made now when there is none or it is malformed (an
+/// install from before setup ids). Only for a start, when nothing runs.
+pub fn ensure_setup_id(layout: &Layout) -> Result<String, LifecycleError> {
+    match read_setup_id(layout) {
+        Ok(Some(id)) => Ok(id),
+        Ok(None) => renew_setup_id(layout),
+        Err(error) if error.kind == crate::ErrorKind::State => renew_setup_id(layout),
+        Err(error) => Err(error),
+    }
+}
+
 /// Builds the closed `orcel-tunnel` configuration for the active version.
 pub fn tunnel_config(
     layout: &Layout,
@@ -472,7 +530,8 @@ mod tests {
     #[test]
     fn a_replaced_runtime_key_is_restored_byte_for_byte() {
         let dir = temp_dir("runtime-key-restore");
-        let layout = Layout::new(&dir);
+        // Made private by the code under test; macOS refuses a wider one.
+        let layout = Layout::new(dir.join("Orcel"));
         let path = layout.runtime_key_file();
         // No key before.
         let previous = replace_runtime_key(&layout, "first-key").unwrap();
@@ -492,6 +551,47 @@ mod tests {
         // A key that setup refuses replaces nothing.
         assert!(replace_runtime_key(&layout, "two words").is_err());
         assert_eq!(std::fs::read(&path).unwrap(), old);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// SG-000135 OB-09: each setup id is new and random, an absent or
+    /// malformed one is made by a start, an existing one is kept, one that
+    /// cannot be read is never replaced, and the configuration of a build that
+    /// does not know it is untouched.
+    #[test]
+    fn ob09_the_setup_id_is_made_kept_and_renewed() {
+        let dir = temp_dir("setup-id");
+        let layout = Layout::new(dir.join("Orcel"));
+        assert_eq!(read_setup_id(&layout).unwrap(), None);
+        let first = ensure_setup_id(&layout).unwrap();
+        assert!(is_setup_id(&first), "{first}");
+        assert_eq!(read_setup_id(&layout).unwrap().as_deref(), Some(&*first));
+        assert_eq!(ensure_setup_id(&layout).unwrap(), first);
+        let second = renew_setup_id(&layout).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(ensure_setup_id(&layout).unwrap(), second);
+        let path = layout.tunnel_setup_id();
+        for bad in [
+            "",
+            "x",
+            &first[1..],
+            &first.to_uppercase(),
+            &format!("{first}\n"),
+        ] {
+            std::fs::write(&path, bad).unwrap();
+            let error = read_setup_id(&layout).unwrap_err();
+            assert!(error.message.contains("malformed"), "{}", error.message);
+            let made = ensure_setup_id(&layout).unwrap();
+            assert!(is_setup_id(&made) && made != first && made != second);
+        }
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert_eq!(
+            ensure_setup_id(&layout).unwrap_err().kind,
+            crate::ErrorKind::Io
+        );
+        assert!(path.is_dir());
+        assert!(!layout.config_file().exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

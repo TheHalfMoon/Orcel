@@ -5,7 +5,8 @@
 use crate::anchor::{AnchorOutcome, Anchorer, UNANCHORED_NOTE};
 use crate::chain::forced::Collisions;
 use crate::chain::{
-    move_aside, ChainError, ChainLink, ChainWriter, EventDraft, ASIDE_ATTEMPTS, MAX_EVENT_BYTES,
+    chain_error_in, move_aside, ChainError, ChainErrorText, ChainLink, ChainWriter, EventDraft,
+    ASIDE_ATTEMPTS, MAX_EVENT_BYTES,
 };
 use crate::verify::{verify_file, verify_with_anchors, Verdict};
 use crate::{AuditLogger, ORCELD_LOG};
@@ -1477,4 +1478,32 @@ fn chain_a_slow_holder_never_holds_the_lock_or_stalls_the_writer() -> TestResult
     );
     let _ = std::fs::remove_dir_all(dir);
     Ok(())
+}
+
+/// Every chain error is told apart in a message that holds it, and nothing
+/// else is taken for one, the word "audit" included.
+#[test]
+fn a_chain_error_is_read_back_from_a_message() {
+    let broken = ChainError::Broken {
+        seq: 3,
+        reason: "digest".into(),
+    };
+    for (error, kind) in [
+        (broken, ChainErrorText::Broken),
+        (ChainError::Busy, ChainErrorText::Other),
+        (ChainError::Io("denied".into()), ChainErrorText::Other),
+        (ChainError::Encode("big".into()), ChainErrorText::Other),
+    ] {
+        let message = format!("orceld INTERNAL_ERROR: audit write failed: {error}");
+        assert_eq!(chain_error_in(&message), Some(kind), "{message}");
+    }
+    for other in [
+        "",
+        "orceld POLICY_DENIED: no",
+        "audit write failed: the disk is full",
+        "initialize audit log: denied",
+        "C:\\audit chain\\project is not a workspace",
+    ] {
+        assert_eq!(chain_error_in(other), None, "{other}");
+    }
 }

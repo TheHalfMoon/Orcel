@@ -463,6 +463,13 @@ impl<'a> Installer<'a> {
                 "a Orcel supervisor record exists; stop Orcel before uninstalling",
             ));
         }
+        let seen = crate::lifecycle::observe(&self.layout)?;
+        if seen.observed != crate::lifecycle::Observed::Gone {
+            return Err(LifecycleError::conflict(format!(
+                "Orcel may be running, so nothing was uninstalled. {}",
+                seen.remedy
+            )));
+        }
 
         // The on-demand service first, so nothing starts the payload while it goes.
         let service_removed = self.platform.remove_service()?;
@@ -1162,6 +1169,27 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.kind, crate::ErrorKind::Conflict);
         assert!(root.join("versions").join("0.2.0").is_dir());
+    }
+
+    /// SG-000135 OB-09: a supervisor without a record blocks it too.
+    #[cfg(windows)]
+    #[test]
+    fn ob09_an_unrecorded_supervisor_blocks_uninstall() {
+        use crate::runtime::{stop_event_name, StopEvent};
+        let platform = FakePlatform::default();
+        let root = temp_dir("uninstall-unrecorded").join("Orcel");
+        let installer = Installer::new(Layout::new(&root), &platform);
+        installer
+            .install(&release_dir("0.2.0"), &options())
+            .unwrap();
+        let event = StopEvent::create(&stop_event_name(&root)).unwrap();
+        let uninstall = || installer.uninstall(&UninstallOptions::default());
+        let error = uninstall().unwrap_err();
+        assert_eq!(error.kind, crate::ErrorKind::Conflict);
+        assert!(error.message.contains("without a record"));
+        assert!(root.join("versions").join("0.2.0").is_dir());
+        drop(event);
+        assert!(uninstall().is_ok());
     }
 
     #[cfg(unix)]

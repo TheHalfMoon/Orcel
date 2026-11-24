@@ -88,12 +88,14 @@ fn main() {
     std::fs::write(&health_file, format!("http://127.0.0.1:{port}/healthz\n")).unwrap();
 
     let binding = value(&args, "--mcp.command");
+    // Split as the official client does: the quoted path, then plain words.
     let quoted = binding
         .strip_prefix("channel=main,command=\"")
-        .and_then(|rest| rest.strip_suffix('"'))
         .expect("mcp command binding");
-    let command = quoted.replace("\\\"", "\"").replace("\\\\", "\\");
+    let (path, words) = quoted.rsplit_once('"').expect("closing quote");
+    let command = path.replace("\\\"", "\"").replace("\\\\", "\\");
     let mut child = Command::new(&command)
+        .args(words.split_whitespace())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()

@@ -36,6 +36,9 @@ orcel-tunnel = { path = "../orcel-tunnel" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+# SG-000135 OB-09: the tunnel setup id comes from the OS random source
+# (getrandom 0.4, already in the lock graph).
+getrandom = "0.4"
 
 # WI-06: termios for the hidden key prompt on macOS and Linux. libc is
 # already in the graph through orcel-platform.

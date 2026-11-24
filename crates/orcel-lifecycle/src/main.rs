@@ -39,7 +39,7 @@ Configuration:
       the tunnel client by file reference; it is never printed or logged. Needs a
       workspace; changing the tunnel id or profile also needs a working orceld (its
       audit chain included), to end the old route's leases. Changing the tunnel id,
-      profile or key is refused while the tunnel runs (`orcel stop` first).
+      profile or key is refused while the tunnel runs (usually `orcel stop` first).
   orcel tunnel show                       Show the tunnel configuration (never the key).
   orcel tunnel allow [--workspaces <a,b>] [--scopes <s,...>] [--minutes <1-15>] [--read-mode <m>]
       Allow one finite ChatGPT tunnel session (Windows Hello). Tunnel clients see only
@@ -564,15 +564,19 @@ fn uninstall(args: &mut Args) -> Result<Output, LifecycleError> {
     }
     let layout = Layout::for_current_user()?;
     let mut human = String::new();
-    if layout.supervisor_record().exists() {
-        let stopped = orcel_lifecycle::lifecycle::stop(&layout, std::time::Duration::from_secs(20))
+    let stopped =
+        orcel_lifecycle::lifecycle::stop_if_observed(&layout, std::time::Duration::from_secs(20))
             .map_err(|error| {
-                LifecycleError::conflict(format!(
-                    "Orcel could not be stopped, so nothing was uninstalled: {}",
-                    error.message
-                ))
-            })?;
-        human.push_str(&format!("Stopped Orcel first: {}.\n", stopped.detail));
+            LifecycleError::conflict(format!(
+                "Orcel could not be stopped, so nothing was uninstalled: {}",
+                error.message
+            ))
+        })?;
+    if let Some(stopped) = stopped {
+        human.push_str(&format!(
+            "Stopped Orcel first: {}.\n",
+            stopped.report.detail
+        ));
     }
     let platform = host_platform();
     let installer = Installer::new(layout, platform.as_ref());

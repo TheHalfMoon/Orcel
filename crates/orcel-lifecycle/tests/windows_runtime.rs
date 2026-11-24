@@ -264,7 +264,6 @@ fn install_configure_start_status_doctor_stop_restart_and_uninstall() {
 
     let started = json_ok(&orcel(&cli, &local, &["start", "--json"]));
     assert_eq!(started["status"]["state"], "running", "{started}");
-    let tunnel_pid = started["status"]["tunnel_client_pid"].as_u64().unwrap() as u32;
 
     let log = wait_for_log(&root.join("logs").join("tunnel.log"), "mcp-call");
     assert!(log.contains("fake-tunnel: key-file-read=true"), "{log}");
@@ -291,10 +290,9 @@ fn install_configure_start_status_doctor_stop_restart_and_uninstall() {
         .join("state")
         .join("secrets")
         .join("tunnel-runtime-key");
-    let before = (
-        fs::read(&config_file).unwrap(),
-        fs::read(&stored_key).unwrap(),
-    );
+    let setup_id = root.join("state").join("tunnel-setup-id");
+    let saved = || [&config_file, &stored_key, &setup_id].map(|path| fs::read(path).unwrap());
+    let before = saved();
     let other_id = "tunnel_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
     let while_running = |id: &str, profile: &str, key: &Path| {
         orcel(
@@ -323,15 +321,15 @@ fn install_configure_start_status_doctor_stop_restart_and_uninstall() {
         let refused = while_running(id, profile, key);
         assert_eq!(refused.status.code(), Some(6), "{refused:?}");
         let said = String::from_utf8_lossy(&refused.stdout).into_owned();
-        assert!(said.contains("Nothing was changed"), "{said}");
-        assert!(said.contains("orcel stop"), "{said}");
-        let after = (
-            fs::read(&config_file).unwrap(),
-            fs::read(&stored_key).unwrap(),
+        assert!(
+            said.contains("cannot be changed, and nothing was"),
+            "{said}"
         );
-        assert!(before == after, "a refused setup changed something");
+        assert!(said.contains("orcel stop"), "{said}");
+        assert!(before == saved(), "a refused setup changed something");
     }
     json_ok(&while_running(TUNNEL_ID, "core", &key_file));
+    assert!(before == saved(), "an unchanged setup changed something");
     let status = json_ok(&orcel(&cli, &local, &["status", "--json"]));
     assert_eq!(status["runtime"]["state"], "running", "{status}");
     // The MCP host does not serve a client that the supervisor did not launch.
@@ -340,7 +338,6 @@ fn install_configure_start_status_doctor_stop_restart_and_uninstall() {
         .join(env!("CARGO_PKG_VERSION"))
         .join("orcel-mcp-host.exe");
     let unpinned = Command::new(&host)
-        .env_remove("ORCEL_TUNNEL_LAUNCH_PIN")
         .env("USERPROFILE", &local)
         .env("LOCALAPPDATA", local.join("AppData").join("Local"))
         .stdin(std::process::Stdio::null())
@@ -348,7 +345,38 @@ fn install_configure_start_status_doctor_stop_restart_and_uninstall() {
         .unwrap();
     assert_eq!(unpinned.status.code(), Some(2), "{unpinned:?}");
     let said = String::from_utf8_lossy(&unpinned.stderr).into_owned();
-    assert!(said.contains("not started by `orcel start`"), "{said}");
+    assert!(said.contains("without its launch pin"), "{said}");
+    // It is shown, though the client still runs.
+    let status = json_ok(&orcel(&cli, &local, &["status", "--json"]));
+    assert_eq!(status["runtime"]["state"], "degraded", "{status}");
+    let refusal = status["runtime"]["host_refusal"]["reason"].as_str();
+    assert!(refusal.is_some_and(|reason| reason.contains("without its launch pin")));
+    let doctor = orcel(&cli, &local, &["doctor", "--json"]);
+    assert!(!doctor.status.success(), "{doctor:?}");
+    let said = String::from_utf8_lossy(&doctor.stdout).into_owned();
+    assert!(said.contains("refused to serve"), "{said}");
+    // A new start forgets it.
+    let restart = || {
+        json_ok(&orcel(&cli, &local, &["stop", "--json"]));
+        json_ok(&orcel(&cli, &local, &["start", "--json"]))
+    };
+    // An install from before setup ids: the start makes one.
+    fs::remove_file(&setup_id).unwrap();
+    let started = restart();
+    assert_eq!(started["status"]["state"], "running", "{started}");
+    assert_eq!(fs::read(&setup_id).unwrap().len(), 64);
+    assert!(fs::read(&setup_id).unwrap() != before[2]);
+    let tunnel_pid = started["status"]["tunnel_client_pid"].as_u64().unwrap() as u32;
+    // Its host serves: the fixture's second call, and no refusal any more.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let calls = || {
+        let log = fs::read_to_string(root.join("logs").join("tunnel.log"));
+        log.unwrap_or_default().matches("mcp-call").count()
+    };
+    while calls() < 2 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    assert!(calls() >= 2, "the host did not serve after the restart");
 
     let status = json_ok(&orcel(&cli, &local, &["status", "--json"]));
     assert_eq!(status["runtime"]["state"], "running");
@@ -395,9 +423,11 @@ fn install_configure_start_status_doctor_stop_restart_and_uninstall() {
             ],
         ))
     };
-    for profile in ["browser_full", "core", "core"] {
+    for (profile, renews) in [("browser_full", true), ("core", true), ("core", false)] {
+        let id = fs::read(&setup_id).unwrap();
         let changed = setup(profile);
         assert_eq!(changed["replaced_route_leases_revoked"], 0, "{changed}");
+        assert_eq!(fs::read(&setup_id).unwrap() != id, renews, "{profile}");
     }
     let revoked = json_ok(&orcel(&cli, &local, &["tunnel", "revoke", "--json"]));
     assert_eq!(revoked["revoke"]["revoked"], 0, "{revoked}");
