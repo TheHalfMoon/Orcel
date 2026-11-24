@@ -262,7 +262,9 @@ pub fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Option<T>,
 }
 
 /// Writes JSON atomically: a sibling temporary file is written, flushed, and
-/// renamed over the destination.
+/// renamed over the destination. On Unix it is created 0600 whatever the
+/// umask: with a umask such as 002 a record would be writable by the group,
+/// which the install's verification refuses.
 pub fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), LifecycleError> {
     let bytes = serde_json::to_vec_pretty(value)
         .map_err(|error| LifecycleError::internal(format!("serialize record: {error}")))?;
@@ -279,7 +281,15 @@ pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), LifecycleErro
         crate::nonce()
     ));
     let result = (|| {
-        let mut file = fs::File::create(&temp)
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options
+            .open(&temp)
             .map_err(|error| LifecycleError::io(format!("create {}", temp.display()), error))?;
         file.write_all(bytes)
             .and_then(|()| file.sync_all())

@@ -407,6 +407,11 @@ impl<'a> Updater<'a> {
         )?;
         installer.refresh_service(&self.layout.version_dir(&current.version))?;
         write_json_atomic(&self.layout.install_file(), record)?;
+        // A staged version that failed before it was protected can be
+        // writable by the group (the release's modes, the umask), which the
+        // Unix verification refuses: protect first, as every other path does.
+        #[cfg(unix)]
+        installer.protect_root()?;
         installer.verify().map(|_| ())
     }
 
@@ -684,6 +689,128 @@ mod tests {
             )
             .unwrap();
         (layout, platform)
+    }
+
+    /// [`FakePlatform`] with the real Unix owner and mode rules, and the
+    /// agent-log step of the macOS service refresh.
+    #[cfg(unix)]
+    struct UnixTreePlatform(FakePlatform);
+
+    #[cfg(unix)]
+    impl Platform for UnixTreePlatform {
+        fn windows_build(&self) -> Result<u32, LifecycleError> {
+            self.0.windows_build()
+        }
+        fn is_avoidably_elevated(&self) -> Result<bool, LifecycleError> {
+            self.0.is_avoidably_elevated()
+        }
+        fn protect_tree(&self, root: &Path) -> Result<(), LifecycleError> {
+            crate::unix_install::protect_tree(root)
+        }
+        fn verify_tree_acl(&self, root: &Path) -> Result<(), LifecycleError> {
+            crate::unix_install::verify_tree(root)
+        }
+        fn add_user_path(&self, dir: &Path) -> Result<bool, LifecycleError> {
+            self.0.add_user_path(dir)
+        }
+        fn remove_user_path(&self, dir: &Path) -> Result<bool, LifecycleError> {
+            self.0.remove_user_path(dir)
+        }
+        fn add_start_menu_entry(&self, cli: &Path) -> Result<(), LifecycleError> {
+            self.0.add_start_menu_entry(cli)
+        }
+        fn remove_start_menu_entry(&self, cli: &Path) -> Result<bool, LifecycleError> {
+            self.0.remove_start_menu_entry(cli)
+        }
+        fn has_start_menu_entry(&self, cli: &Path) -> Result<bool, LifecycleError> {
+            self.0.has_start_menu_entry(cli)
+        }
+        fn node_version(&self, node: &Path) -> Result<Version, LifecycleError> {
+            self.0.node_version(node)
+        }
+        fn refresh_service(&self, layout: &Layout, _orceld: &Path) -> Result<(), LifecycleError> {
+            crate::unix_install::move_agent_log_aside(layout);
+            Ok(())
+        }
+    }
+
+    /// With a umask of 002, and with an agent log that cannot be moved aside:
+    /// what the CLI writes is not writable by the group, and the restore after
+    /// a failed update passes verification. The umask is the process's, so the
+    /// test runs itself again in a child that has it.
+    #[cfg(unix)]
+    #[test]
+    fn a_restore_under_a_group_umask_with_an_unmovable_agent_log_verifies() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::process::CommandExt;
+        const CHILD: &str = "ORCEL_TEST_GROUP_UMASK";
+        if std::env::var_os(CHILD).is_none() {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "update::tests::a_restore_under_a_group_umask_with_an_unmovable_agent_log_verifies",
+                    "--exact",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1");
+            // SAFETY: umask only sets the child's file mode mask; it is
+            // async-signal-safe and touches no memory.
+            unsafe {
+                command.pre_exec(|| {
+                    libc::umask(0o002);
+                    Ok(())
+                });
+            }
+            let output = command.output().unwrap();
+            let text = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && text.contains("umask child ran"),
+                "{text}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let base = temp_dir("update-umask");
+        assert_eq!(mode(&base), 0o775, "this process has the umask");
+        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let layout = Layout::new(base.join("Orcel"));
+        let platform = UnixTreePlatform(FakePlatform::default());
+        let installer = Installer::new(layout.clone(), &platform);
+        installer
+            .install(
+                &release_dir("0.2.0"),
+                &InstallOptions {
+                    node: Some(PathBuf::from("/fake/node")),
+                    add_to_path: false,
+                },
+            )
+            .unwrap();
+        assert_eq!(mode(&layout.logs_dir().join("lifecycle.log")), 0o600);
+        crate::config::Config::load(&layout)
+            .unwrap()
+            .save(&layout)
+            .unwrap();
+        assert_eq!(mode(&layout.config_file()), 0o600);
+        let state = installer.verify().unwrap();
+
+        // An update that staged a version and failed before protecting it.
+        let release = manifest::verify_release(&release_dir("0.3.0")).unwrap();
+        installer.stage_version(&release).unwrap();
+        assert_eq!(mode(&layout.version_dir("0.3.0")), 0o775);
+        let log = layout.logs_dir().join(crate::launchd::STDERR_LOG);
+        std::fs::create_dir(&log).unwrap();
+        std::fs::remove_file(layout.logs_dir().join("lifecycle.log")).unwrap();
+        Updater::new(layout.clone(), &platform)
+            .restore(&state.active, &state.record)
+            .unwrap();
+        installer.verify().unwrap();
+        let lifecycle = layout.logs_dir().join("lifecycle.log");
+        assert_eq!(mode(&lifecycle), 0o600);
+        let noted = std::fs::read_to_string(&lifecycle).unwrap();
+        assert!(noted.contains("agent log not moved aside"), "{noted}");
+        assert!(log.is_dir());
+        println!("umask child ran");
     }
 
     #[test]

@@ -5,7 +5,7 @@
 //! never reads the runtime key file, so the key itself cannot be copied into a
 //! log by the redaction logic.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -212,7 +212,7 @@ impl BoundedLog {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let file = OpenOptions::new().create(true).append(true).open(path)?;
+        let file = open_append(path)?;
         let written = file.metadata()?.len();
         Ok(Self {
             path: path.to_path_buf(),
@@ -236,12 +236,27 @@ impl BoundedLog {
         let rotated = self.path.with_extension("log.1");
         let _ = fs::remove_file(&rotated);
         fs::rename(&self.path, &rotated)?;
-        self.file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
+        self.file = open_append(&self.path)?;
         self.written = 0;
         Ok(())
+    }
+}
+
+/// Opens a log for appending. On Unix it is created 0600 whatever the umask,
+/// a link under its name is not followed, and one already there must be this
+/// user's plain file and is made 0600
+/// ([`orcel_platform::files::open_private_append`]).
+fn open_append(path: &Path) -> std::io::Result<File> {
+    #[cfg(unix)]
+    {
+        orcel_platform::files::open_private_append(path)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
     }
 }
 
@@ -261,6 +276,10 @@ pub fn transcript(layout: &crate::layout::Layout, line: &str) {
                 return;
             }
         }
+    }
+    // Opening a FIFO nobody reads would wait for ever.
+    if fs::symlink_metadata(&path).is_ok_and(|metadata| !metadata.is_file()) {
+        return;
     }
     if let Ok(mut log) = BoundedLog::open(&path) {
         let _ = log.write_line(&format!("{} {line}", crate::lifecycle::now_ms()));
@@ -371,6 +390,46 @@ mod tests {
         std::os::unix::fs::symlink(&outside, layout.logs_dir()).unwrap();
         transcript(&layout, "install 0.1.0 installed");
         assert!(!outside.join("lifecycle.log").exists());
+    }
+
+    /// The lifecycle log is owner-only whatever the umask or its mode was,
+    /// and a link or FIFO under its name is left alone.
+    #[cfg(unix)]
+    #[test]
+    fn the_lifecycle_log_is_owner_only_and_never_a_link_or_fifo() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let set = |path: &Path, mode| {
+            fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+        };
+        let base = temp_dir("transcript-mode");
+        set(&base, 0o755);
+        let layout = crate::layout::Layout::new(base.join("Orcel"));
+        fs::create_dir_all(layout.logs_dir()).unwrap();
+        set(&layout.root, 0o700);
+        let log = layout.logs_dir().join("lifecycle.log");
+        transcript(&layout, "one");
+        assert_eq!(mode(&log), 0o600, "created");
+        set(&log, 0o664);
+        transcript(&layout, "two");
+        assert_eq!(mode(&log), 0o600, "already there");
+        assert_eq!(tail(&log, 5).len(), 2);
+
+        fs::remove_file(&log).unwrap();
+        let outside = base.join("outside");
+        std::os::unix::fs::symlink(&outside, &log).unwrap();
+        assert!(BoundedLog::open(&log).is_err(), "not followed");
+        transcript(&layout, "three");
+        assert!(!outside.exists());
+        fs::remove_file(&log).unwrap();
+        let made = std::process::Command::new("mkfifo")
+            .arg(&log)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        // Returns; opening the FIFO would not.
+        transcript(&layout, "four");
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]
