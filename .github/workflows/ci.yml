@@ -1684,11 +1684,17 @@ jobs:
   # XP-17: builds the Linux deb, rpm and tarball with nfpm, checks their
   # contents and modes, installs the deb and the tarball for the runner user
   # and talks to orceld through the systemd user socket, and installs the
-  # rpm in Fedora 41. Not a release gate: release.yml is unchanged for
-  # Windows.
+  # deb in a clean Ubuntu 24.04 and the rpm in Fedora 41. Not a release gate:
+  # release.yml builds its own Linux packages, and runs the floor check and the
+  # Ubuntu 24.04 container on them, not the rest of this job.
+  #
+  # ubuntu-24.04, not ubuntu-latest: a binary can need whatever glibc it was
+  # built against, and the packages promise Ubuntu 24.04 (glibc 2.39).
+  # release.yml builds on the same image, and
+  # scripts/check-linux-glibc-floor.mjs enforces the promise in both.
   linux-packages:
-    name: Linux packages / ubuntu-latest
-    runs-on: ubuntu-latest
+    name: Linux packages / ubuntu-24.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
       DIST: ${{ github.workspace }}/../linux-dist
@@ -1709,7 +1715,7 @@ jobs:
       - name: Build the XP-10 approval helper (release, locked, its own workspace)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgtk-4-dev
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev libarchive-tools rpm
           cargo build --release --locked --manifest-path apps/orcel-approval-helper-linux/Cargo.toml
       - name: Install the pinned nfpm (checksum-verified)
         run: |
@@ -1722,6 +1728,13 @@ jobs:
           bash distribution/linux/package.sh "$version" target/release/orceld apps/orcel-contain/target/release/orcel-contain \
             apps/orcel-approval-helper-linux/target/release/orcel-approval-helper-linux "$DIST"
           ls -l "$DIST"
+      - name: No packaged ELF file needs a glibc newer than the documented floor
+        run: |
+          ldd --version
+          pkg-config --modversion gtk4
+          node scripts/check-linux-glibc-floor.mjs "$DIST"
+      - name: The glibc floor check on the real packages
+        run: ORCEL_LINUX_DIST="$DIST" node --test scripts/check-linux-glibc-floor.linux.test.mjs
       - name: Build the unsigned development tarball, and a local client through its MCP server
         run: |
           npm ci --ignore-scripts
@@ -1888,9 +1901,11 @@ jobs:
           systemctl --user enable --now orceld.socket
           python3 scripts/linux-orceld-probe.py socket "$XDG_RUNTIME_DIR/orcel/orceld.sock" ci
           systemctl --user disable --now orceld.socket
+      - name: Install and start the deb in Ubuntu 24.04
+        run: bash distribution/linux/smoke-ubuntu.sh "$VERSION" "$DIST"
       - name: Install the rpm in Fedora 41
         run: |
-          docker run --rm -v "$DIST:/dist:ro" -v "$PWD/scripts:/probe:ro" \
+          docker run --rm -v "$DIST:/dist:ro" -v "$PWD/scripts:/probe:ro" -v "$PWD/distribution/linux:/smoke:ro" \
             docker.io/library/fedora@sha256:f1a3fab47bcb3c3ddf3135d5ee7ba8b7b25f2e809a47440936212a3a50957f3d \
             bash -euxc '
               rpm=/dist/orcel-'"$VERSION"'-1.x86_64.rpm
@@ -1899,8 +1914,11 @@ jobs:
               if rpm -qplv "$rpm" | awk "{ print \$1 }" | grep -E "[sStT]"; then exit 1; fi
               dnf install -y --setopt=install_weak_deps=False "$rpm" python3
               rpm -V orcel
+              bash /smoke/smoke-installed.sh daemon
               mkdir -p /root/ws
               ORCEL_WORKSPACES_JSON="[{\"id\":\"ci\",\"root\":\"/root/ws\"}]" python3 /probe/linux-orceld-probe.py exec /usr/lib/orcel/orceld ci
+              dnf install -y --setopt=install_weak_deps=False gtk4
+              bash /smoke/smoke-installed.sh helper
               dnf remove -y orcel
               test ! -e /usr/lib/orcel
               test ! -e /usr/share/doc/orcel
@@ -2292,6 +2310,9 @@ jobs:
           node scripts/check-lopdf-advisories.mjs
       - name: Provenance requires the .NET SDK version
         run: node --test scripts/provenance.test.mjs
+      # Text and logic only: the linux-packages job runs the real programs.
+      - name: The Linux package builds keep their runner and their glibc floor check
+        run: node --test scripts/check-linux-glibc-floor.test.mjs
       - name: Validate SpecGrain JSON and canonical evidence
         shell: python
         run: |
