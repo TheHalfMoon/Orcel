@@ -2,6 +2,7 @@
 //! kill-on-close Job Objects, suspended launch with job assignment before
 //! resume, and a per-install named stop event.
 
+use crate::lifecycle::Observed;
 use crate::LifecycleError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -12,7 +13,8 @@ use std::path::Path;
 use std::ptr;
 use std::time::Duration;
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, FILETIME, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_INVALID_PARAMETER,
+    FILETIME, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
@@ -35,7 +37,9 @@ pub struct OwnedHandle(HANDLE);
 
 impl OwnedHandle {
     fn new(handle: HANDLE) -> Option<Self> {
-        (handle != 0 && handle != -1).then_some(Self(handle))
+        // Lazily: an eager value would be dropped here, and its CloseHandle
+        // would replace the error of the call that failed.
+        (handle != 0 && handle != -1).then(|| Self(handle))
     }
     pub fn raw(&self) -> HANDLE {
         self.0
@@ -150,6 +154,54 @@ pub fn open_verified(recorded: &ProcessIdentity) -> Option<LiveProcess> {
     (identity.creation_time == recorded.creation_time
         && identity.image.eq_ignore_ascii_case(&recorded.image))
     .then_some(LiveProcess { handle, identity })
+}
+
+/// What a failed open says: only `absent`, the error for an object that does
+/// not exist, means it has gone.
+fn not_opened(error: u32, absent: u32) -> Observed {
+    if error == absent {
+        Observed::Gone
+    } else {
+        Observed::Unknown
+    }
+}
+
+/// Whether the recorded process is running, has gone, or cannot be told.
+/// Unlike [`open_verified`], a process that cannot be opened or inspected is
+/// not taken as gone: only a pid that no process has, an exit that was seen,
+/// and a process with another identity are.
+pub fn observe(recorded: &ProcessIdentity) -> Observed {
+    let access = PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE;
+    let Some(handle) = open_process(recorded.pid, access) else {
+        // SAFETY: GetLastError has no preconditions.
+        return not_opened(unsafe { GetLastError() }, ERROR_INVALID_PARAMETER);
+    };
+    // SAFETY: the handle was opened with SYNCHRONIZE access.
+    let waited = unsafe { WaitForSingleObject(handle.raw(), 0) };
+    opened(waited, recorded, || identity_of(&handle, recorded.pid))
+}
+
+/// What an opened process is: `waited` is the result of a wait of no time for
+/// its exit. One that runs and cannot be inspected is not taken as gone.
+fn opened(
+    waited: u32,
+    recorded: &ProcessIdentity,
+    identity: impl FnOnce() -> Option<ProcessIdentity>,
+) -> Observed {
+    match waited {
+        WAIT_OBJECT_0 => Observed::Gone,
+        WAIT_TIMEOUT => match identity() {
+            None => Observed::Unknown,
+            Some(identity)
+                if identity.creation_time == recorded.creation_time
+                    && identity.image.eq_ignore_ascii_case(&recorded.image) =>
+            {
+                Observed::Live
+            }
+            Some(_) => Observed::Gone,
+        },
+        _ => Observed::Unknown,
+    }
 }
 
 impl LiveProcess {
@@ -319,18 +371,20 @@ pub fn disinherit_standard_handles() {
 pub struct LifecycleLock(OwnedHandle);
 
 impl LifecycleLock {
-    pub fn acquire(root: &Path, timeout: Duration) -> Result<Self, LifecycleError> {
-        use windows_sys::Win32::Foundation::WAIT_ABANDONED;
-        use windows_sys::Win32::System::Threading::{CreateMutexW, WaitForSingleObject};
+    fn name(root: &Path) -> String {
         let digest = Sha256::digest(root.to_string_lossy().to_ascii_lowercase().as_bytes());
         let hex = digest
             .iter()
             .take(8)
             .map(|b| format!("{b:02x}"))
             .collect::<String>();
-        let name = wide(std::ffi::OsStr::new(&format!(
-            "Local\\Orcel-Lifecycle-{hex}"
-        )));
+        format!("Local\\Orcel-Lifecycle-{hex}")
+    }
+
+    pub fn acquire(root: &Path, timeout: Duration) -> Result<Self, LifecycleError> {
+        use windows_sys::Win32::Foundation::WAIT_ABANDONED;
+        use windows_sys::Win32::System::Threading::{CreateMutexW, WaitForSingleObject};
+        let name = wide(std::ffi::OsStr::new(&Self::name(root)));
         // SAFETY: null attributes are permitted; the name is NUL-terminated.
         let mutex = OwnedHandle::new(unsafe { CreateMutexW(ptr::null(), 0, name.as_ptr()) })
             .ok_or_else(|| last_error("CreateMutexW"))?;
@@ -564,6 +618,19 @@ impl StopEvent {
         self.0.raw()
     }
 
+    /// Whether a supervisor of this install holds its stop event, in this
+    /// logon session. It does from before it reads the configuration until it
+    /// exits.
+    pub fn observe(name: &str) -> Observed {
+        let name = wide(std::ffi::OsStr::new(name));
+        // SAFETY: the name is NUL-terminated.
+        match OwnedHandle::new(unsafe { OpenEventW(EVENT_MODIFY_STATE, 0, name.as_ptr()) }) {
+            Some(_) => Observed::Live,
+            // SAFETY: GetLastError has no preconditions.
+            None => not_opened(unsafe { GetLastError() }, ERROR_FILE_NOT_FOUND),
+        }
+    }
+
     /// Signals an existing stop event; returns false if none exists.
     pub fn signal(name: &str) -> bool {
         let name = wide(std::ffi::OsStr::new(name));
@@ -606,10 +673,35 @@ mod tests {
         let mut forged = identity.clone();
         forged.creation_time += 1;
         assert!(open_verified(&forged).is_none());
+        assert_eq!(observe(&identity), Observed::Live);
+        assert_eq!(observe(&forged), Observed::Gone, "the pid was reused");
+        let other_image = ProcessIdentity {
+            image: r"C:\elsewhere\orcel.exe".into(),
+            ..identity.clone()
+        };
+        assert_eq!(observe(&other_image), Observed::Gone);
+        // Denied (5) and any other failed open is never taken as gone.
+        for absent in [ERROR_INVALID_PARAMETER, ERROR_FILE_NOT_FOUND] {
+            assert_eq!(not_opened(absent, absent), Observed::Gone);
+            assert_eq!(not_opened(5, absent), Observed::Unknown);
+            assert_eq!(not_opened(0, absent), Observed::Unknown);
+        }
+        // A process that runs and cannot be inspected, and a wait that
+        // failed, are not taken as gone either.
+        let same = || Some(identity.clone());
+        assert_eq!(opened(WAIT_TIMEOUT, &identity, || None), Observed::Unknown);
+        assert_eq!(opened(WAIT_TIMEOUT, &identity, same), Observed::Live);
+        assert_eq!(opened(WAIT_TIMEOUT, &forged, same), Observed::Gone);
+        assert_eq!(opened(WAIT_OBJECT_0, &identity, same), Observed::Gone);
+        assert_eq!(opened(u32::MAX, &identity, same), Observed::Unknown);
         let live = open_verified(&identity).unwrap();
         assert!(live.terminate());
         assert!(live.wait(Duration::from_secs(10)));
+        assert_eq!(observe(&identity), Observed::Gone, "exited, handle open");
         let _ = child.wait();
+        drop(live);
+        drop(child);
+        assert_eq!(observe(&identity), Observed::Gone, "no such process");
         assert!(identify(identity.pid).is_none() || open_verified(&identity).is_none());
     }
 
@@ -630,9 +722,19 @@ mod tests {
     fn stop_event_is_exclusive_and_signalable() {
         let name = format!("Local\\Orcel-Test-{}", crate::nonce());
         assert!(!StopEvent::signal(&name));
+        assert_eq!(StopEvent::observe(&name), Observed::Gone);
         let event = StopEvent::create(&name).unwrap();
+        assert_eq!(StopEvent::observe(&name), Observed::Live);
         assert!(StopEvent::create(&name).is_err());
         assert!(StopEvent::signal(&name));
         assert_eq!(wait_any(&[event.raw()], Duration::from_secs(1)), Some(0));
+        assert_eq!(StopEvent::observe(&name), Observed::Live, "signalled, held");
+        drop(event);
+        assert_eq!(StopEvent::observe(&name), Observed::Gone);
+        // A name that another kind of object has is no answer.
+        let root = std::path::PathBuf::from(format!("observe-{}", crate::nonce()));
+        let _lock = LifecycleLock::acquire(&root, Duration::from_secs(1)).unwrap();
+        let taken = LifecycleLock::name(&root);
+        assert_eq!(StopEvent::observe(&taken), Observed::Unknown);
     }
 }

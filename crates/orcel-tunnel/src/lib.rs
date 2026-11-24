@@ -4,7 +4,6 @@ use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
 
 const SECRETISH: &[&str] = &[
     "SECRET",
@@ -16,6 +15,16 @@ const SECRETISH: &[&str] = &[
     "TUNNEL_KEY",
 ];
 
+/// SG-000135 OB-09: the argument of `orcel-mcp-host` that carries the pin of
+/// the setup the tunnel client was launched for. It is part of the client's
+/// `--mcp.command`, whose words are the command's arguments, so it does not
+/// depend on what the client passes on of its environment. The host refuses to
+/// serve without it or when the saved setup is another, so it only narrows.
+pub const LAUNCH_PIN_ARG: &str = "--launch-pin";
+
+/// What `orcel-tunnel run` says: a client it started would have no pin.
+pub const RUN_REFUSED: &str = "`orcel-tunnel run` does not start the tunnel client; use `orcel start`, which supervises it and pins its setup";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TunnelConfig {
     pub tunnel_client: PathBuf,
@@ -24,6 +33,9 @@ pub struct TunnelConfig {
     pub mcp_command: PathBuf,
     pub health_url_file: PathBuf,
     pub workspace_roots: Vec<PathBuf>,
+    /// The value of [`LAUNCH_PIN_ARG`] for this launch (letters and digits);
+    /// never taken from the environment.
+    pub launch_pin: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +65,7 @@ impl TunnelConfig {
             mcp_command,
             health_url_file,
             workspace_roots,
+            launch_pin: None,
         };
         config.validate()?;
         Ok(config)
@@ -91,10 +104,17 @@ impl TunnelConfig {
     pub fn launch_plan(&self, source: &BTreeMap<String, String>) -> Result<LaunchPlan, String> {
         self.validate()?;
         let key_ref = format!("file:{}", self.runtime_key_file.display());
-        let mcp_binding = format!(
+        let mut mcp_binding = format!(
             "channel=main,command={}",
             quote_stdio_command_path(&self.mcp_command)?
         );
+        if let Some(pin) = &self.launch_pin {
+            // Two plain words: nothing in them is quoted, split or escaped.
+            if pin.is_empty() || !pin.bytes().all(|b| b.is_ascii_alphanumeric()) {
+                return Err("the launch pin must be letters and digits".into());
+            }
+            mcp_binding.push_str(&format!(" {LAUNCH_PIN_ARG} {pin}"));
+        }
         let args = vec![
             "run".into(),
             "--control-plane.tunnel-id".into(),
@@ -144,22 +164,6 @@ pub fn sanitized_env(source: &BTreeMap<String, String>) -> BTreeMap<String, Stri
 
 pub fn current_env() -> BTreeMap<String, String> {
     env::vars().collect()
-}
-
-pub fn run(config: &TunnelConfig) -> Result<ExitStatus, String> {
-    let plan = config.launch_plan(&current_env())?;
-    let mut command = Command::new(&plan.program);
-    command
-        .args(&plan.args)
-        .env_clear()
-        .envs(&plan.env)
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-    let mut child = command
-        .spawn()
-        .map_err(|e| format!("start tunnel-client: {e}"))?;
-    child.wait().map_err(|e| format!("wait tunnel-client: {e}"))
 }
 
 pub fn status(config: &TunnelConfig) -> serde_json::Value {
@@ -330,6 +334,7 @@ mod tests {
                 mcp_command: mcp,
                 health_url_file: dir.join("health.url"),
                 workspace_roots: vec![workspace],
+                launch_pin: None,
             },
             dir,
         )
@@ -399,6 +404,12 @@ mod tests {
             plan.env.keys().map(String::as_str).collect::<Vec<_>>(),
             ["PATH", "SystemRoot"]
         );
+        // SG-000135 OB-09: a pinned launch adds no variable either.
+        let pinned = TunnelConfig {
+            launch_pin: Some("abc0".into()),
+            ..cfg.clone()
+        };
+        assert_eq!(pinned.launch_plan(&source).unwrap().env, plan.env);
         // The local children keep their allowlist.
         assert!(sanitized_env(&source).contains_key("ORCEL_ORCEL_SESSION_ID"));
         let _ = fs::remove_dir_all(dir);
@@ -534,6 +545,82 @@ mod tests {
             .unwrap();
         assert!(binding.starts_with("channel=main,command=\""));
         assert!(binding.ends_with("orcel-mcp.exe\""));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// How the official client splits the command of `--mcp.command`
+    /// (`parseCommandArgv`, the same at v0.0.14 and v0.0.21; see
+    /// docs/research/SG-000004_TUNNEL_SOURCE_NOTE.md).
+    fn client_argv(command: &str) -> Vec<String> {
+        let (mut args, mut word) = (Vec::new(), String::new());
+        let (mut single, mut double, mut escaped) = (false, false, false);
+        for ch in command.trim().chars() {
+            if escaped {
+                word.push(ch);
+                escaped = false;
+            } else if single {
+                if ch == '\'' {
+                    single = false;
+                } else {
+                    word.push(ch);
+                }
+            } else {
+                match ch {
+                    '\\' => escaped = true,
+                    '"' => double = !double,
+                    '\'' if !double => single = true,
+                    ' ' | '\t' | '\n' | '\r' if !double => {
+                        if !word.is_empty() {
+                            args.push(std::mem::take(&mut word));
+                        }
+                    }
+                    _ => word.push(ch),
+                }
+            }
+        }
+        assert!(!escaped && !single && !double);
+        if !word.is_empty() {
+            args.push(word);
+        }
+        args
+    }
+
+    /// SG-000135 OB-09: the client runs exactly the host's path, then the pin
+    /// as one argument, whatever the path holds; without a pin, the path only.
+    #[test]
+    fn the_launch_pin_reaches_the_host_as_an_argument() {
+        let (cfg, dir) = config();
+        let pin = "0123456789abcdef".repeat(4);
+        for folder in ["plain", "Program Files", "it's", "caf\u{e9} x"] {
+            let folder = dir.join(folder);
+            fs::create_dir_all(&folder).unwrap();
+            let mcp_command = file(&folder, "orcel-mcp-host.exe", "binary");
+            let command = |launch_pin: Option<String>| {
+                let plan = TunnelConfig {
+                    mcp_command: mcp_command.clone(),
+                    launch_pin,
+                    ..cfg.clone()
+                }
+                .launch_plan(&BTreeMap::new())
+                .unwrap();
+                let at = plan.args.iter().position(|arg| arg == "--mcp.command");
+                let binding = plan.args[at.unwrap() + 1].clone();
+                client_argv(binding.strip_prefix("channel=main,command=").unwrap())
+            };
+            let path = mcp_command.to_string_lossy().into_owned();
+            assert_eq!(
+                command(Some(pin.clone())),
+                [path.clone(), LAUNCH_PIN_ARG.into(), pin.clone()]
+            );
+            assert_eq!(command(None), [path]);
+        }
+        for bad in ["", "a b", "a\"", "a,b", "a\\", "a'", "a=b"] {
+            let cfg = TunnelConfig {
+                launch_pin: Some(bad.into()),
+                ..cfg.clone()
+            };
+            assert!(cfg.launch_plan(&BTreeMap::new()).is_err(), "{bad:?}");
+        }
         let _ = fs::remove_dir_all(dir);
     }
 

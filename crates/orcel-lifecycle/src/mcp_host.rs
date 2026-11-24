@@ -11,6 +11,12 @@
 //! (`core` profile, remote context on every `orceld` request) and a closed
 //! environment; nothing inherited from the tunnel client can select a local
 //! profile or carry local authority such as the runtime session binding.
+//!
+//! SG-000135 OB-09: it serves only a tunnel client that the supervisor
+//! launched for the setup saved now (tunnel id, profile, runtime key): the
+//! launch pin it was started with must match, or it refuses. The client starts
+//! a refusing host again and again, so the refusal is recorded for `orcel
+//! status` and `orcel doctor`.
 
 use crate::config::Config;
 use crate::install::Installer;
@@ -19,6 +25,7 @@ use crate::platform::{Platform, MIN_NODE_MAJOR};
 use crate::tunnel_route;
 use crate::LifecycleError;
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -41,11 +48,8 @@ pub struct HostLaunch {
     pub orceld: PathBuf,
 }
 
-/// Resolves and verifies the launch for a host binary located at `exe`.
-pub fn resolve(
-    exe: &Path,
-    platform: &dyn Platform,
-) -> Result<(HostLaunch, Config), LifecycleError> {
+/// The install layout and version folder of a host binary at `exe`.
+fn install_of(exe: &Path) -> Result<(Layout, &Path), LifecycleError> {
     let version_dir = exe
         .parent()
         .ok_or_else(|| LifecycleError::state("orcel-mcp-host has no parent directory"))?;
@@ -58,7 +62,15 @@ pub fn resolve(
     let root = versions
         .parent()
         .ok_or_else(|| LifecycleError::state("install root not found"))?;
-    let layout = Layout::new(root);
+    Ok((Layout::new(root), version_dir))
+}
+
+/// Resolves and verifies the launch for a host binary located at `exe`.
+pub fn resolve(
+    exe: &Path,
+    platform: &dyn Platform,
+) -> Result<(HostLaunch, Config), LifecycleError> {
+    let (layout, version_dir) = install_of(exe)?;
     let state = Installer::new(layout.clone(), platform).verify()?;
     if layout.version_dir(&state.active.version) != version_dir {
         return Err(LifecycleError::state(
@@ -89,15 +101,20 @@ pub fn resolve(
 /// The closed environment of the tunnel host's Node.js app, built from the
 /// sanitized child environment `base`: OS execution variables, the
 /// configured workspaces, the matching `orceld`, the `tunnel` transport, and
-/// the tunnel's remote route. Fails closed when no tunnel is configured.
+/// the tunnel's remote route. Fails closed when no tunnel is configured, and
+/// when `pin`, what the tunnel client was launched with, is not the pin of
+/// this configuration and `setup_id`.
 pub fn tunnel_environment(
     config: &Config,
     launch: &HostLaunch,
     mut base: BTreeMap<String, String>,
+    setup_id: Option<&str>,
+    pin: Option<&str>,
 ) -> Result<BTreeMap<String, String>, LifecycleError> {
     let tunnel = config.tunnel.as_ref().ok_or_else(|| {
         LifecycleError::state("the tunnel is not configured; orcel-mcp-host serves only the tunnel")
     })?;
+    tunnel_route::check_launch_pin(config, setup_id, pin)?;
     base.retain(|name, _| {
         let upper = name.to_ascii_uppercase();
         !upper.starts_with("ORCEL_") || TUNNEL_HOST_ORCEL_ENV.contains(&name.as_str())
@@ -119,21 +136,62 @@ pub fn tunnel_environment(
     Ok(base)
 }
 
+/// The verified launch and its environment, for a host binary at `exe` that a
+/// tunnel client with `pin` started.
+fn prepare(
+    exe: &Path,
+    platform: &dyn Platform,
+    pin: Option<&str>,
+) -> Result<(HostLaunch, BTreeMap<String, String>), LifecycleError> {
+    let (launch, config) = resolve(exe, platform)?;
+    let (layout, _) = install_of(exe)?;
+    let setup_id = crate::config::read_setup_id(&layout)?;
+    let base = crate::ipc::child_environment(&config);
+    let env = tunnel_environment(&config, &launch, base, setup_id.as_deref(), pin)?;
+    Ok((launch, env))
+}
+
+/// The launch pin among the host's `args`: nothing, or exactly
+/// [`orcel_tunnel::LAUNCH_PIN_ARG`] and its value.
+fn pin_argument(args: &[OsString]) -> Result<Option<&str>, LifecycleError> {
+    match args {
+        [] => Ok(None),
+        [name, value] if name == orcel_tunnel::LAUNCH_PIN_ARG => value
+            .to_str()
+            .map(Some)
+            .ok_or_else(|| LifecycleError::usage("the launch pin is not text")),
+        _ => Err(LifecycleError::usage(format!(
+            "orcel-mcp-host takes {} <pin> and nothing else",
+            orcel_tunnel::LAUNCH_PIN_ARG
+        ))),
+    }
+}
+
+/// [`prepare`] with the process's arguments. A refusal is recorded in the
+/// install's state, and serving forgets it.
+fn serve(
+    exe: &Path,
+    platform: &dyn Platform,
+    args: &[OsString],
+) -> Result<(HostLaunch, BTreeMap<String, String>), LifecycleError> {
+    let (layout, _) = install_of(exe)?;
+    let outcome = pin_argument(args).and_then(|pin| prepare(exe, platform, pin));
+    match &outcome {
+        Ok(_) => crate::lifecycle::clear_host_refusal(&layout),
+        Err(error) => crate::lifecycle::record_host_refusal(&layout, &error.message),
+    }
+    outcome
+}
+
 /// Runs the MCP app for the current process and returns its exit code.
 pub fn run() -> i32 {
     let platform = crate::host_platform();
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     let outcome = std::env::current_exe()
         .map_err(|error| LifecycleError::io("locate orcel-mcp-host", error))
-        .and_then(|exe| resolve(&exe, platform.as_ref()));
-    let (launch, config) = match outcome {
-        Ok(resolved) => resolved,
-        Err(error) => {
-            eprintln!("orcel-mcp-host: {}", error.message);
-            return 2;
-        }
-    };
-    let env = match tunnel_environment(&config, &launch, crate::ipc::child_environment(&config)) {
-        Ok(env) => env,
+        .and_then(|exe| serve(&exe, platform.as_ref(), &args));
+    let (launch, env) = match outcome {
+        Ok(prepared) => prepared,
         Err(error) => {
             eprintln!("orcel-mcp-host: {}", error.message);
             return 2;
@@ -238,6 +296,82 @@ mod tests {
         }
     }
 
+    const SETUP_ID: &str = "setup-id";
+
+    fn pin_of(config: &Config) -> String {
+        tunnel_route::launch_pin(config, Some(SETUP_ID)).unwrap()
+    }
+
+    /// SG-000135 OB-09: with an installed payload, the host serves only a
+    /// client launched for the setup on disk. A changed tunnel id or profile,
+    /// a renewed setup id (as for a new key), a missing or unreadable id, no
+    /// pin and any other argument refuse; putting the setup back serves again.
+    /// A refusal is recorded and serving forgets it.
+    #[test]
+    fn ob09_the_host_refuses_a_client_of_another_setup() {
+        use crate::lifecycle::host_refusal;
+        let platform = FakePlatform::default();
+        let (layout, exe) = install("0.2.0", &platform);
+        let workspaces = Config::load(&layout).unwrap().workspaces;
+        let save = |tunnel_id: &str, profile: &str| {
+            let config = Config {
+                workspaces: workspaces.clone(),
+                tunnel: Some(crate::config::TunnelSettings {
+                    client: std::env::temp_dir().join("tunnel-client"),
+                    tunnel_id: tunnel_id.into(),
+                    profile: profile.into(),
+                }),
+                ..Config::default()
+            };
+            config.save(&layout).unwrap();
+            config
+        };
+        let a = "tunnel_0123456789abcdefghijklmnopqrstuv";
+        let b = "tunnel_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
+        let id = crate::config::renew_setup_id(&layout).unwrap();
+        let pin = tunnel_route::launch_pin(&save(a, "core"), Some(&id)).unwrap();
+        let args = |args: &[&str]| args.iter().map(OsString::from).collect::<Vec<_>>();
+        let pinned = args(&["--launch-pin", &pin]);
+        let serves = |args: &[OsString]| {
+            let outcome = serve(&exe, &platform, args);
+            let recorded = host_refusal(&layout).map(|refusal| refusal.reason);
+            let refused = outcome.map(|_| ()).map_err(|error| error.message).err();
+            assert_eq!(recorded, refused, "recorded as refused, or forgotten");
+            refused
+        };
+        assert_eq!(serves(&pinned), None);
+        let said = serves(&[]).unwrap();
+        assert!(said.contains("without its launch pin"), "{said}");
+        assert_eq!(serves(&pinned), None);
+        for other in [
+            args(&["--launch-pin"]),
+            args(&[&pin]),
+            args(&["--launch-pin", &pin, "x"]),
+            args(&["--pin", &pin]),
+            args(&[&format!("--launch-pin={pin}")]),
+        ] {
+            let said = serves(&other).unwrap();
+            assert!(said.contains("nothing else"), "{said}");
+        }
+        for (tunnel_id, profile) in [(b, "core"), (a, "browser_full")] {
+            save(tunnel_id, profile);
+            let said = serves(&pinned).unwrap();
+            assert!(said.contains("is not the one"), "{said}");
+        }
+        save(a, "core");
+        assert_eq!(serves(&pinned), None);
+        crate::config::renew_setup_id(&layout).unwrap();
+        assert!(serves(&pinned).unwrap().contains("is not the one"));
+        std::fs::remove_file(layout.tunnel_setup_id()).unwrap();
+        assert!(serves(&pinned).unwrap().contains("has no id yet"));
+        std::fs::create_dir(layout.tunnel_setup_id()).unwrap();
+        assert!(serves(&pinned)
+            .unwrap()
+            .contains("read the tunnel setup id"));
+        // The runtime key is not read for any of this.
+        assert!(!layout.runtime_key_file().exists());
+    }
+
     #[test]
     fn tunnel_host_is_always_the_remote_tunnel_transport() {
         // #395: whatever the tunnel client passed down, the host launches the
@@ -258,7 +392,16 @@ mod tests {
             ("ORCEL_DAEMON".to_string(), "/elsewhere/orceld".to_string()),
             ("ORCEL_TUNNEL_ROUTE_JSON".to_string(), "{}".to_string()),
         ]);
-        let env = tunnel_environment(&tunnel_config(), &tunnel_launch(), inherited).unwrap();
+        let config = tunnel_config();
+        let pin = pin_of(&config);
+        let env = tunnel_environment(
+            &config,
+            &tunnel_launch(),
+            inherited,
+            Some(SETUP_ID),
+            Some(&pin),
+        )
+        .unwrap();
         let orcel: Vec<&str> = env
             .keys()
             .filter(|name| name.to_ascii_uppercase().starts_with("ORCEL_"))
@@ -288,8 +431,15 @@ mod tests {
 
     #[test]
     fn tunnel_host_without_a_configured_tunnel_fails_closed() {
-        let error =
-            tunnel_environment(&Config::default(), &tunnel_launch(), BTreeMap::new()).unwrap_err();
+        let pin = pin_of(&tunnel_config());
+        let error = tunnel_environment(
+            &Config::default(),
+            &tunnel_launch(),
+            BTreeMap::new(),
+            Some(SETUP_ID),
+            Some(&pin),
+        )
+        .unwrap_err();
         assert!(error.message.contains("not configured"));
     }
 

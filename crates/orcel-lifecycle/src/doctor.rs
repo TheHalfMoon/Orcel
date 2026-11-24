@@ -341,6 +341,15 @@ pub fn run_with_approval_history(
                     _ => "no health URL published".into(),
                 },
             ));
+            // The process checks see the client only, which runs on while its
+            // host refuses everything.
+            if let Some(refusal) = status.host_refusal {
+                checks.push(check(
+                    "mcp_host",
+                    CheckStatus::Fail,
+                    format!("orcel-mcp-host refused to serve: {}", refusal.reason),
+                ));
+            }
             if let Some(last) = status.last_exit {
                 checks.push(check(
                     "last_exit",
@@ -714,6 +723,31 @@ mod tests {
         let corrupt = approval_history(&path);
         assert_eq!(corrupt.status, CheckStatus::Fail);
         assert!(corrupt.detail.contains("orcel approvals recover"));
+    }
+
+    /// SG-000135 OB-09: a refusal of the MCP host fails the doctor, whatever
+    /// the client's process says; none is no check. A supervisor without a
+    /// record is not "not running".
+    #[cfg(windows)]
+    #[test]
+    fn ob09_a_refusing_mcp_host_and_an_unrecorded_supervisor_are_shown() {
+        use crate::runtime::{stop_event_name, StopEvent};
+        let layout = Layout::new(temp_dir("doctor-host").join("Orcel"));
+        let named = |name: &str| {
+            let report = run(&layout, &FakePlatform::default());
+            report.checks.into_iter().find(|check| check.name == name)
+        };
+        assert!(named("mcp_host").is_none());
+        assert_eq!(named("process_health").unwrap().status, CheckStatus::Pass);
+        crate::lifecycle::record_host_refusal(&layout, "because");
+        let host = named("mcp_host").unwrap();
+        assert_eq!(host.status, CheckStatus::Fail);
+        assert!(host.detail.contains("because"), "{}", host.detail);
+        let event = StopEvent::create(&stop_event_name(&layout.root)).unwrap();
+        let process = named("process_health").unwrap();
+        assert_eq!(process.status, CheckStatus::Warn);
+        assert!(process.detail.contains("without a record"));
+        drop(event);
     }
 
     #[test]

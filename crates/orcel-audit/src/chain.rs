@@ -124,18 +124,45 @@ pub enum ChainError {
     Encode(String),
 }
 
+/// How each [`ChainError`] text starts.
+const IO_TEXT: &str = "audit chain I/O: ";
+const BUSY_TEXT: &str = "audit chain busy: ";
+const BROKEN_TEXT: &str = "audit chain broken at seq ";
+const ENCODE_TEXT: &str = "audit chain encoding: ";
+
 impl fmt::Display for ChainError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Io(message) => write!(f, "audit chain I/O: {message}"),
-            Self::Busy => write!(f, "audit chain busy: another writer held its lock"),
+            Self::Io(message) => write!(f, "{IO_TEXT}{message}"),
+            Self::Busy => write!(f, "{BUSY_TEXT}another writer held its lock"),
             Self::Broken { seq, reason } => write!(
                 f,
-                "audit chain broken at seq {seq}: {reason}; nothing was appended ({RECOVERY_HINT})"
+                "{BROKEN_TEXT}{seq}: {reason}; nothing was appended ({RECOVERY_HINT})"
             ),
-            Self::Encode(message) => write!(f, "audit chain encoding: {message}"),
+            Self::Encode(message) => write!(f, "{ENCODE_TEXT}{message}"),
         }
     }
+}
+
+/// Whether a text holds a [`ChainError`]'s, as a process that only has
+/// orceld's message reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChainErrorText {
+    /// The chain does not verify ([`RECOVERY_HINT`] is the way back).
+    Broken,
+    /// Any other chain error: the file, its lock or the event.
+    Other,
+}
+
+/// The kind of [`ChainError`] whose text is in `message`, if one is.
+pub fn chain_error_in(message: &str) -> Option<ChainErrorText> {
+    if message.contains(BROKEN_TEXT) {
+        return Some(ChainErrorText::Broken);
+    }
+    [IO_TEXT, BUSY_TEXT, ENCODE_TEXT]
+        .iter()
+        .any(|text| message.contains(text))
+        .then_some(ChainErrorText::Other)
 }
 
 impl std::error::Error for ChainError {}

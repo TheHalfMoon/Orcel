@@ -774,10 +774,12 @@ pub fn upsert_lease(
 }
 
 /// Revoke the lease for one remote connection, or every lease when `None`.
-/// Revocation is authority-reducing and needs no approval.
+/// Revocation is authority-reducing and needs no approval. Returns how many
+/// leases it ended: an expired one is marked revoked as well but not counted.
 pub fn revoke_leases(
     leases: &[RemoteSessionLease],
     remote_connection_id: Option<&str>,
+    now_ms: u64,
 ) -> (Vec<RemoteSessionLease>, usize) {
     let mut count = 0;
     let next = leases
@@ -788,7 +790,9 @@ pub fn revoke_leases(
                 && remote_connection_id.is_none_or(|id| id == lease.remote_connection_id)
             {
                 lease.revoked = true;
-                count += 1;
+                if now_ms < lease.expires_at_ms {
+                    count += 1;
+                }
             }
             lease
         })
@@ -1077,8 +1081,16 @@ pub(crate) mod tests {
             &remote(),
             &env(NOW - 1),
         ));
-        let (revoked, count) = revoke_leases(&leases, None);
+        let (revoked, count) = revoke_leases(&leases, None, NOW + 1);
         assert_eq!(count, 1);
+        assert_eq!(revoke_leases(&revoked, None, NOW + 1).1, 0);
+        // An expired lease is marked revoked too, and not counted as ended.
+        let expires = leases[0].expires_at_ms;
+        for (now, ended) in [(expires - 1, 1), (expires, 0), (expires + 1, 0)] {
+            let (marked, count) = revoke_leases(&leases, None, now);
+            assert_eq!(count, ended);
+            assert!(marked.iter().all(|lease| lease.revoked));
+        }
         inactive_code(check_remote_dispatch(
             &revoked,
             &req,

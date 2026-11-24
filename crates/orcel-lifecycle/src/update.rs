@@ -170,17 +170,14 @@ fn self_check(cli: &Path) -> Result<(), String> {
 }
 
 fn stop_if_running(layout: &Layout) -> Result<bool, LifecycleError> {
-    if !layout.supervisor_record().exists() {
-        return Ok(false);
-    }
-    let running = lifecycle::status(layout)?.supervisor_pid.is_some();
-    lifecycle::stop(layout, Duration::from_secs(20)).map_err(|error| {
-        LifecycleError::conflict(format!(
-            "Orcel could not be stopped, so nothing was changed: {}",
-            error.message
-        ))
-    })?;
-    Ok(running)
+    let stopped =
+        lifecycle::stop_if_observed(layout, Duration::from_secs(20)).map_err(|error| {
+            LifecycleError::conflict(format!(
+                "Orcel could not be stopped, so nothing was changed: {}",
+                error.message
+            ))
+        })?;
+    Ok(stopped.is_some_and(|stopped| stopped.was_live))
 }
 
 fn restart(layout: &Layout, platform: &dyn Platform) -> Result<bool, LifecycleError> {
@@ -478,6 +475,7 @@ impl<'a> Updater<'a> {
     /// version even if the pointer and install record disagree.
     fn recover_pending(&self, marker: &UpdateMarker) -> Result<RollbackReport, LifecycleError> {
         let installer = self.installer();
+        stop_if_running(&self.layout)?;
         // Refuse links and reparse points anywhere in the install tree before
         // reading or copying from a retained version directory.
         installer.protect_root()?;
@@ -689,6 +687,56 @@ mod tests {
             )
             .unwrap();
         (layout, platform)
+    }
+
+    /// SG-000135 OB-09: an update, a rollback and the recovery of an
+    /// interrupted update stop a supervisor without a record, or change
+    /// nothing when it does not stop.
+    #[cfg(windows)]
+    #[test]
+    fn ob09_an_unrecorded_supervisor_is_stopped_before_a_version_change() {
+        use crate::runtime::{stop_event_name, wait_any, StopEvent};
+        let (layout, platform) = setup("0.1.0");
+        let updater = Updater::new(layout.clone(), &platform);
+        let answer = |job_empty: bool| {
+            let event = StopEvent::create(&stop_event_name(&layout.root)).unwrap();
+            let result = layout.stop_result();
+            std::thread::spawn(move || {
+                let signalled = wait_any(&[event.raw()], Duration::from_secs(30)) == Some(0);
+                let stopped = lifecycle::StopResult {
+                    job_empty,
+                    at_ms: 1,
+                };
+                write_json_atomic(&result, &stopped).unwrap();
+                drop(event);
+                signalled
+            })
+        };
+        let refused = |result: Result<(), LifecycleError>| {
+            let error = result.unwrap_err();
+            assert_eq!(error.kind, crate::ErrorKind::Conflict);
+            assert!(
+                error.message.contains("nothing was changed"),
+                "{}",
+                error.message
+            );
+        };
+        let source = release_dir("0.2.0");
+        let supervisor = answer(false);
+        refused(
+            updater
+                .update(&source, &UpdateOptions::default())
+                .map(|_| ()),
+        );
+        assert!(supervisor.join().unwrap());
+        assert!(!layout.version_dir("0.2.0").exists());
+        write_marker(&layout, UpdateState::Pending, "0.1.0", "0.2.0", None).unwrap();
+        let supervisor = answer(false);
+        refused(updater.rollback().map(|_| ()));
+        assert!(supervisor.join().unwrap());
+        let supervisor = answer(true);
+        assert!(updater.rollback().is_ok());
+        assert!(supervisor.join().unwrap(), "recovery stopped it");
     }
 
     /// [`FakePlatform`] with the real Unix owner and mode rules, and the

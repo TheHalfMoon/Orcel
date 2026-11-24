@@ -238,7 +238,7 @@ pub fn dispatch_lease_management(
                 }
             };
             let leases = load_leases(ctx.lease_path);
-            let (next, revoked) = revoke_leases(&leases, target.as_deref());
+            let (next, revoked) = revoke_leases(&leases, target.as_deref(), (ctx.now_ms)());
             save_leases(ctx.lease_path, &next).map_err(provider_error)?;
             Ok(json!({ "revoked": revoked }))
         }
@@ -492,9 +492,9 @@ pub fn authorize_enrollment(
 }
 
 /// Emergency revoke invalidates every remote-session lease immediately.
-pub fn revoke_all(lease_path: &Path) -> Result<usize, ProviderError> {
+pub fn revoke_all(lease_path: &Path, now_ms: u64) -> Result<usize, ProviderError> {
     let leases = load_leases(lease_path);
-    let (next, revoked) = revoke_leases(&leases, None);
+    let (next, revoked) = revoke_leases(&leases, None, now_ms);
     save_leases(lease_path, &next).map_err(provider_error)?;
     Ok(revoked)
 }
@@ -823,7 +823,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&fixture.dir);
 
         let (fixture, trust) = created_fixture("emergency");
-        assert_eq!(revoke_all(&fixture.lease_path).unwrap(), 1);
+        assert_eq!(revoke_all(&fixture.lease_path, T0).unwrap(), 1);
         assert_inactive(with_ctx(&fixture, |ctx| {
             gate_remote(ctx, &soft, &trust, &read_request(), &remote())
         }));

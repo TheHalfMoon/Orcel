@@ -1,26 +1,16 @@
-use orcel_tunnel::{run, status, TunnelConfig};
+use orcel_tunnel::{status, TunnelConfig, RUN_REFUSED};
 
 fn main() {
     let command = std::env::args().nth(1).unwrap_or_else(|| "status".into());
+    if command == "run" {
+        exit_error(RUN_REFUSED);
+    }
     let config = match TunnelConfig::from_env() {
         Ok(config) => config,
         Err(error) => exit_error(&error),
     };
 
     match command.as_str() {
-        "run" => match run(&config) {
-            Ok(status) if status.success() => {}
-            Ok(status) => {
-                eprintln!(
-                    "orcel-tunnel: tunnel-client exited with {}",
-                    status
-                        .code()
-                        .map_or_else(|| "signal".into(), |v| v.to_string())
-                );
-                std::process::exit(3);
-            }
-            Err(error) => exit_error(&error),
-        },
         "status" => println!("{}", status(&config)),
         "doctor" => println!(
             "{}",
@@ -32,7 +22,7 @@ fn main() {
                 "health_listen": "127.0.0.1:0"
             })
         ),
-        _ => exit_error("usage: orcel-tunnel [run|status|doctor]"),
+        _ => exit_error("usage: orcel-tunnel [status|doctor]"),
     }
 }
 

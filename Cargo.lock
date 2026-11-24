@@ -1036,6 +1036,7 @@ name = "orcel-lifecycle"
 version = "0.2.0"
 dependencies = [
  "fs4",
+ "getrandom",
  "libc",
  "orcel-approval",
  "orcel-audit",
