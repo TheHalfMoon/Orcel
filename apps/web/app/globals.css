@@ -1,27 +1,31 @@
-/* Orcel website — identity v4, a Halfmoon product. Halfmoon palette and type (self-hosted
-   at build time), the Night Window mark, lavender for the moon, red only to stop. */
+/* Orcel website — identity v5, "People first". Ivory page, ink text, the vermilion figure,
+   Inter for display and text (self-hosted at build time), Instrument Serif for one statement per surface. */
 :root {
-  color-scheme: dark;
-  --bg: #090C12;
-  --surface: #10141C;
-  --surface-2: #0D1118;
-  --line: #232833;
-  --line-strong: #2E3442;
-  --text: #FFFFFF;
-  --muted: #C9CBD2;
-  --muted-2: #9499A6;
-  --muted-3: #8A8F9C;
-  --accent-a: #A6ACE6;
-  --accent-b: #C3C7F0;
-  --accent-c: #E2E4F8;
-  --accent-soft: rgba(166, 172, 230, 0.14);
-  --danger: #F06A6A;
-  --on-accent: #090C12;
-  --lunar: #F5F4F0;
+  color-scheme: light;
+  --bg: #F7F3EB;
+  --surface: #FFFFFF;
+  --surface-2: #FBF8F2;
+  --line: #E6DFD3;
+  --line-strong: #D6CDBE;
+  --text: #141414;
+  --muted: #3E4250;
+  --muted-2: #5B6070;
+  --muted-3: #656A79;
+  --accent-a: #DB2532;
+  --accent-b: #B81E29;
+  --accent-c: #FBE4E6;
+  --accent-soft: rgba(219, 37, 50, 0.10);
+  --danger: #B42318;
+  --on-accent: #FFFFFF;
+  --lunar: #F7F3EB;
+  --navy: #182437;
+  --cobalt: #2354D4;
+  --orange: #F5724D;
+  --sky: #BFD8F7;
   --max: 1240px;
   --radius: 16px;
-  --display: var(--font-display), "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
-  --sans: var(--font-text), Geist, Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --display: var(--font-display), Inter, ui-sans-serif, system-ui, sans-serif;
+  --sans: var(--font-text), Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --mono: var(--font-mono), "Geist Mono", ui-monospace, SFMono-Regular, Consolas, Menlo, monospace;
   --serif: var(--font-serif), "Instrument Serif", Georgia, serif;
 }
@@ -159,10 +163,10 @@ p {
   position: sticky;
   top: 0;
   z-index: 50;
-  background: rgba(10, 10, 11, 0.82);
+  background: rgba(247, 243, 235, 0.88);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border-bottom: 1px solid #1c1c20;
+  border-bottom: 1px solid var(--line);
 }
 
 .header-inner {
@@ -190,7 +194,7 @@ p {
 
 .desktop-nav a:hover {
   color: var(--text);
-  background: #16161a;
+  background: var(--surface);
 }
 
 .header-cta {
@@ -256,7 +260,7 @@ p {
   border: 1px solid var(--line-strong);
   border-radius: 16px;
   background: var(--surface);
-  box-shadow: 0 30px 60px -20px rgba(0, 0, 0, 0.8);
+  box-shadow: 0 30px 60px -20px rgba(24, 36, 55, 0.16);
 }
 
 .mobile-nav-panel a {
@@ -270,7 +274,7 @@ p {
 
 .mobile-nav-panel a:hover {
   color: var(--text);
-  background: #18181b;
+  background: var(--surface);
 }
 
 /* Buttons */
@@ -307,8 +311,8 @@ p {
 }
 
 .button-secondary:hover {
-  border-color: #3a3a40;
-  background: #141417;
+  border-color: var(--line-strong);
+  background: var(--surface-2);
 }
 
 .button-dark {
@@ -361,7 +365,7 @@ p {
   height: 8px;
   border-radius: 999px;
   background: var(--accent-a);
-  box-shadow: 0 0 0 4px rgba(166, 172, 230, 0.18);
+  box-shadow: 0 0 0 4px rgba(219, 37, 50, 0.16);
 }
 
 .section-index {
@@ -431,12 +435,12 @@ p {
   align-items: center;
   gap: 10px;
   padding: 6px 14px 6px 10px;
-  border: 1px solid #26262b;
+  border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--surface);
   font-family: var(--mono);
   font-size: 0.75rem;
-  color: #b4b4b9;
+  color: var(--muted-2);
 }
 
 .hero h1 {
@@ -475,7 +479,7 @@ p {
   content: "";
   position: absolute;
   inset: 24px -12px -24px 24px;
-  border: 1px solid #1c1c20;
+  border: 1px solid var(--line);
   border-radius: 28px;
   background: var(--surface-2);
 }
@@ -488,8 +492,8 @@ p {
   overflow: hidden;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius);
-  background: #121214;
-  box-shadow: 0 50px 100px -20px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  background: var(--surface);
+  box-shadow: 0 50px 100px -20px rgba(24, 36, 55, 0.16), inset 0 0 0 1px var(--line);
 }
 
 .approval-head {
@@ -497,7 +501,7 @@ p {
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid #222226;
+  border-bottom: 1px solid var(--line);
 }
 
 .approval-title {
@@ -574,7 +578,7 @@ p {
 }
 
 .diff-add {
-  background: rgba(166, 172, 230, 0.1);
+  background: rgba(219, 37, 50, 0.08);
   color: var(--accent-a);
 }
 
@@ -612,7 +616,7 @@ p {
 
 .approval figcaption {
   padding: 14px 20px;
-  border-top: 1px solid #222226;
+  border-top: 1px solid var(--line);
   font-size: 0.78rem;
   color: var(--muted-3);
 }
@@ -620,8 +624,8 @@ p {
 /* Stats */
 
 .stats {
-  border-top: 1px solid #1c1c20;
-  border-bottom: 1px solid #1c1c20;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 
 .stats-inner {
@@ -633,7 +637,7 @@ p {
   display: grid;
   gap: 8px;
   padding: 40px 24px;
-  border-left: 1px solid #1c1c20;
+  border-left: 1px solid var(--line);
 }
 
 .stats-inner > div:first-child {
@@ -705,7 +709,7 @@ p {
 
 .card-accent .card-index,
 .card-accent p {
-  color: #1E2240;
+  color: rgba(255, 255, 255, 0.86);
 }
 
 /* Security */
@@ -822,7 +826,7 @@ p {
   display: flex;
   gap: 24px;
   padding: 26px 28px;
-  border-top: 1px solid #1a1a1e;
+  border-top: 1px solid var(--line);
 }
 
 .step-list li:first-child {
@@ -873,7 +877,7 @@ p {
 
 .code-shell {
   overflow: hidden;
-  border: 1px solid #222226;
+  border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-2);
 }
@@ -883,7 +887,7 @@ p {
   align-items: center;
   gap: 12px;
   padding: 14px 18px;
-  border-bottom: 1px solid #1c1c20;
+  border-bottom: 1px solid var(--line);
   font-family: var(--mono);
   font-size: 0.75rem;
   color: var(--muted-3);
@@ -915,14 +919,14 @@ p {
   overflow-x: auto;
   font-size: 0.85rem;
   line-height: 1.75;
-  color: #e4e4e0;
+  color: var(--text);
 }
 
 .compat-note {
   display: grid;
   gap: 6px;
   padding: 18px 24px;
-  border-top: 1px solid #1c1c20;
+  border-top: 1px solid var(--line);
 }
 
 .compat-note span {
@@ -982,7 +986,7 @@ p {
 }
 
 .final-copy p {
-  color: #1E2240;
+  color: rgba(255, 255, 255, 0.86);
   font-size: 1.05rem;
 }
 
@@ -995,13 +999,13 @@ p {
   grid-column: 1 / -1;
   max-width: 640px;
   font-size: 0.82rem;
-  color: #2A2F55;
+  color: rgba(255, 255, 255, 0.78);
 }
 
 /* Footer */
 
 .site-footer {
-  border-top: 1px solid #1c1c20;
+  border-top: 1px solid var(--line);
 }
 
 .footer-inner {
@@ -1072,7 +1076,7 @@ p {
   .stats-inner > div:first-child {
     padding: 28px 20px;
     border-left: 0;
-    border-top: 1px solid #1c1c20;
+    border-top: 1px solid var(--line);
   }
 
   .stats-inner > div:nth-child(odd) {
