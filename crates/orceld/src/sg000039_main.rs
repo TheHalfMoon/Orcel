@@ -1362,7 +1362,9 @@ fn dispatch_trust(
                 })?;
             let leases_revoked = orcel_policy::remote_session::default_lease_store_path()
                 .map_err(|error| state_unavailable("remote-session lease store", &error))
-                .and_then(|lease_path| remote_lease::revoke_all(&lease_path))
+                .and_then(|lease_path| {
+                    remote_lease::revoke_all(&lease_path, orcel_approval::now_ms())
+                })
             .map_err(|error| {
                 ProviderError::new(
                     FailureCode::InternalError,
@@ -4099,7 +4101,8 @@ mod sg000058_lease_boundary_tests {
         assert_eq!(code(&late), Some(FailureCode::RemoteSessionInactive));
 
         // Revoked lease (queue-after-revoke): denied.
-        let (revoked, _) = revoke_leases(std::slice::from_ref(&lease), None);
+        let (revoked, _) =
+            revoke_leases(std::slice::from_ref(&lease), None, orcel_approval::now_ms());
         save_leases(&lease_path, &revoked).expect("save");
         let after_revoke =
             handle_envelope(&policy, &audit, &approval, &workspaces, read("default"));

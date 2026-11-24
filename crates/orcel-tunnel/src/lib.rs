@@ -16,6 +16,12 @@ const SECRETISH: &[&str] = &[
     "TUNNEL_KEY",
 ];
 
+/// SG-000135 OB-09: the one Orcel variable the tunnel client's environment
+/// carries: the pin of the setup (tunnel id, profile, runtime key) it was
+/// launched for. `orcel-mcp-host`, which inherits that environment, refuses to
+/// serve when the saved setup is not the pinned one, so it can only refuse.
+pub const LAUNCH_PIN_ENV: &str = "ORCEL_TUNNEL_LAUNCH_PIN";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TunnelConfig {
     pub tunnel_client: PathBuf,
@@ -24,6 +30,9 @@ pub struct TunnelConfig {
     pub mcp_command: PathBuf,
     pub health_url_file: PathBuf,
     pub workspace_roots: Vec<PathBuf>,
+    /// The value of [`LAUNCH_PIN_ENV`] for this launch; never taken from the
+    /// environment.
+    pub launch_pin: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +62,9 @@ impl TunnelConfig {
             mcp_command,
             health_url_file,
             workspace_roots,
+            // `orcel-tunnel` run by hand has no saved setup to pin, so
+            // `orcel-mcp-host` refuses to serve under it.
+            launch_pin: None,
         };
         config.validate()?;
         Ok(config)
@@ -109,10 +121,14 @@ impl TunnelConfig {
             self.health_url_file.to_string_lossy().into_owned(),
             "--log.http-raw-unsafe=false".into(),
         ];
+        let mut env = tunnel_client_env(source);
+        if let Some(pin) = &self.launch_pin {
+            env.insert(LAUNCH_PIN_ENV.into(), pin.clone());
+        }
         Ok(LaunchPlan {
             program: self.tunnel_client.clone(),
             args,
-            env: tunnel_client_env(source),
+            env,
         })
     }
 }
@@ -121,7 +137,8 @@ impl TunnelConfig {
 /// only. It runs `orcel-mcp-host`, which rebuilds its whole environment from
 /// the local configuration, so no `ORCEL_*` variable (workspace overrides,
 /// a daemon path, the runtime session binding, provider configuration) has
-/// any reason to cross the remote transport, and none may widen it.
+/// any reason to cross the remote transport, and none may widen it. The launch
+/// plan adds [`LAUNCH_PIN_ENV`] only, which can only make the host refuse.
 pub fn tunnel_client_env(source: &BTreeMap<String, String>) -> BTreeMap<String, String> {
     let mut env = sanitized_env(source);
     env.retain(|name, _| is_os_execution_env(name));
@@ -330,6 +347,7 @@ mod tests {
                 mcp_command: mcp,
                 health_url_file: dir.join("health.url"),
                 workspace_roots: vec![workspace],
+                launch_pin: None,
             },
             dir,
         )
@@ -399,6 +417,27 @@ mod tests {
             plan.env.keys().map(String::as_str).collect::<Vec<_>>(),
             ["PATH", "SystemRoot"]
         );
+        // SG-000135 OB-09: the launch pin is the only Orcel variable a plan
+        // adds, its value is the plan's own, and an inherited one is dropped.
+        let mut hostile = source.clone();
+        hostile.insert(LAUNCH_PIN_ENV.into(), "inherited".into());
+        assert!(!cfg
+            .launch_plan(&hostile)
+            .unwrap()
+            .env
+            .contains_key(LAUNCH_PIN_ENV));
+        assert!(!sanitized_env(&hostile).contains_key(LAUNCH_PIN_ENV));
+        let pinned = TunnelConfig {
+            launch_pin: Some("the-pin".into()),
+            ..cfg.clone()
+        };
+        let pinned = pinned.launch_plan(&hostile).unwrap();
+        assert_eq!(
+            pinned.env.keys().map(String::as_str).collect::<Vec<_>>(),
+            [LAUNCH_PIN_ENV, "PATH", "SystemRoot"]
+        );
+        assert_eq!(pinned.env[LAUNCH_PIN_ENV], "the-pin");
+        assert_eq!(pinned.args, plan.args);
         // The local children keep their allowlist.
         assert!(sanitized_env(&source).contains_key("ORCEL_ORCEL_SESSION_ID"));
         let _ = fs::remove_dir_all(dir);

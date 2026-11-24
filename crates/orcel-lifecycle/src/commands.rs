@@ -231,6 +231,17 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
             let version = active_version(&layout)?;
             let mut config = Config::load(&layout)?;
             config.check_workspaces_with_policy()?;
+            let previous = config.clone();
+            let previous_route = previous
+                .tunnel
+                .as_ref()
+                .map(|tunnel| (tunnel.tunnel_id.as_str(), tunnel.profile.as_str()));
+            // Before the key is asked for, when the route alone is a change.
+            let observe = || lifecycle::observe(&layout);
+            orcel_lifecycle::tunnel_route::setup_allowed(
+                previous_route != Some((&tunnel_id, &profile)),
+                observe,
+            )?;
             let key = match &key_file {
                 Some(path) => std::fs::read_to_string(path)
                     .map_err(|error| LifecycleError::io("read --key-file", error))?
@@ -241,14 +252,23 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
                 )?,
             };
             config::validate_runtime_key(&key)?;
-            let previous = config.clone();
+            // SG-000135 OB-09: nothing a running client was launched with is
+            // changed under it. `orcel start` cannot run between this check
+            // and the save: both commands hold the lifecycle lock.
+            orcel_lifecycle::tunnel_route::setup_allowed(
+                orcel_lifecycle::tunnel_route::setup_changes(
+                    previous_route,
+                    &tunnel_id,
+                    &profile,
+                    config::key_to_replace(&layout)?.as_deref(),
+                    &key,
+                ),
+                observe,
+            )?;
             // SG-000135 OB-09: a new tunnel id or profile is a new route; the
             // old route's remote-session leases end with the change.
             let replaced = orcel_lifecycle::tunnel_route::connections_revoked_by_setup(
-                previous
-                    .tunnel
-                    .as_ref()
-                    .map(|tunnel| (tunnel.tunnel_id.as_str(), tunnel.profile.as_str())),
+                previous_route,
                 &tunnel_id,
                 &profile,
             );
@@ -283,23 +303,18 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
             let revoked = match committed {
                 Ok(()) => report.revoked(),
                 Err(error) => {
-                    let restored_key = match previous_key {
-                        Some(bytes) => orcel_lifecycle::layout::write_bytes_atomic(
-                            &layout.runtime_key_file(),
-                            &bytes,
-                        ),
-                        None => std::fs::remove_file(layout.runtime_key_file())
-                            .or_else(|error| match error.kind() {
-                                std::io::ErrorKind::NotFound => Ok(()),
-                                _ => Err(error),
-                            })
-                            .map_err(|error| LifecycleError::io("remove new runtime key", error)),
-                    };
+                    let restored_key =
+                        config::restore_runtime_key(&layout, previous_key.as_deref());
                     let restored_config = previous.save(&layout);
-                    return Err(orcel_lifecycle::tunnel_route::setup_failure(
-                        error,
-                        &report,
-                        restored_key.is_ok() && restored_config.is_ok(),
+                    return Err(orcel_lifecycle::tunnel_route::with_audit_remedy(
+                        orcel_lifecycle::tunnel_route::setup_failure(
+                            error,
+                            &report,
+                            restored_key.is_ok() && restored_config.is_ok(),
+                        ),
+                        &layout
+                            .version_dir(&version)
+                            .join(per_os::orceld_file_name()),
                     ));
                 }
             };
@@ -320,7 +335,11 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
                     report.describe()
                 ));
             }
-            human.push_str("Next: `orcel start`, then `orcel status` or `orcel doctor`.\n");
+            human.push_str(if matches!(observe(), Ok(lifecycle::Observed::Gone)) {
+                "Next: `orcel start`, then `orcel status` or `orcel doctor`.\n"
+            } else {
+                "The tunnel id, profile and runtime key are unchanged. A tunnel that is running keeps its client until `orcel stop`, then `orcel start`.\n"
+            });
             Ok(Output {
                 exit_code: 0,
                 human,
@@ -389,7 +408,14 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
                 &orcel_lifecycle::tunnel_route::all_connections(&tunnel_id),
                 |connection| revoke_connection(&layout, &config, &version, connection),
             );
-            report.check()?;
+            report.check().map_err(|error| {
+                orcel_lifecycle::tunnel_route::with_audit_remedy(
+                    error,
+                    &layout
+                        .version_dir(&version)
+                        .join(per_os::orceld_file_name()),
+                )
+            })?;
             Ok(Output {
                 exit_code: 0,
                 human: format!(

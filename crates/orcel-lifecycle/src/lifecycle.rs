@@ -110,8 +110,39 @@ pub fn runnable_config(
 ) -> Result<(Config, orcel_tunnel::TunnelConfig), LifecycleError> {
     let config = Config::load(layout)?;
     config.check_workspaces_with_policy()?;
-    let tunnel = config::tunnel_config(layout, &config, active_version)?;
+    let mut tunnel = config::tunnel_config(layout, &config, active_version)?;
+    // SG-000135 OB-09: the launch is pinned to exactly this setup.
+    tunnel.launch_pin = Some(crate::tunnel_route::launch_pin(
+        &config,
+        config::read_runtime_key(&layout.runtime_key_file())?.as_deref(),
+        &crate::nonce(),
+    )?);
     Ok((config, tunnel))
+}
+
+/// What a process or the supervisor was observed to be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Observed {
+    Live,
+    Gone,
+    /// It could not be told, so it is not taken as gone.
+    Unknown,
+}
+
+impl Observed {
+    /// Of several things that must all have gone: live when any one is, gone
+    /// only when every one is.
+    pub fn all(of: impl IntoIterator<Item = Self>) -> Self {
+        of.into_iter().fold(Self::Gone, |so_far, next| {
+            if so_far == Self::Live || next == Self::Live {
+                Self::Live
+            } else if next == Self::Unknown {
+                Self::Unknown
+            } else {
+                so_far
+            }
+        })
+    }
 }
 
 #[cfg(windows)]
@@ -204,6 +235,21 @@ mod imp {
             }
         }
         Ok(record)
+    }
+
+    /// Whether a supervisor or its tunnel client runs for this install: the
+    /// recorded processes, and the stop event a supervisor holds from before
+    /// it reads the configuration (so one that has no record yet counts). An
+    /// unreadable record is an error.
+    pub fn observe(layout: &Layout) -> Result<Observed, LifecycleError> {
+        let record = read_supervisor_record(layout)?;
+        Ok(Observed::all(
+            record
+                .iter()
+                .flat_map(|record| [&record.supervisor, &record.tunnel_client])
+                .map(|recorded| runtime::observe(&to_identity(recorded)))
+                .chain([StopEvent::observe(&runtime::stop_event_name(&layout.root))]),
+        ))
     }
 
     pub fn status(layout: &Layout) -> Result<RuntimeStatus, LifecycleError> {
@@ -347,13 +393,43 @@ mod imp {
         }
     }
 
-    pub fn stop(layout: &Layout, wait: Duration) -> Result<StopReport, LifecycleError> {
-        let record = read_supervisor_record(layout)?;
-        let Some(record) = record else {
+    /// Stops a supervisor that has no record (one that is still starting, or
+    /// whose record was deleted): it holds the stop event.
+    fn stop_unrecorded(layout: &Layout, wait: Duration) -> Result<StopReport, LifecycleError> {
+        let name = runtime::stop_event_name(&layout.root);
+        if StopEvent::observe(&name) == Observed::Gone {
             return Ok(StopReport {
                 outcome: StopOutcome::NotRunning,
                 detail: "no supervisor record".into(),
             });
+        }
+        remove(&layout.stop_result());
+        StopEvent::signal(&name);
+        let deadline = std::time::Instant::now() + wait;
+        while StopEvent::observe(&name) != Observed::Gone {
+            if std::time::Instant::now() >= deadline {
+                return Err(LifecycleError::state(
+                    "a supervisor without a record is running and did not stop in time; run `orcel stop` again",
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        match read_json::<StopResult>(&layout.stop_result())? {
+            Some(result) if result.job_empty => Ok(StopReport {
+                outcome: StopOutcome::StoppedVerified,
+                detail: "a supervisor without a record confirmed its job was empty and exited"
+                    .into(),
+            }),
+            _ => Err(LifecycleError::state(
+                "a supervisor without a record exited without confirming that its job was empty",
+            )),
+        }
+    }
+
+    pub fn stop(layout: &Layout, wait: Duration) -> Result<StopReport, LifecycleError> {
+        let record = read_supervisor_record(layout)?;
+        let Some(record) = record else {
+            return stop_unrecorded(layout, wait);
         };
         let Some(supervisor) = runtime::open_verified(&to_identity(&record.supervisor)) else {
             let tunnel_alive =
@@ -435,6 +511,9 @@ mod imp {
     }
 
     fn supervise_inner(layout: &Layout) -> Result<i32, LifecycleError> {
+        // Held from before the configuration is read, so `orcel tunnel setup`
+        // sees this supervisor, or this supervisor reads what setup saved.
+        let event = StopEvent::create(&runtime::stop_event_name(&layout.root))?;
         // Re-verify here rather than trusting `start`'s preflight: the
         // supervisor may be invoked directly, or the install may change between
         // the preflight and this launch.
@@ -444,11 +523,11 @@ mod imp {
             .active;
         let (_, tunnel) = runnable_config(layout, &current.version)?;
         let session = crate::full_control::begin_runtime_session(layout)?;
-        let event = StopEvent::create(&runtime::stop_event_name(&layout.root))?;
         runtime::disinherit_standard_handles();
         let job = Job::kill_on_close()?;
         // #395: the runtime session binding stays local. The tunnel is a
-        // remote transport, and its launch plan carries no Orcel variable.
+        // remote transport, and its launch plan carries no Orcel variable but
+        // the launch pin, which can only make `orcel-mcp-host` refuse.
         let host_env = crate::ipc::host_environment();
         let plan = match tunnel.launch_plan(&host_env) {
             Ok(plan) => plan,
@@ -560,11 +639,22 @@ mod imp {
 }
 
 #[cfg(windows)]
-pub use imp::{start, status, stop, supervise};
+pub use imp::{observe, start, status, stop, supervise};
 
 #[cfg(not(windows))]
 fn windows_only() -> LifecycleError {
     LifecycleError::prerequisite("the Orcel runtime is supported on Windows only")
+}
+
+/// No supervisor runs on this OS; a supervisor record is not one of ours.
+#[cfg(not(windows))]
+pub fn observe(layout: &Layout) -> Result<Observed, LifecycleError> {
+    Ok(
+        match std::fs::symlink_metadata(layout.supervisor_record()) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Observed::Gone,
+            _ => Observed::Unknown,
+        },
+    )
 }
 
 #[cfg(not(windows))]
@@ -635,6 +725,112 @@ pub fn lock(_layout: &Layout) -> Result<LockGuard, LifecycleError> {
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
+    /// SG-000135 OB-09: everything must be gone; one live thing is live, and
+    /// one that cannot be told is not gone.
+    #[test]
+    fn ob09_only_all_gone_is_gone() {
+        use Observed::{Gone, Live, Unknown};
+        for (of, expected) in [
+            (vec![], Gone),
+            (vec![Gone, Gone, Gone], Gone),
+            (vec![Live, Gone, Gone], Live),
+            (vec![Gone, Live, Gone], Live),
+            (vec![Gone, Gone, Live], Live),
+            (vec![Unknown, Live, Gone], Live),
+            (vec![Live, Unknown, Gone], Live),
+            (vec![Unknown, Gone, Gone], Unknown),
+            (vec![Gone, Unknown, Gone], Unknown),
+            (vec![Gone, Gone, Unknown], Unknown),
+        ] {
+            assert_eq!(Observed::all(of.clone()), expected, "{of:?}");
+        }
+    }
+
+    /// SG-000135 OB-09: a supervisor that has no record yet is seen by the
+    /// stop event it holds, a record that cannot be trusted is an error, and
+    /// a record of processes that are gone is gone.
+    #[cfg(windows)]
+    #[test]
+    fn ob09_the_supervisor_is_observed_with_and_without_its_record() {
+        use crate::runtime::{stop_event_name, StopEvent};
+        let dir = crate::test_support::temp_dir("observe");
+        let layout = Layout::new(dir.join("Orcel"));
+        assert_eq!(observe(&layout).unwrap(), Observed::Gone);
+        let event = StopEvent::create(&stop_event_name(&layout.root)).unwrap();
+        assert_eq!(observe(&layout).unwrap(), Observed::Live);
+        // `orcel stop` signals it, and does not say it is not running.
+        let error = stop(&layout, Duration::from_millis(200)).unwrap_err();
+        assert!(error.message.contains("did not stop"), "{}", error.message);
+        assert_eq!(
+            crate::runtime::wait_any(&[event.raw()], Duration::from_secs(1)),
+            Some(0)
+        );
+        drop(event);
+        assert_eq!(
+            stop(&layout, Duration::from_secs(1)).unwrap().outcome,
+            StopOutcome::NotRunning
+        );
+        // One that answers: stopped only when it says its job is empty.
+        std::fs::create_dir_all(layout.run_dir()).unwrap();
+        for job_empty in [true, false] {
+            let event = StopEvent::create(&stop_event_name(&layout.root)).unwrap();
+            let result = layout.stop_result();
+            let supervisor = std::thread::spawn(move || {
+                crate::runtime::wait_any(&[event.raw()], Duration::from_secs(10));
+                let stopped = StopResult {
+                    job_empty,
+                    at_ms: 1,
+                };
+                crate::layout::write_json_atomic(&result, &stopped).unwrap();
+                drop(event);
+            });
+            let stopped = stop(&layout, Duration::from_secs(10));
+            supervisor.join().unwrap();
+            assert_eq!(
+                stopped.ok().map(|report| report.outcome),
+                job_empty.then_some(StopOutcome::StoppedVerified)
+            );
+        }
+        std::fs::remove_file(layout.stop_result()).unwrap();
+
+        let own = crate::runtime::identify(std::process::id()).unwrap();
+        let process = |pid: u32, creation_time: u64, image: &str| RecordedProcess {
+            pid,
+            creation_time,
+            image: image.into(),
+        };
+        let cli = layout.version_dir("0.1.0").join("orcel.exe");
+        let write = |supervisor: RecordedProcess, tunnel_client: RecordedProcess| {
+            crate::layout::write_json_atomic(
+                &layout.supervisor_record(),
+                &SupervisorRecord {
+                    schema: SUPERVISOR_SCHEMA.into(),
+                    version: "0.1.0".into(),
+                    supervisor,
+                    tunnel_client,
+                    started_at_ms: 1,
+                },
+            )
+            .unwrap();
+        };
+        // This pid with another creation time: gone. The tunnel client's is
+        // looked at as well.
+        let gone = || process(own.pid, 1, &cli.to_string_lossy());
+        write(gone(), gone());
+        assert_eq!(observe(&layout).unwrap(), Observed::Gone);
+        write(gone(), process(own.pid, own.creation_time, &own.image));
+        assert_eq!(observe(&layout).unwrap(), Observed::Live);
+        // Not an installed `orcel`, or not readable: an error.
+        write(
+            process(own.pid, own.creation_time, &own.image),
+            process(own.pid, own.creation_time, &own.image),
+        );
+        assert!(observe(&layout).is_err());
+        std::fs::write(layout.supervisor_record(), b"{").unwrap();
+        assert!(observe(&layout).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn only_installed_version_cli_images_are_accepted() {

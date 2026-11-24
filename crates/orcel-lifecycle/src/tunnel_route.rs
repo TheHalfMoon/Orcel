@@ -16,11 +16,15 @@
 //! profile, so a core lease never covers it and its own lease needs its own
 //! STRONG `orcel tunnel allow`; a tunnel never serves both profiles.
 
+use crate::config::Config;
+use crate::lifecycle::Observed;
 use crate::LifecycleError;
 use orcel_policy::remote_session::{
     REMOTE_PROFILE_BROWSER_FULL, REMOTE_PROFILE_CORE, REMOTE_SCOPES,
 };
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::path::Path;
 
 /// Environment variable naming the MCP host's transport. `orcel-mcp-host`
 /// always sets it to [`TUNNEL_TRANSPORT`]; local launches never set it.
@@ -152,6 +156,116 @@ pub fn connections_revoked_by_setup(
     }
 }
 
+/// SG-000135 OB-09: whether `orcel tunnel setup` changes what a running tunnel
+/// client was launched with: the tunnel id, the profile or the runtime key. A
+/// first setup does. `previous` is the previous tunnel id and profile.
+pub fn setup_changes(
+    previous: Option<(&str, &str)>,
+    tunnel_id: &str,
+    profile: &str,
+    previous_key: Option<&[u8]>,
+    key: &str,
+) -> bool {
+    previous != Some((tunnel_id, profile)) || previous_key != Some(key.as_bytes())
+}
+
+/// SG-000135 OB-09: refuses a setup that [`setup_changes`] while the
+/// supervisor or its tunnel client runs, or when that cannot be told. The old
+/// client would stay connected to the old tunnel and start its next
+/// `orcel-mcp-host` under the new setup.
+pub fn setup_allowed(
+    changes: bool,
+    observe: impl FnOnce() -> Result<Observed, LifecycleError>,
+) -> Result<(), LifecycleError> {
+    if !changes {
+        return Ok(());
+    }
+    const THEN: &str = "Nothing was changed. Run `orcel stop`, then `orcel tunnel setup` again";
+    match observe() {
+        Ok(Observed::Gone) => Ok(()),
+        Ok(Observed::Live) => Err(LifecycleError::conflict(format!(
+            "the ChatGPT tunnel is running, so its tunnel id, profile and runtime key cannot be changed. {THEN}"
+        ))),
+        Ok(Observed::Unknown) => Err(LifecycleError::conflict(format!(
+            "Orcel could not tell whether the ChatGPT tunnel is running, so its tunnel id, profile and runtime key cannot be changed. {THEN}"
+        ))),
+        Err(error) => Err(LifecycleError::new(
+            error.kind,
+            format!(
+                "Orcel could not tell whether the ChatGPT tunnel is running, so its tunnel id, profile and runtime key cannot be changed: {}. {THEN}",
+                error.message
+            ),
+        )),
+    }
+}
+
+const PIN_LABEL: &str = "orcel/tunnel-launch-pin/v1";
+
+fn pin_digest(salt: &str, tunnel_id: &str, profile: &str, key: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    for part in [
+        PIN_LABEL.as_bytes(),
+        salt.as_bytes(),
+        tunnel_id.as_bytes(),
+        profile.as_bytes(),
+        key,
+    ] {
+        hasher.update((part.len() as u64).to_be_bytes());
+        hasher.update(part);
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+/// The configured tunnel id and profile and the stored runtime key, which a
+/// launch pin covers.
+fn pinned_parts<'a>(
+    config: &'a Config,
+    key: Option<&'a [u8]>,
+) -> Result<(&'a str, &'a str, &'a [u8]), LifecycleError> {
+    let tunnel = config.tunnel.as_ref().ok_or_else(|| {
+        LifecycleError::state("the tunnel is not configured; orcel-mcp-host serves only the tunnel")
+    })?;
+    let key = key.ok_or_else(|| {
+        LifecycleError::state("the tunnel runtime key is missing; run `orcel tunnel setup`")
+    })?;
+    Ok((&tunnel.tunnel_id, &tunnel.profile, key))
+}
+
+/// SG-000135 OB-09: the pin of one tunnel client launch: a digest of the
+/// setup it was launched with (tunnel id, profile, runtime key). The key
+/// itself is not in it; `nonce` makes each launch's pin its own.
+pub fn launch_pin(
+    config: &Config,
+    key: Option<&[u8]>,
+    nonce: &str,
+) -> Result<String, LifecycleError> {
+    let (tunnel_id, profile, key) = pinned_parts(config, key)?;
+    let salt = format!("{:x}", Sha256::digest(nonce.as_bytes()));
+    let digest = pin_digest(&salt, tunnel_id, profile, key);
+    Ok(format!("{salt}.{digest}"))
+}
+
+/// SG-000135 OB-09: refuses unless `pin` (what the tunnel client was launched
+/// with) is the pin of the setup saved now. No pin is a refusal: a client
+/// that the supervisor did not launch is not served.
+pub fn check_launch_pin(
+    config: &Config,
+    key: Option<&[u8]>,
+    pin: Option<&str>,
+) -> Result<(), LifecycleError> {
+    let (tunnel_id, profile, key) = pinned_parts(config, key)?;
+    let matches = pin
+        .and_then(|pin| pin.split_once('.'))
+        .is_some_and(|(salt, digest)| digest == pin_digest(salt, tunnel_id, profile, key));
+    if matches {
+        return Ok(());
+    }
+    Err(LifecycleError::state(match pin {
+        Some(_) => "the saved tunnel setup is not the one this tunnel client was started with; run `orcel stop`, then `orcel start`",
+        None => "this tunnel client was not started by `orcel start`; run `orcel stop`, then `orcel start`",
+    }))
+}
+
 /// Why a connection's revoke is not known to have happened.
 #[derive(Debug)]
 pub enum RevokeFailure {
@@ -203,8 +317,24 @@ pub fn revoke_reply(response: Result<Value, LifecycleError>) -> Result<u64, Revo
     })
 }
 
-/// What revoking a tunnel's connections did: how many leases each one's
-/// revoke ended, and which revokes failed.
+/// Adds what to do when `error` is about orceld's audit chain: a chain that
+/// does not verify refuses every dispatch, a lease revoke included.
+pub fn with_audit_remedy(error: LifecycleError, orceld: &Path) -> LifecycleError {
+    if !error.message.to_ascii_lowercase().contains("audit") {
+        return error;
+    }
+    LifecycleError::new(
+        error.kind,
+        format!(
+            "{} This is about orceld's audit chain, which it must write before it revokes a lease. `orceld audit-verify` says whether and where the chain does not verify, and `orceld audit-move-aside` keeps that file and opens a new one linked to it; then run this command again. orceld is {}",
+            error.message,
+            orceld.display()
+        ),
+    )
+}
+
+/// What revoking a tunnel's connections did: how many unexpired leases each
+/// one's revoke ended, and which revokes failed.
 #[derive(Debug, Default)]
 pub struct RevokeReport {
     pub ended: Vec<(TunnelConnection, u64)>,
@@ -212,7 +342,7 @@ pub struct RevokeReport {
 }
 
 impl RevokeReport {
-    /// How many leases were ended.
+    /// How many leases were ended; one that had expired is not counted.
     pub fn revoked(&self) -> u64 {
         self.ended.iter().map(|(_, count)| count).sum()
     }
@@ -603,7 +733,7 @@ mod tests {
             lease(other, "core"),
         ];
         let report = revoke_each(&all_connections(TUNNEL), |connection| {
-            let (next, count) = revoke_leases(&leases, Some(connection));
+            let (next, count) = revoke_leases(&leases, Some(connection), 1_000);
             leases = next;
             Ok(count as u64)
         });
@@ -640,6 +770,165 @@ mod tests {
             }));
             assert_eq!(revoked, all_connections(TUNNEL));
         }
+    }
+
+    /// SG-000135 OB-09: a setup that changes the id, the profile or the key is
+    /// refused unless the supervisor has certainly gone; an unchanged one is
+    /// not, and does not ask.
+    #[test]
+    fn ob09_a_changing_setup_needs_the_supervisor_gone() {
+        let other = "tunnel_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
+        let same = Some((TUNNEL, "core"));
+        let key: Option<&[u8]> = Some(b"key");
+        assert!(!setup_changes(same, TUNNEL, "core", key, "key"));
+        for changed in [
+            setup_changes(None, TUNNEL, "core", key, "key"),
+            setup_changes(same, other, "core", key, "key"),
+            setup_changes(same, TUNNEL, "browser_full", key, "key"),
+            setup_changes(same, TUNNEL, "core", key, "key2"),
+            setup_changes(same, TUNNEL, "core", Some(b"key\n"), "key"),
+            setup_changes(same, TUNNEL, "core", None, "key"),
+        ] {
+            assert!(changed);
+        }
+        let unreadable = || Err(LifecycleError::state("the record is not readable"));
+        assert!(setup_allowed(true, || Ok(Observed::Gone)).is_ok());
+        for observed in [Observed::Live, Observed::Unknown] {
+            let error = setup_allowed(true, || Ok(observed)).unwrap_err();
+            assert_eq!(error.kind, crate::ErrorKind::Conflict);
+            for said in [
+                "Nothing was changed",
+                "`orcel stop`",
+                "`orcel tunnel setup`",
+            ] {
+                assert!(error.message.contains(said), "{}", error.message);
+            }
+            assert_eq!(
+                error.message.contains("could not tell"),
+                observed == Observed::Unknown
+            );
+        }
+        let error = setup_allowed(true, unreadable).unwrap_err();
+        assert!(error.message.contains("the record is not readable"));
+        assert!(error.message.contains("Nothing was changed"));
+        // Unchanged: whatever runs.
+        let asked = std::cell::Cell::new(false);
+        assert!(setup_allowed(false, || {
+            asked.set(true);
+            unreadable()
+        })
+        .is_ok());
+        assert!(!asked.get());
+    }
+
+    fn configured(tunnel_id: &str, profile: &str) -> Config {
+        Config {
+            tunnel: Some(crate::config::TunnelSettings {
+                client: std::path::PathBuf::from("/fake/tunnel-client"),
+                tunnel_id: tunnel_id.into(),
+                profile: profile.into(),
+            }),
+            ..Config::default()
+        }
+    }
+
+    /// SG-000135 OB-09: a launch pin matches only the setup it was made for:
+    /// the same tunnel id, profile and key. None, a malformed one and one of
+    /// another launch's parts refuse; the key is not in it.
+    #[test]
+    fn ob09_a_launch_pin_matches_only_its_own_setup() {
+        let other = "tunnel_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
+        let config = configured(TUNNEL, "core");
+        let key: Option<&[u8]> = Some(b"sk-key");
+        let pin = launch_pin(&config, key, "n1").unwrap();
+        assert!(check_launch_pin(&config, key, Some(&pin)).is_ok());
+        let second = launch_pin(&config, key, "n2").unwrap();
+        assert_ne!(pin, second);
+        assert!(check_launch_pin(&config, key, Some(&second)).is_ok());
+        assert!(!pin.contains("sk-key"));
+        let says = |config: &Config, key: Option<&[u8]>, pin: Option<&str>| {
+            let message = check_launch_pin(config, key, pin).unwrap_err().message;
+            assert!(!message.contains("sk-key"), "{message}");
+            message
+        };
+        for (config, key) in [
+            (configured(other, "core"), key),
+            (configured(TUNNEL, "browser_full"), key),
+            (config.clone(), Some(&b"sk-key2"[..])),
+            (config.clone(), Some(&b"sk-key\n"[..])),
+        ] {
+            let said = says(&config, key, Some(&pin));
+            assert!(said.contains("is not the one"), "{said}");
+            assert!(said.contains("`orcel stop`"), "{said}");
+        }
+        let (salt, digest) = pin.split_once('.').unwrap();
+        let (other_salt, _) = second.split_once('.').unwrap();
+        for bad in [
+            "",
+            ".",
+            salt,
+            digest,
+            &format!("{salt}."),
+            &format!(".{digest}"),
+            &format!("{other_salt}.{digest}"),
+            &format!("{pin}0"),
+            &pin.to_ascii_uppercase(),
+        ] {
+            says(&config, key, Some(bad));
+        }
+        assert!(says(&config, key, None).contains("not started by `orcel start`"));
+        assert!(says(&config, None, Some(&pin)).contains("key is missing"));
+        assert!(says(&Config::default(), key, Some(&pin)).contains("not configured"));
+        assert!(launch_pin(&config, None, "n").is_err());
+        assert!(launch_pin(&Config::default(), key, "n").is_err());
+        // The parts are told apart: moving bytes between them is a change.
+        assert_ne!(
+            pin_digest("s", TUNNEL, "core", b"x"),
+            pin_digest("s", &format!("{TUNNEL}c"), "ore", b"x")
+        );
+    }
+
+    /// SG-000135 OB-09: a revoke that orceld's audit chain refuses says which
+    /// orceld commands to run, whether orceld answers or does not start; any
+    /// other failure is left as it is.
+    #[test]
+    fn ob09_a_broken_audit_chain_names_the_way_back() {
+        let orceld = Path::new("/x/Orcel/versions/0.1.0/orceld");
+        let broken = orcel_audit::chain::ChainError::Broken {
+            seq: 3,
+            reason: "digest".into(),
+        };
+        let answered = revoke_reply(Ok(json!({"ok": false, "error": {
+            "code": "INTERNAL_ERROR",
+            "message": format!("audit write failed before dispatch; nothing was dispatched: {broken}"),
+        }})));
+        let not_started = revoke_reply(Err(LifecycleError::state(
+            "orceld exited without a response (orceld: orceld fatal: initialize audit log: busy)",
+        )));
+        for reply in [answered, not_started] {
+            let mut reply = Some(reply);
+            let report = revoke_each(&all_connections(TUNNEL)[..1], |_| {
+                reply.take().unwrap_or(Ok(0))
+            });
+            let error = report.check().unwrap_err();
+            for error in [
+                with_audit_remedy(setup_failure(error.clone(), &report, true), orceld),
+                with_audit_remedy(error, orceld),
+            ] {
+                for said in [
+                    "`orceld audit-verify` says",
+                    "`orceld audit-move-aside` keeps",
+                    &orceld.display().to_string(),
+                ] {
+                    assert!(error.message.contains(said), "{}", error.message);
+                }
+            }
+        }
+        let other = LifecycleError::state("orceld POLICY_DENIED: no");
+        assert_eq!(
+            with_audit_remedy(other.clone(), orceld).message,
+            other.message
+        );
     }
 
     /// SG-000135 OB-09: the old route is revoked before the new one is saved,

@@ -281,6 +281,75 @@ fn install_configure_start_status_doctor_stop_restart_and_uninstall() {
     let already = orcel(&cli, &local, &["start", "--json"]);
     assert_eq!(already.status.code(), Some(6));
 
+    // SG-000135 OB-09: while it runs, a setup that changes the tunnel id, the
+    // profile or the key is refused and changes nothing; an unchanged one is
+    // not refused.
+    let other_key = key_dir.join("other.key");
+    fs::write(&other_key, "sk-e2e-other-key\n").unwrap();
+    let config_file = root.join("state").join("config.json");
+    let stored_key = root
+        .join("state")
+        .join("secrets")
+        .join("tunnel-runtime-key");
+    let before = (
+        fs::read(&config_file).unwrap(),
+        fs::read(&stored_key).unwrap(),
+    );
+    let other_id = "tunnel_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
+    let while_running = |id: &str, profile: &str, key: &Path| {
+        orcel(
+            &cli,
+            &local,
+            &[
+                "tunnel",
+                "setup",
+                "--client",
+                fake_tunnel.to_str().unwrap(),
+                "--tunnel-id",
+                id,
+                "--key-file",
+                key.to_str().unwrap(),
+                "--profile",
+                profile,
+                "--json",
+            ],
+        )
+    };
+    for (id, profile, key) in [
+        (other_id, "core", &key_file),
+        (TUNNEL_ID, "browser_full", &key_file),
+        (TUNNEL_ID, "core", &other_key),
+    ] {
+        let refused = while_running(id, profile, key);
+        assert_eq!(refused.status.code(), Some(6), "{refused:?}");
+        let said = String::from_utf8_lossy(&refused.stdout).into_owned();
+        assert!(said.contains("Nothing was changed"), "{said}");
+        assert!(said.contains("orcel stop"), "{said}");
+        let after = (
+            fs::read(&config_file).unwrap(),
+            fs::read(&stored_key).unwrap(),
+        );
+        assert!(before == after, "a refused setup changed something");
+    }
+    json_ok(&while_running(TUNNEL_ID, "core", &key_file));
+    let status = json_ok(&orcel(&cli, &local, &["status", "--json"]));
+    assert_eq!(status["runtime"]["state"], "running", "{status}");
+    // The MCP host does not serve a client that the supervisor did not launch.
+    let host = root
+        .join("versions")
+        .join(env!("CARGO_PKG_VERSION"))
+        .join("orcel-mcp-host.exe");
+    let unpinned = Command::new(&host)
+        .env_remove("ORCEL_TUNNEL_LAUNCH_PIN")
+        .env("USERPROFILE", &local)
+        .env("LOCALAPPDATA", local.join("AppData").join("Local"))
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(unpinned.status.code(), Some(2), "{unpinned:?}");
+    let said = String::from_utf8_lossy(&unpinned.stderr).into_owned();
+    assert!(said.contains("not started by `orcel start`"), "{said}");
+
     let status = json_ok(&orcel(&cli, &local, &["status", "--json"]));
     assert_eq!(status["runtime"]["state"], "running");
     let doctor = json_ok(&orcel(&cli, &local, &["doctor", "--json"]));

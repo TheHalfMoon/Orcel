@@ -306,26 +306,57 @@ pub fn store_runtime_key(layout: &Layout, key: &str) -> Result<(), LifecycleErro
     write_bytes_atomic(&layout.runtime_key_file(), key.as_bytes())
 }
 
-/// The runtime key file's bytes now, for putting them back: `None` only when
-/// there is no such file. Any other read error is an error, never an absent
-/// key: a rollback would then delete a key it could not read.
+/// The runtime key file's bytes now: `None` only when there is no such file.
+/// Any other read error is an error, never an absent key: a rollback would
+/// then delete a key it could not read.
 pub fn read_runtime_key(path: &Path) -> Result<Option<Vec<u8>>, LifecycleError> {
     match std::fs::read(path) {
         Ok(bytes) => Ok(Some(bytes)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(LifecycleError::io(
-            "read the current runtime key (nothing was changed)",
+            format!("read the runtime key file {}", path.display()),
             error,
         )),
     }
 }
 
+/// The current key's bytes, for a setup that may replace them. A current key
+/// that cannot be read refuses, and says which file and what to do.
+pub fn key_to_replace(layout: &Layout) -> Result<Option<Vec<u8>>, LifecycleError> {
+    let path = layout.runtime_key_file();
+    read_runtime_key(&path).map_err(|error| {
+        LifecycleError::new(
+            error.kind,
+            format!(
+                "{}. Nothing was changed: the current key could not be put back if the setup failed. Make {} a plain file you can read, or move it away, then run `orcel tunnel setup` again",
+                error.message,
+                path.display()
+            ),
+        )
+    })
+}
+
 /// Stores `key` and returns the previous key file's bytes. A current key that
 /// cannot be read refuses before anything is written.
 pub fn replace_runtime_key(layout: &Layout, key: &str) -> Result<Option<Vec<u8>>, LifecycleError> {
-    let previous = read_runtime_key(&layout.runtime_key_file())?;
+    let previous = key_to_replace(layout)?;
     store_runtime_key(layout, key)?;
     Ok(previous)
+}
+
+/// Puts back what [`replace_runtime_key`] returned: the previous key's bytes,
+/// or no key file when there was none.
+pub fn restore_runtime_key(layout: &Layout, previous: Option<&[u8]>) -> Result<(), LifecycleError> {
+    let path = layout.runtime_key_file();
+    match previous {
+        Some(bytes) => write_bytes_atomic(&path, bytes),
+        None => std::fs::remove_file(&path)
+            .or_else(|error| match error.kind() {
+                std::io::ErrorKind::NotFound => Ok(()),
+                _ => Err(error),
+            })
+            .map_err(|error| LifecycleError::io("remove the new runtime key", error)),
+    }
 }
 
 /// Builds the closed `orcel-tunnel` configuration for the active version.
@@ -350,6 +381,7 @@ pub fn tunnel_config(
             .iter()
             .map(|workspace| workspace.root.clone())
             .collect(),
+        launch_pin: None,
     };
     tunnel_config
         .validate()
@@ -406,17 +438,24 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         std::fs::create_dir(&path).unwrap();
         std::fs::write(path.join("inside"), b"kept").unwrap();
+        let error = read_runtime_key(&path).unwrap_err();
+        assert_eq!(error.kind, crate::ErrorKind::Io);
+        let shown = path.display().to_string();
+        assert!(error.message.contains(&shown), "{}", error.message);
         for refused in [
-            read_runtime_key(&path),
+            key_to_replace(&layout),
             replace_runtime_key(&layout, "new-key"),
         ] {
             let error = refused.unwrap_err();
             assert_eq!(error.kind, crate::ErrorKind::Io);
-            assert!(
-                error.message.contains("nothing was changed"),
-                "{}",
-                error.message
-            );
+            for said in [
+                &*shown,
+                "Nothing was changed",
+                "move it away",
+                "`orcel tunnel setup` again",
+            ] {
+                assert!(error.message.contains(said), "{said}: {}", error.message);
+            }
         }
         assert_eq!(std::fs::read(path.join("inside")).unwrap(), b"kept");
         let left: Vec<_> = std::fs::read_dir(layout.secrets_dir())
@@ -424,6 +463,35 @@ mod tests {
             .map(|entry| entry.unwrap().path())
             .collect();
         assert_eq!(left, [path], "nothing else was written");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Replacing a key gives back exactly the old file's bytes (not trimmed,
+    /// not the new ones), and a rollback restores them; with no old key it
+    /// leaves no key file.
+    #[test]
+    fn a_replaced_runtime_key_is_restored_byte_for_byte() {
+        let dir = temp_dir("runtime-key-restore");
+        let layout = Layout::new(&dir);
+        let path = layout.runtime_key_file();
+        // No key before.
+        let previous = replace_runtime_key(&layout, "first-key").unwrap();
+        assert_eq!(previous, None);
+        assert_eq!(std::fs::read(&path).unwrap(), b"first-key");
+        restore_runtime_key(&layout, previous.as_deref()).unwrap();
+        assert!(!path.exists());
+        restore_runtime_key(&layout, None).unwrap();
+        // A key before, in bytes this build would not write itself.
+        let old: &[u8] = b"old-key \xff\r\n";
+        std::fs::write(&path, old).unwrap();
+        let previous = replace_runtime_key(&layout, "new-key").unwrap();
+        assert_eq!(previous.as_deref(), Some(old));
+        assert_eq!(std::fs::read(&path).unwrap(), b"new-key");
+        restore_runtime_key(&layout, previous.as_deref()).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), old);
+        // A key that setup refuses replaces nothing.
+        assert!(replace_runtime_key(&layout, "two words").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), old);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

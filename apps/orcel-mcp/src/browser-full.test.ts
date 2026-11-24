@@ -453,6 +453,25 @@ test("OB-03: the screenshot and tabs schemas are strict and name nothing outside
   }
 });
 
+test("SH-2: the create tool tells the agent what a switch's reply says", () => {
+  // The fields orceld's switch reply carries, by its own names.
+  const dispatch = readFileSync(join(repo, "crates", "orceld", "src", "live_dispatch.rs"), "utf8");
+  let description = "";
+  const server = {
+    registerTool(name: string, config: { description?: string }) {
+      if (name === "browser_session_create") {
+        description = config.description ?? "";
+      }
+    }
+  } as unknown as McpServer;
+  registerSessionBrokerTools(server, {} as KernelClient, "default");
+  for (const field of ["tabs_not_carried", "restore_stopped", "session_ended"]) {
+    assert.ok(dispatch.includes(`map.insert("${field}".into()`), field);
+    assert.ok(description.includes(`${field} (`), field);
+  }
+  assert.match(description, /no page is open and session_id is refused/);
+});
+
 test("OB-07: a Needs-you refusal keeps its typed code, and the status lists the waiting page as orceld sent it", async () => {
   const refused = projectKernelResult({
     version: 1,
