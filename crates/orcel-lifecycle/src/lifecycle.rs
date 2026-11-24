@@ -592,24 +592,43 @@ pub fn supervise(_layout: &Layout) -> i32 {
     2
 }
 
+/// How long a command waits for the lifecycle lock.
+#[cfg(any(windows, unix))]
+const LOCK_WAIT: Duration = Duration::from_secs(60);
+
+/// What a command that waited in vain is told.
+#[cfg(any(windows, unix))]
+pub(crate) const LOCK_BUSY: &str =
+    "another Orcel lifecycle command is running for this install; try again when it finishes";
+
 /// Held by every state-changing lifecycle command so install, update,
 /// rollback, start, stop, uninstall, and configuration changes never
-/// interleave across processes.
+/// interleave across processes: a named mutex on Windows, a locked file on
+/// Linux and macOS (`unix_lock`).
 pub struct LockGuard {
     #[cfg(windows)]
     _lock: crate::runtime::LifecycleLock,
+    #[cfg(unix)]
+    _lock: crate::unix_lock::LifecycleLock,
 }
 
 #[cfg(windows)]
 pub fn lock(layout: &Layout) -> Result<LockGuard, LifecycleError> {
     Ok(LockGuard {
-        _lock: crate::runtime::LifecycleLock::acquire(&layout.root, Duration::from_secs(60))?,
+        _lock: crate::runtime::LifecycleLock::acquire(&layout.root, LOCK_WAIT)?,
     })
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
+pub fn lock(layout: &Layout) -> Result<LockGuard, LifecycleError> {
+    Ok(LockGuard {
+        _lock: crate::unix_lock::LifecycleLock::acquire(layout, LOCK_WAIT)?,
+    })
+}
+
+#[cfg(not(any(windows, unix)))]
 pub fn lock(_layout: &Layout) -> Result<LockGuard, LifecycleError> {
-    Ok(LockGuard {})
+    Err(windows_only())
 }
 
 #[cfg(test)]

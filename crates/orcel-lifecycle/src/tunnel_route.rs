@@ -318,9 +318,11 @@ pub fn setup_failure(
 /// crash before `save` leaves the old id reachable by `orcel tunnel revoke`
 /// and by a rerun; `save` runs only when every revoke succeeded. An
 /// `orcel tunnel allow` cannot run in between: every `orcel tunnel` command
-/// holds the lifecycle lock for its whole run, its Windows Hello prompt
-/// included. A `remote.lease.create` sent to orceld some other way (it needs
-/// the same Windows Hello approval) is not ordered by that lock.
+/// holds the lifecycle lock for its whole run, its approval prompt included
+/// (Windows: a mutex of this logon session; Linux and macOS: an advisory lock
+/// on `lifecycle.lock`, which a person can defeat by deleting the file). A
+/// `remote.lease.create` sent to orceld some other way (it needs the same
+/// approval) is not ordered by that lock.
 pub fn change_route(
     replaced: &[TunnelConnection],
     revoke: impl FnMut(&str) -> Result<u64, RevokeFailure>,
