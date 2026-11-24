@@ -1,7 +1,7 @@
 /**
  * SG-000135 OB-09 part 2: the remote `browser_full` profile through the
- * ChatGPT Secure MCP Tunnel only (engineering-chosen 2026-11-22 under the
- * founder's delegation; the relay serves `core` only).
+ * ChatGPT Secure MCP Tunnel only (engineering-chosen 2026-11-22; the relay
+ * serves `core` only).
  *
  * - The remote tool list is exactly the part-1 remote-safe broker tools,
  *   each with its `orcel.read` or `orcel.execute` scope, and agrees with

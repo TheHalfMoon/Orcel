@@ -75,8 +75,9 @@ pub const WORKER_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(10);
 /// case: a 5 s layout snapshot and a 4 s extraction budget). Later pieces
 /// are already computed and take `WORKER_REPLY_TIMEOUT` each.
 pub const WORKER_EXTRACTION_TIMEOUT: Duration = Duration::from_secs(20);
-/// SG-000135 OB-03: a screenshot (the worker's own budget is 10 s, plus a
-/// full page's layout metrics) and a tab request (a new page and its guard).
+/// SG-000135 OB-03: a screenshot (the worker's own budget for all of it is
+/// 15 s, `SCREENSHOT_BUDGET_MS`; a worker test checks the two) and a tab
+/// request (a new page and its guard).
 #[cfg_attr(not(windows), allow(dead_code))]
 pub const WORKER_SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(20);
 #[cfg_attr(not(windows), allow(dead_code))]

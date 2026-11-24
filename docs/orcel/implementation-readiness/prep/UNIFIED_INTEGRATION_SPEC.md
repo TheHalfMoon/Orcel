@@ -561,20 +561,22 @@ Granted with STRONG presence for one identified client and one declared task; sh
 covers is authorized and audited individually with its id; ended by stop, lease end or expiry; never covers `Admin`,
 remote callers, out-of-scope targets or another client. Without one, each action keeps its own approval.
 
-Amended 2026-11-17, recorded in SG-000135 (`.specgrain/specs/SG-000135.json`), pending founder confirmation of the
-derived standing-approval coverage: for the remote `browser_full` capability profile only, a browser lease or browser
-standing approval issued by the owner may cover
-the remote caller that is the identified client named in it, through the Secure MCP Tunnel, within its origins,
-profiles, sessions, action families and expiry. Every other remote caller, executor and profile keeps the rule above.
+**FOUNDER DECISION 2026-11-23: no remote lease coverage.** This section stands unamended for remote callers: a standing
+approval, or a browser lease, never covers one. The amendment below is void and kept as history.
+
+Void (recorded 2026-11-17 in SG-000135, `.specgrain/specs/SG-000135.json`, pending founder confirmation, and
+refused by the founder on 2026-11-23): for the remote `browser_full` capability profile only, a browser lease or browser
+standing approval issued by the owner may cover the remote caller that is the identified client named in it, through
+the Secure MCP Tunnel, within its origins, profiles, sessions, action families and expiry.
+Every other remote caller, executor and profile keeps the rule above.
 The founder's words (chat directive, 2026-11-17): "The current Orcel remote MCP profile does not expose browser
 actions. Implement an explicitly authorized remote browser capability profile. Do not merely copy BrowserOS's MCP
 server and claim that ChatGPT can already control it. Prove an actual end-to-end browser task over local MCP, then
 validate the ChatGPT tunnel integration where the client supports it." and "Full Access grants eliminate repeated
 approvals for routine actions already authorized by the owner." The founder's architecture decision of the same day
 describes the tunnel forwarding "to Orcel's local, authenticated and owner-lease-authorized MCP service". The remote
-standing-approval coverage is derived from these words, not quoted from them, and shares the same pending founder
-confirmation as remote coverage: until it is given, only a lease issued by the authority service covers a remote
-caller; the alternative is an interim-store browser lease gated by the existing SG-000055 STRONG remote-session lease.
+standing-approval coverage was derived from these words, not quoted from them, and was pending founder confirmation
+until the decision of 2026-11-23 refused it. Engineering wrongly recorded it as founder-delegated on 2026-11-22.
 
 ### 4.16 Sensitive web features (FD-UP-2 decided)
 

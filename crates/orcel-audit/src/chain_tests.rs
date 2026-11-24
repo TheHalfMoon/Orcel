@@ -3,7 +3,10 @@
 //! processes, torn-write recovery, size bounds, anchors and redaction.
 
 use crate::anchor::{AnchorOutcome, Anchorer, UNANCHORED_NOTE};
-use crate::chain::{move_aside, ChainError, ChainLink, ChainWriter, EventDraft, MAX_EVENT_BYTES};
+use crate::chain::forced::Collisions;
+use crate::chain::{
+    move_aside, ChainError, ChainLink, ChainWriter, EventDraft, ASIDE_ATTEMPTS, MAX_EVENT_BYTES,
+};
 use crate::verify::{verify_file, verify_with_anchors, Verdict};
 use crate::{AuditLogger, ORCELD_LOG};
 use orcel_contracts::event::{
@@ -1000,6 +1003,286 @@ fn chain_an_owner_reset_opens_a_visible_first_file() -> TestResult {
     let opened = crate::open_after_reset(&fresh, ORCELD_LOG, json!({"event_digest": "d"}))
         .map_err(|e| e.to_string())?;
     assert_eq!(opened.moved_to, None);
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// The files kept beside the chain in `dir`, by name.
+fn kept_files(dir: &Path) -> Result<Vec<String>, String> {
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
+        let name = entry.map_err(|e| e.to_string())?.file_name();
+        let name = name.to_string_lossy().into_owned();
+        if name.contains(".quarantine-") {
+            names.push(name);
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
+/// What each operation that keeps the chain aside is called with and returns.
+type MoveAside = fn(&Path) -> Result<(String, String), ChainError>;
+
+/// `move_aside` and `open_after_reset`: the kept name and the new file's id.
+const MOVERS: [(&str, MoveAside); 2] = [
+    ("moved", |path| {
+        move_aside(path, ORCELD_LOG).map(|moved| (moved.moved_to, moved.file_id))
+    }),
+    ("reset", |path| {
+        let reset = json!({"event_digest": "c".repeat(64), "authority_seq": 9});
+        crate::open_after_reset(path, ORCELD_LOG, reset)
+            .map(|opened| (opened.moved_to.unwrap_or_default(), opened.file_id))
+    }),
+];
+
+fn aside(what: &str, ms: u64, token: &str) -> String {
+    format!(
+        "audit-chain.jsonl.quarantine-{what}{ms}-{}-{token}",
+        std::process::id()
+    )
+}
+
+/// Two files moved aside in one millisecond and process, the second first
+/// trying the very name of the first: both are kept whole, under different
+/// names, and the files opened after them have different ids.
+#[test]
+fn chain_a_colliding_aside_name_never_replaces_kept_evidence() -> TestResult {
+    for (what, run) in MOVERS {
+        let dir = sandbox("aside-collision")?;
+        let path = dir.join("audit-chain.jsonl");
+        let same = Collisions::at(1_700_000_000_000);
+        write(&path, 2)?;
+        let first_bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+        same.tokens(&["same"]);
+        let (first, first_id) = run(&path).map_err(|e| e.to_string())?;
+        let second_bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+        same.tokens(&["same", "fresh"]);
+        let (second, second_id) = run(&path).map_err(|e| e.to_string())?;
+        assert_eq!(same.tokens_left(), 0, "{what}: the taken name was tried");
+        let prefix = format!("{what}-");
+        assert_eq!(first, aside(&prefix, 1_700_000_000_000, "same"));
+        assert_eq!(second, aside(&prefix, 1_700_000_000_000, "fresh"));
+        assert_eq!(
+            std::fs::read(dir.join(&first)).map_err(|e| e.to_string())?,
+            first_bytes,
+            "{what}: the first kept file survives"
+        );
+        assert_eq!(
+            std::fs::read(dir.join(&second)).map_err(|e| e.to_string())?,
+            second_bytes
+        );
+        assert_eq!(kept_files(&dir)?.len(), 2);
+        assert_ne!(first_id, second_id, "{what}");
+        let opening = events(&path)?.remove(0);
+        assert_eq!(opening.digest, second_id);
+        assert_eq!(opening.detail["moved_aside"]["file"], second.as_str());
+        let verdict = verify_file(&path).map_err(|e| e.to_string())?.verdict;
+        let expected = match what {
+            "reset" => Verdict::ResetByOwner,
+            _ => Verdict::Intact,
+        };
+        assert_eq!(verdict, expected, "{what}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    Ok(())
+}
+
+/// Without forced tokens, names taken in one millisecond differ by
+/// themselves.
+#[test]
+fn chain_aside_names_in_one_millisecond_differ() -> TestResult {
+    for (what, run) in MOVERS {
+        let dir = sandbox("aside-names")?;
+        let path = dir.join("audit-chain.jsonl");
+        let _same = Collisions::at(1_700_000_000_000);
+        write(&path, 1)?;
+        let mut names = std::collections::BTreeSet::new();
+        for _ in 0..8 {
+            names.insert(run(&path).map_err(|e| e.to_string())?.0);
+        }
+        assert_eq!(names.len(), 8, "{what}: {names:?}");
+        assert_eq!(kept_files(&dir)?, names.into_iter().collect::<Vec<_>>());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    Ok(())
+}
+
+/// When every name tried is taken the operation fails, and the chain and
+/// every kept file are as they were.
+#[test]
+fn chain_aside_fails_closed_when_every_name_is_taken() -> TestResult {
+    for (what, run) in MOVERS {
+        let dir = sandbox("aside-taken")?;
+        let path = dir.join("audit-chain.jsonl");
+        let same = Collisions::at(1_700_000_000_000);
+        write(&path, 2)?;
+        let before = std::fs::read(&path).map_err(|e| e.to_string())?;
+        let taken = aside(&format!("{what}-"), 1_700_000_000_000, "same");
+        std::fs::write(dir.join(&taken), b"kept").map_err(|e| e.to_string())?;
+        // One more than may be tried, so an unbounded loop would go past them.
+        same.tokens(&vec!["same"; ASIDE_ATTEMPTS + 1]);
+        let error = run(&path).err().ok_or("every name is taken")?;
+        assert!(
+            matches!(&error, ChainError::Io(reason) if reason.contains("names tried are taken")),
+            "{what}: {error}"
+        );
+        assert_eq!(same.tokens_left(), 1, "{what}: {ASIDE_ATTEMPTS} tried");
+        assert_eq!(
+            std::fs::read(dir.join(&taken)).map_err(|e| e.to_string())?,
+            b"kept"
+        );
+        assert_eq!(std::fs::read(&path).map_err(|e| e.to_string())?, before);
+        assert_eq!(kept_files(&dir)?, vec![taken]);
+        // The chain still works, and the next try succeeds.
+        same.tokens(&[]);
+        write(&path, 1)?;
+        run(&path).map_err(|e| e.to_string())?;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    Ok(())
+}
+
+/// A symbolic link at the aside name, dangling or not, is neither replaced
+/// nor followed.
+#[cfg(unix)]
+#[test]
+fn chain_aside_never_replaces_or_follows_a_symlink() -> TestResult {
+    for (what, run) in MOVERS {
+        for exists in [true, false] {
+            let dir = sandbox("aside-link")?;
+            let path = dir.join("audit-chain.jsonl");
+            let same = Collisions::at(1_700_000_000_000);
+            write(&path, 2)?;
+            let before = std::fs::read(&path).map_err(|e| e.to_string())?;
+            let victim = dir.join("victim");
+            if exists {
+                std::fs::write(&victim, b"keep").map_err(|e| e.to_string())?;
+            }
+            let link = dir.join(aside(&format!("{what}-"), 1_700_000_000_000, "same"));
+            std::os::unix::fs::symlink(&victim, &link).map_err(|e| e.to_string())?;
+            same.tokens(&["same", "fresh"]);
+            let (kept, _) = run(&path).map_err(|e| e.to_string())?;
+            assert_eq!(
+                kept,
+                aside(&format!("{what}-"), 1_700_000_000_000, "fresh"),
+                "{what}"
+            );
+            assert_eq!(
+                std::fs::read(dir.join(&kept)).map_err(|e| e.to_string())?,
+                before
+            );
+            assert_eq!(
+                std::fs::read_link(&link).map_err(|e| e.to_string())?,
+                victim
+            );
+            assert_eq!(victim.exists(), exists);
+            if exists {
+                assert_eq!(std::fs::read(&victim).map_err(|e| e.to_string())?, b"keep");
+            }
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+    Ok(())
+}
+
+/// A torn tail whose first name is taken is kept under another; when every
+/// name is taken nothing is cut and nothing appended.
+#[test]
+fn chain_a_torn_tail_is_kept_under_a_name_nothing_has() -> TestResult {
+    let dir = sandbox("aside-tail")?;
+    let path = dir.join("audit-chain.jsonl");
+    let same = Collisions::at(1_700_000_000_000);
+    write(&path, 2)?;
+    let mut torn = std::fs::read(&path).map_err(|e| e.to_string())?;
+    torn.extend_from_slice(b"{\"torn");
+    std::fs::write(&path, &torn).map_err(|e| e.to_string())?;
+    let taken = dir.join(aside("", 1_700_000_000_000, "same"));
+    std::fs::write(&taken, b"kept").map_err(|e| e.to_string())?;
+    same.tokens(&vec!["same"; ASIDE_ATTEMPTS + 1]);
+    assert!(write(&path, 1).is_err());
+    assert_eq!(same.tokens_left(), 1);
+    assert_eq!(std::fs::read(&path).map_err(|e| e.to_string())?, torn);
+    same.tokens(&["same", "fresh"]);
+    write(&path, 1)?;
+    assert_eq!(std::fs::read(&taken).map_err(|e| e.to_string())?, b"kept");
+    let kept = aside("", 1_700_000_000_000, "fresh");
+    assert_eq!(
+        std::fs::read(dir.join(&kept)).map_err(|e| e.to_string())?,
+        b"{\"torn"
+    );
+    assert_eq!(events(&path)?[3].detail["quarantine_file"], kept.as_str());
+    let verdict = verify_file(&path).map_err(|e| e.to_string())?.verdict;
+    assert_eq!(verdict, Verdict::Recovered);
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// Files opened in the same millisecond, with everything else the same, have
+/// different ids: no log's first file, and no file opened after one reset, is
+/// taken for another.
+#[test]
+fn chain_files_opened_in_one_millisecond_have_different_ids() -> TestResult {
+    let dir = sandbox("opening-ids")?;
+    let _same = Collisions::at(1_700_000_000_000);
+    let reset = json!({"event_digest": "c".repeat(64), "authority_seq": 9});
+    let mut ids = std::collections::BTreeSet::new();
+    let mut openings = Vec::new();
+    for n in 0..4 {
+        let path = dir.join(format!("first-{n}.jsonl"));
+        write(&path, 1)?;
+        openings.push(events(&path)?.remove(0));
+        let path = dir.join(format!("reset-{n}.jsonl"));
+        crate::open_after_reset(&path, ORCELD_LOG, reset.clone()).map_err(|e| e.to_string())?;
+        openings.push(events(&path)?.remove(0));
+    }
+    for opening in &openings {
+        ids.insert(opening.digest.clone());
+        assert!(opening.detail["nonce"]
+            .as_str()
+            .is_some_and(|nonce| nonce.len() == 32));
+    }
+    assert_eq!(ids.len(), openings.len());
+    let _ = std::fs::remove_dir_all(dir);
+    Ok(())
+}
+
+/// An opening record as orceld wrote it before opening records had a nonce
+/// (made by the code at commit ad5d6d7f).
+const OPENING_WITHOUT_NONCE: &str = concat!(
+    r#"{"contract":"orcel.audit-event/1","seq":0,"prev_digest":""#,
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    r#"","at_ms":1795456832364,"kind":"rotation","request_id":null,"job_id":null,"#,
+    r#""principal_id":null,"capability":null,"operation":null,"authority":null,"state":null,"#,
+    r#""asserted_by_session":false,"caller_pid":null,"caller_image":null,"detail":{"#,
+    r#""action":"open","anchor_interval_events":32,"anchor_reset":null,"#,
+    r#""contract":"orcel.audit-event/1","log":"orceld","moved_aside":null,"#,
+    r#""previous_file_id":"none","previous_head_digest":null,"previous_head_seq":null},"#,
+    r#""digest":"f88152a5bafb6b0d05ae50f737bd93c0c81f26440602a773b100c3f665269bff"}"#,
+    "
+"
+);
+
+/// A chain written before opening records had a nonce: it verifies, is
+/// continued and is moved aside as before.
+#[test]
+fn chain_a_file_opened_without_a_nonce_verifies_and_is_continued() -> TestResult {
+    let dir = sandbox("no-nonce")?;
+    let path = dir.join("audit-chain.jsonl");
+    std::fs::write(&path, OPENING_WITHOUT_NONCE).map_err(|e| e.to_string())?;
+    let report = verify_file(&path).map_err(|e| e.to_string())?;
+    assert_eq!(report.verdict, Verdict::Intact, "{report:?}");
+    let old_id = report.file_id.ok_or("a file id")?;
+    assert!(events(&path)?[0].detail.get("nonce").is_none());
+    write(&path, 2)?;
+    let report = verify_file(&path).map_err(|e| e.to_string())?;
+    assert_eq!((report.verdict, report.events), (Verdict::Intact, 3));
+    assert_eq!(report.file_id.as_deref(), Some(old_id.as_str()));
+    let moved = move_aside(&path, ORCELD_LOG).map_err(|e| e.to_string())?;
+    assert_eq!(moved.link.ok_or("a link")?.previous_file_id, old_id);
+    let report = verify_file(&path).map_err(|e| e.to_string())?;
+    assert_eq!(report.verdict, Verdict::Intact, "{report:?}");
+    assert_eq!(report.predecessors.len(), 1);
     let _ = std::fs::remove_dir_all(dir);
     Ok(())
 }
